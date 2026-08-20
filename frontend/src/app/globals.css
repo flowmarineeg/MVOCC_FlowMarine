@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+/* Manifest Ledger token system */
+@theme {
+  --color-ink: #10202e;       /* bridge-panel navy — chrome, headers, primary text */
+  --color-ink-2: #1b2e3e;     /* raised ink surface (hover/active on dark) */
+  --color-ink-line: rgba(255, 255, 255, 0.09);
+
+  --color-paper: #edefe5;     /* chart-paper canvas */
+  --color-card: #f9faf3;      /* ledger sheet surface, lifted off paper */
+  --color-line: #d9dac9;      /* hairline rule on paper */
+
+  --color-rust: #c1541f;      /* corten container steel — primary accent */
+  --color-rust-dark: #9e4218;
+  --color-signal: #d89a3e;    /* brass signal lamp — pending */
+  --color-stamp: #2e6650;     /* ledger stamp green — confirmed */
+  --color-brick: #9a3324;     /* cancelled */
+  --color-muted: #5b6b70;     /* secondary text on paper */
+
+  --font-sans: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
+  --font-display: var(--font-stencil);
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+::selection {
+  background: var(--color-rust);
+  color: var(--color-card);
+}
+
+/* Faint diagonal grain — used sparingly on ink surfaces and the stamp mark */
+.grain {
+  position: relative;
+  isolation: isolate;
+}
+.grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0.035) 0px,
+    rgba(255, 255, 255, 0.035) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: overlay;
+}
+
+@keyframes stamp-down {
+  0% {
+    transform: scale(1.5) rotate(-9deg);
+    opacity: 0;
+  }
+  55% {
+    transform: scale(0.94) rotate(-4deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(-4deg);
+    opacity: 1;
+  }
+}
+.stamp-pop {
+  animation: stamp-down 0.32s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stamp-pop {
+    animation: none;
+  }
+}

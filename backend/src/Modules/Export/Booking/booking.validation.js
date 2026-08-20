@@ -1,0 +1,40 @@
+import { body } from 'express-validator'
+
+export const createBookingRules = [
+  body('jobNo').trim().notEmpty().withMessage('Job number is required'),
+  body('clientName').trim().notEmpty().withMessage('Client name is required'),
+  body('clientPhone').trim().notEmpty().withMessage('Client phone is required'),
+  body('clientEmail').trim().notEmpty().isEmail().withMessage('Valid client email is required'),
+  body('containers').isArray({ min: 1 }).withMessage('At least one container entry is required'),
+  body('containers.*.containerType').isMongoId().withMessage('Valid containerType ID required'),
+  body('containers.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
+  body('pol').isMongoId().withMessage('Valid POL ID required'),
+  body('pod').isMongoId().withMessage('Valid POD ID required'),
+  body('blNo').optional().trim(),
+]
+
+export const updateStep2Rules = [
+  body('price').optional().isFloat({ min: 0 }).withMessage('Price must be a positive number'),
+  body('cost').optional().isFloat({ min: 0 }).withMessage('Cost must be a positive number'),
+  body('freeTimeEstimated').optional().isISO8601().withMessage('Invalid date for freeTimeEstimated'),
+  body('freeTimeFinal').optional().isISO8601().withMessage('Invalid date for freeTimeFinal'),
+  body('gateInDate').optional().isISO8601().withMessage('Invalid date for gateInDate'),
+  body('gateOutDate').optional().isISO8601().withMessage('Invalid date for gateOutDate'),
+  body('containerLocation').optional().trim(),
+  body('shipper').optional().trim(),
+  body('consignee').optional().trim(),
+  body('etd').optional().isISO8601().withMessage('Invalid date for ETD'),
+  body('atd').optional().isISO8601().withMessage('Invalid date for ATD'),
+  body('eta').optional().isISO8601().withMessage('Invalid date for ETA'),
+  body('ata').optional().isISO8601().withMessage('Invalid date for ATA'),
+  body('mainVessel').optional().isMongoId().withMessage('Valid vessel ID required'),
+  body('voyageNo').optional().trim(),
+  body('polAgent').optional().isMongoId().withMessage('Valid POL agent ID required'),
+  body('podAgent').optional().isMongoId().withMessage('Valid POD agent ID required'),
+  body('containers').optional().isArray(),
+  body('containers.*.containerType').optional().isMongoId(),
+  body('containers.*.quantity').optional().isInt({ min: 1 }),
+  body('manifestStatus').optional().isIn(['PENDING', 'SUBMITTED', 'CONFIRMED']).withMessage('Invalid manifest status'),
+  body('notes').optional().trim(),
+  body('blNo').optional().trim(),
+]
