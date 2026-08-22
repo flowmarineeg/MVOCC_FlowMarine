@@ -75,6 +75,17 @@ export const reactivateMember = async (req, res, next) => {
   } catch (err) { next(err) }
 }
 
+export const deleteMember = async (req, res, next) => {
+  try {
+    const data = await service.deleteMember(req.params.id, req.user.id)
+    await logAction({
+      user: req.user, action: 'DELETE', resource: 'User', resourceId: data._id,
+      description: `Deleted member ${data.email}`, result: 'SUCCESS', ...getRequestMeta(req),
+    })
+    res.json({ success: true, message: 'Member deleted' })
+  } catch (err) { next(err) }
+}
+
 export const getInvitations = async (req, res, next) => {
   try {
     const { status, page, limit } = req.query

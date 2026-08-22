@@ -11,6 +11,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import MemberTable from '@/components/team/MemberTable'
 import InvitationTable from '@/components/team/InvitationTable'
 import InviteModal from '@/components/team/InviteModal'
+import Modal from '@/components/ui/Modal'
 
 const TABS = [
   { key: 'members', label: 'Members' },
@@ -31,6 +32,8 @@ export default function TeamPage() {
   const [busyId, setBusyId] = useState(null)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [inviting, setInviting] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   const load = () => {
     Promise.all([
@@ -100,6 +103,20 @@ export default function TeamPage() {
       toast(err.message, 'error')
     } finally {
       setBusyId(null)
+    }
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      await teamApi.deleteMember(deleteTarget._id)
+      toast('Member deleted', 'success')
+      setDeleteTarget(null)
+      load()
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -175,6 +192,7 @@ export default function TeamPage() {
             onChangeRole={handleChangeRole}
             onDeactivate={handleDeactivate}
             onReactivate={handleReactivate}
+            onDeleteRequest={setDeleteTarget}
             busyId={busyId}
           />
         )
@@ -185,6 +203,17 @@ export default function TeamPage() {
       )}
 
       <InviteModal isOpen={inviteOpen} onClose={() => setInviteOpen(false)} onInvite={handleInvite} roles={roles} submitting={inviting} />
+
+      <Modal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
+        title="Delete this member?"
+        message={`This will permanently delete "${deleteTarget?.name || deleteTarget?.email || ''}". This cannot be undone.`}
+        confirmLabel="Delete member"
+        danger
+        loading={deleting}
+      />
     </div>
   )
 }

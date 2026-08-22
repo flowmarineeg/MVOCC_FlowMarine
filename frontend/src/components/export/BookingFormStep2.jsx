@@ -13,29 +13,34 @@ const manifestOptions = [
   { value: 'CONFIRMED', label: 'Confirmed' },
 ]
 
+const emptyParty = { name: '', email: '', phone1: '', phone2: '', address: '', taxNumber: '' }
+const emptyAgent = { name: '', email: '', phone: '', address: '' }
+
 function buildInitialForm(booking) {
   return {
+    nvocc: booking.nvocc?._id || '',
     price: booking.price ?? '',
     cost: booking.cost ?? '',
-    freeTimeEstimated: toDateInput(booking.freeTimeEstimated),
-    freeTimeFinal: toDateInput(booking.freeTimeFinal),
+    freeTime: toDateInput(booking.freeTime),
     gateInDate: toDateInput(booking.gateInDate),
     gateOutDate: toDateInput(booking.gateOutDate),
     containerLocation: booking.containerLocation || '',
+    blNo: booking.blNo || '',
     containers: (booking.containers || []).map((c) => ({
       containerType: c.containerType?._id || c.containerType,
       quantity: c.quantity,
     })),
-    shipper: booking.shipper || '',
-    consignee: booking.consignee || '',
-    mainVessel: booking.mainVessel?._id || '',
+    shipper: { ...emptyParty, ...(booking.shipper || {}) },
+    consignee: { ...emptyParty, ...(booking.consignee || {}) },
+    carrier: booking.carrier?._id || '',
+    vesselName: booking.vesselName || '',
     voyageNo: booking.voyageNo || '',
     etd: toDateInput(booking.etd),
     atd: toDateInput(booking.atd),
     eta: toDateInput(booking.eta),
     ata: toDateInput(booking.ata),
-    polAgent: booking.polAgent?._id || '',
-    podAgent: booking.podAgent?._id || '',
+    polAgent: { ...emptyAgent, ...(booking.polAgent || {}) },
+    podAgent: { ...emptyAgent, ...(booking.podAgent || {}) },
     manifestStatus: booking.manifestStatus || 'PENDING',
     notes: booking.notes || '',
   }
@@ -62,13 +67,21 @@ function Field({ label, span, children }) {
   )
 }
 
+function SubHeading({ children, first }) {
+  return (
+    <div className={`sm:col-span-4 ${first ? '' : 'mt-1 border-t border-line pt-4'}`}>
+      <p className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-rust">{children}</p>
+    </div>
+  )
+}
+
 const inputCls = 'w-full border border-ink/20 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust'
 const monoInputCls = `${inputCls} font-mono`
 
 export default function BookingFormStep2({
   booking,
-  vessels = [],
-  agents = [],
+  carriers = [],
+  nvoccs = [],
   containerTypes = [],
   stockMap = {},
   saving = false,
@@ -85,14 +98,11 @@ export default function BookingFormStep2({
 
   const set = (field) => (v) => setForm((f) => ({ ...f, [field]: v }))
   const setInput = (field) => (e) => set(field)(e.target.value)
+  const setNested = (section, key) => (e) =>
+    setForm((f) => ({ ...f, [section]: { ...f[section], [key]: e.target.value } }))
 
-  const vesselOptions = vessels.map((v) => ({ value: v._id, label: `${v.name} (${v.code})` }))
-  const polAgentOptions = agents
-    .filter((a) => a.type === 'POL' || a.type === 'BOTH')
-    .map((a) => ({ value: a._id, label: a.name }))
-  const podAgentOptions = agents
-    .filter((a) => a.type === 'POD' || a.type === 'BOTH')
-    .map((a) => ({ value: a._id, label: a.name }))
+  const carrierOptions = carriers.map((c) => ({ value: c._id, label: `${c.name} (${c.code})` }))
+  const nvoccOptions = nvoccs.map((n) => ({ value: n._id, label: `${n.name} (${n.code})` }))
 
   const isCancelled = booking.status === 'cancelled'
 
@@ -112,10 +122,12 @@ export default function BookingFormStep2({
     <fieldset disabled={isCancelled || !canUpdate} className="space-y-4 disabled:opacity-60">
       <form onSubmit={handleSave} className="space-y-4">
         <Section title="Commercial">
+          <Field label="NVOCC">
+            <Select searchable placeholder="Select NVOCC" options={nvoccOptions} value={form.nvocc} onChange={set('nvocc')} />
+          </Field>
           <Field label="Price"><input type="number" min={0} value={form.price} onChange={setInput('price')} className={monoInputCls} /></Field>
           <Field label="Cost"><input type="number" min={0} value={form.cost} onChange={setInput('cost')} className={monoInputCls} /></Field>
-          <Field label="Free Time (Est.)"><input type="date" value={form.freeTimeEstimated} onChange={setInput('freeTimeEstimated')} className={monoInputCls} /></Field>
-          <Field label="Free Time (Final)"><input type="date" value={form.freeTimeFinal} onChange={setInput('freeTimeFinal')} className={monoInputCls} /></Field>
+          <Field label="Free Time"><input type="date" value={form.freeTime} onChange={setInput('freeTime')} className={monoInputCls} /></Field>
         </Section>
 
         <Section title="Container & Location">
@@ -131,14 +143,29 @@ export default function BookingFormStep2({
         </Section>
 
         <Section title="Parties">
-          <Field label="Shipper" span={2}><input value={form.shipper} onChange={setInput('shipper')} className={inputCls} /></Field>
-          <Field label="Consignee" span={2}><input value={form.consignee} onChange={setInput('consignee')} className={inputCls} /></Field>
+          <SubHeading first>Shipper</SubHeading>
+          <Field label="Name" span={2}><input value={form.shipper.name} onChange={setNested('shipper', 'name')} className={inputCls} /></Field>
+          <Field label="Email" span={2}><input type="email" value={form.shipper.email} onChange={setNested('shipper', 'email')} className={inputCls} /></Field>
+          <Field label="Phone 1"><input value={form.shipper.phone1} onChange={setNested('shipper', 'phone1')} className={inputCls} /></Field>
+          <Field label="Phone 2"><input value={form.shipper.phone2} onChange={setNested('shipper', 'phone2')} className={inputCls} /></Field>
+          <Field label="Address" span={2}><input value={form.shipper.address} onChange={setNested('shipper', 'address')} className={inputCls} /></Field>
+          <Field label="Tax Number" span={2}><input value={form.shipper.taxNumber} onChange={setNested('shipper', 'taxNumber')} className={monoInputCls} /></Field>
+
+          <SubHeading>Consignee</SubHeading>
+          <Field label="Name" span={2}><input value={form.consignee.name} onChange={setNested('consignee', 'name')} className={inputCls} /></Field>
+          <Field label="Email" span={2}><input type="email" value={form.consignee.email} onChange={setNested('consignee', 'email')} className={inputCls} /></Field>
+          <Field label="Phone 1"><input value={form.consignee.phone1} onChange={setNested('consignee', 'phone1')} className={inputCls} /></Field>
+          <Field label="Phone 2"><input value={form.consignee.phone2} onChange={setNested('consignee', 'phone2')} className={inputCls} /></Field>
+          <Field label="Address" span={2}><input value={form.consignee.address} onChange={setNested('consignee', 'address')} className={inputCls} /></Field>
+          <Field label="Tax Number" span={2}><input value={form.consignee.taxNumber} onChange={setNested('consignee', 'taxNumber')} className={monoInputCls} /></Field>
         </Section>
 
         <Section title="Vessel & Schedule">
-          <Field label="Main Vessel" span={2}>
-            <Select searchable placeholder="Select vessel" options={vesselOptions} value={form.mainVessel} onChange={set('mainVessel')} />
+          <Field label="B/L No"><input value={form.blNo} onChange={setInput('blNo')} className={monoInputCls} /></Field>
+          <Field label="Carrier">
+            <Select searchable placeholder="Select carrier" options={carrierOptions} value={form.carrier} onChange={set('carrier')} />
           </Field>
+          <Field label="Vessel Name"><input value={form.vesselName} onChange={setInput('vesselName')} className={inputCls} placeholder="e.g. MSC OSCAR" /></Field>
           <Field label="Voyage No" span={2}><input value={form.voyageNo} onChange={setInput('voyageNo')} className={monoInputCls} /></Field>
           <Field label="ETD"><input type="date" value={form.etd} onChange={setInput('etd')} className={monoInputCls} /></Field>
           <Field label="ATD"><input type="date" value={form.atd} onChange={setInput('atd')} className={monoInputCls} /></Field>
@@ -147,12 +174,17 @@ export default function BookingFormStep2({
         </Section>
 
         <Section title="Agents">
-          <Field label="POL Agent" span={2}>
-            <Select searchable placeholder="Select POL agent" options={polAgentOptions} value={form.polAgent} onChange={set('polAgent')} />
-          </Field>
-          <Field label="POD Agent" span={2}>
-            <Select searchable placeholder="Select POD agent" options={podAgentOptions} value={form.podAgent} onChange={set('podAgent')} />
-          </Field>
+          <SubHeading first>POL Agent</SubHeading>
+          <Field label="Agent Name" span={2}><input value={form.polAgent.name} onChange={setNested('polAgent', 'name')} className={inputCls} /></Field>
+          <Field label="Email"><input type="email" value={form.polAgent.email} onChange={setNested('polAgent', 'email')} className={inputCls} /></Field>
+          <Field label="Phone"><input value={form.polAgent.phone} onChange={setNested('polAgent', 'phone')} className={inputCls} /></Field>
+          <Field label="Address" span={2}><input value={form.polAgent.address} onChange={setNested('polAgent', 'address')} className={inputCls} /></Field>
+
+          <SubHeading>POD Agent</SubHeading>
+          <Field label="Agent Name" span={2}><input value={form.podAgent.name} onChange={setNested('podAgent', 'name')} className={inputCls} /></Field>
+          <Field label="Email"><input type="email" value={form.podAgent.email} onChange={setNested('podAgent', 'email')} className={inputCls} /></Field>
+          <Field label="Phone"><input value={form.podAgent.phone} onChange={setNested('podAgent', 'phone')} className={inputCls} /></Field>
+          <Field label="Address" span={2}><input value={form.podAgent.address} onChange={setNested('podAgent', 'address')} className={inputCls} /></Field>
         </Section>
 
         <Section title="Status & Notes">

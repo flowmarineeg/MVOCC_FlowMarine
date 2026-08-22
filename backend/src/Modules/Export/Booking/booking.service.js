@@ -1,15 +1,46 @@
+import fs from 'fs'
+import path from 'path'
+import mongoose from 'mongoose'
 import Booking from './booking.model.js'
-import { checkStock, decrementStock, incrementStock } from '../../MasterData/ContainerStock/containerStock.service.js'
+import { checkStock, decrementStock, incrementStock } from '../../MasterData/Container/container.service.js'
 import ExcelJS from 'exceljs'
 
 const POPULATE_FIELDS = [
   { path: 'pol', select: 'name code country' },
   { path: 'pod', select: 'name code country' },
   { path: 'containers.containerType', select: 'code label' },
-  { path: 'mainVessel', select: 'name code' },
-  { path: 'polAgent', select: 'name type email phone' },
-  { path: 'podAgent', select: 'name type email phone' },
+  { path: 'carrier', select: 'name code' },
+  { path: 'nvocc', select: 'name code' },
 ]
+
+const BOOKING_STATUSES = ['pending', 'confirmed', 'cancelled']
+
+// Escapes regex metacharacters so `search` can only ever match literal text —
+// otherwise an unmatched "(" throws, and a crafted pattern risks ReDoS.
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+// Whitelists status/pol/pod instead of assigning req.query values straight
+// into a Mongo filter — Express's qs parser turns `?pol[$ne]=x` into an
+// object, which would otherwise flow into `.find()` as a query operator.
+const buildBookingFilter = ({ status, pol, pod, search, searchFields = ['jobNo', 'clientName'] } = {}) => {
+  const filter = {}
+  if (status && BOOKING_STATUSES.includes(status)) filter.status = status
+  if (pol && mongoose.Types.ObjectId.isValid(pol)) filter.pol = pol
+  if (pod && mongoose.Types.ObjectId.isValid(pod)) filter.pod = pod
+  if (search && typeof search === 'string') {
+    const regex = { $regex: escapeRegex(search), $options: 'i' }
+    filter.$or = searchFields.map((field) => ({ [field]: regex }))
+  }
+  return filter
+}
+
+// Dropping the dangerous-goods number whenever the flag is off is enforced
+// here rather than trusted from the client, since the frontend only sends
+// dangerousNumber while the toggle is on — leaving it simply absent (not
+// explicitly cleared) would let a stale value from a prior edit survive.
+const clearDangerousNumberIfNotDangerous = (booking) => {
+  if (!booking.isDangerous) booking.dangerousNumber = undefined
+}
 
 // ─── Step 1: Create Booking ───────────────────────────────────────────────────
 export const createBooking = async (data) => {
@@ -21,6 +52,41 @@ export const createBooking = async (data) => {
     }
   }
   const booking = new Booking(data)
+  clearDangerousNumberIfNotDangerous(booking)
+  await booking.save()
+  await booking.populate(POPULATE_FIELDS)
+  return { booking, stockWarnings }
+}
+
+// ─── Step 1: Update Client Quotation ──────────────────────────────────────────
+export const updateStep1 = async (id, data) => {
+  const booking = await Booking.findById(id)
+  if (!booking) throw Object.assign(new Error('Booking not found'), { statusCode: 404 })
+  if (booking.status === 'cancelled') {
+    throw Object.assign(new Error('Cannot update a cancelled booking'), { statusCode: 400 })
+  }
+
+  const stockWarnings = []
+  if (data.containers) {
+    for (const entry of data.containers) {
+      const { ok, available } = await checkStock(entry.containerType, entry.quantity)
+      if (!ok) {
+        stockWarnings.push({ containerTypeId: entry.containerType, requested: entry.quantity, available })
+      }
+    }
+  }
+
+  const step1Fields = [
+    'clientName', 'clientPhone', 'clientEmail', 'pol', 'pod', 'containers', 'blNo',
+    'commodity', 'ucrNumber', 'exportTaxNumber', 'importTaxNumber', 'importCountry',
+    'packagesCount', 'vgm', 'isDangerous', 'dangerousNumber', 'shippingDeclaration',
+  ]
+
+  for (const field of step1Fields) {
+    if (data[field] !== undefined) booking[field] = data[field]
+  }
+  clearDangerousNumberIfNotDangerous(booking)
+
   await booking.save()
   await booking.populate(POPULATE_FIELDS)
   return { booking, stockWarnings }
@@ -35,10 +101,10 @@ export const updateStep2 = async (id, data) => {
   }
 
   const step2Fields = [
-    'price', 'cost', 'freeTimeEstimated', 'freeTimeFinal',
+    'nvocc', 'price', 'cost', 'freeTime',
     'gateInDate', 'gateOutDate', 'containerLocation',
     'shipper', 'consignee', 'etd', 'atd', 'eta', 'ata',
-    'mainVessel', 'voyageNo', 'polAgent', 'podAgent',
+    'carrier', 'vesselName', 'voyageNo', 'polAgent', 'podAgent',
     'containers', 'manifestStatus', 'notes', 'blNo',
   ]
 
@@ -63,10 +129,11 @@ export const confirmBooking = async (id) => {
   booking.status = 'confirmed'
   await booking.save()
 
-  // Decrement stock for each container type
+  // Decrement stock for each container type, scoped to this booking's NVOCC
+  // so allocation never draws down a different NVOCC's physical containers
   for (const entry of booking.containers) {
     try {
-      await decrementStock(entry.containerType, entry.quantity)
+      await decrementStock(entry.containerType, entry.quantity, booking.nvocc)
     } catch (_) {
       // log but don't fail — stock may not be tracked for all types
     }
@@ -88,11 +155,12 @@ export const cancelBooking = async (id) => {
   booking.status = 'cancelled'
   await booking.save()
 
-  // Restore stock if it was previously confirmed
+  // Restore stock if it was previously confirmed, scoped to the same NVOCC
+  // that decrementStock allocated it against on confirm
   if (wasConfirmed) {
     for (const entry of booking.containers) {
       try {
-        await incrementStock(entry.containerType, entry.quantity)
+        await incrementStock(entry.containerType, entry.quantity, booking.nvocc)
       } catch (_) {}
     }
   }
@@ -101,19 +169,26 @@ export const cancelBooking = async (id) => {
   return booking
 }
 
+// ─── Delete Booking ───────────────────────────────────────────────────────────
+export const deleteBooking = async (id) => {
+  const booking = await Booking.findById(id)
+  if (!booking) throw Object.assign(new Error('Booking not found'), { statusCode: 404 })
+  if (booking.status === 'confirmed') {
+    throw Object.assign(new Error('Cancel the booking before deleting it'), { statusCode: 400 })
+  }
+
+  if (booking.shippingDeclaration?.filePath) {
+    const filePath = path.join(process.cwd(), 'uploads', 'shipping-declarations', booking.shippingDeclaration.filePath)
+    fs.unlink(filePath, () => {}) // best-effort cleanup — a missing file must not block deletion
+  }
+
+  await booking.deleteOne()
+  return booking
+}
+
 // ─── Get Bookings (paginated) ─────────────────────────────────────────────────
 export const getBookings = async ({ page = 1, limit = 20, status, pol, pod, search } = {}) => {
-  const filter = {}
-  if (status) filter.status = status
-  if (pol) filter.pol = pol
-  if (pod) filter.pod = pod
-  if (search) {
-    filter.$or = [
-      { jobNo: { $regex: search, $options: 'i' } },
-      { clientName: { $regex: search, $options: 'i' } },
-      { blNo: { $regex: search, $options: 'i' } },
-    ]
-  }
+  const filter = buildBookingFilter({ status, pol, pod, search, searchFields: ['jobNo', 'clientName', 'blNo'] })
 
   const skip = (Number(page) - 1) * Number(limit)
   const total = await Booking.countDocuments(filter)
@@ -135,16 +210,7 @@ export const getBookingById = async (id) => {
 
 // ─── Preview / Aggregation ────────────────────────────────────────────────────
 export const getPreviewData = async ({ status, pol, pod, search } = {}) => {
-  const matchStage = {}
-  if (status) matchStage.status = status
-  if (pol) matchStage.pol = new (await import('mongoose')).default.Types.ObjectId(pol)
-  if (pod) matchStage.pod = new (await import('mongoose')).default.Types.ObjectId(pod)
-  if (search) {
-    matchStage.$or = [
-      { jobNo: { $regex: search, $options: 'i' } },
-      { clientName: { $regex: search, $options: 'i' } },
-    ]
-  }
+  const matchStage = buildBookingFilter({ status, pol, pod, search })
 
   // Get bookings with full populate for table rows
   const bookings = await Booking.find(matchStage)
@@ -181,12 +247,13 @@ export const getPreviewData = async ({ status, pol, pod, search } = {}) => {
       .map((e) => `${e.containerType?.code || '?'} x${e.quantity}`)
       .join(', '),
     blNo: b.blNo || '-',
-    shipper: b.shipper || '-',
-    consignee: b.consignee || '-',
-    vessel: b.mainVessel?.name || '-',
+    shipper: b.shipper?.name || '-',
+    consignee: b.consignee?.name || '-',
+    vessel: b.vesselName || '-',
     voyageNo: b.voyageNo || '-',
     etd: b.etd || null,
     eta: b.eta || null,
+    step: b.step,
     status: b.status,
     manifestStatus: b.manifestStatus,
   }))
@@ -196,16 +263,7 @@ export const getPreviewData = async ({ status, pol, pod, search } = {}) => {
 
 // ─── Excel Export ─────────────────────────────────────────────────────────────
 export const generateExcel = async ({ status, pol, pod, search } = {}) => {
-  const filter = {}
-  if (status) filter.status = status
-  if (pol) filter.pol = pol
-  if (pod) filter.pod = pod
-  if (search) {
-    filter.$or = [
-      { jobNo: { $regex: search, $options: 'i' } },
-      { clientName: { $regex: search, $options: 'i' } },
-    ]
-  }
+  const filter = buildBookingFilter({ status, pol, pod, search })
 
   const bookings = await Booking.find(filter).populate(POPULATE_FIELDS).sort({ createdAt: -1 })
 
@@ -242,6 +300,7 @@ export const generateExcel = async ({ status, pol, pod, search } = {}) => {
     { header: 'Manifest Status', key: 'manifestStatus', width: 16 },
     { header: 'Price', key: 'price', width: 12 },
     { header: 'Cost', key: 'cost', width: 12 },
+    { header: 'Step', key: 'step', width: 10 },
     { header: 'Status', key: 'status', width: 12 },
   ]
 
@@ -269,9 +328,9 @@ export const generateExcel = async ({ status, pol, pod, search } = {}) => {
       pod: b.pod ? `${b.pod.code} — ${b.pod.name}` : '',
       containers: b.containers.map((e) => `${e.containerType?.code || '?'} x${e.quantity}`).join(', '),
       blNo: b.blNo || '',
-      shipper: b.shipper || '',
-      consignee: b.consignee || '',
-      vessel: b.mainVessel?.name || '',
+      shipper: b.shipper?.name || '',
+      consignee: b.consignee?.name || '',
+      vessel: b.vesselName || '',
       voyageNo: b.voyageNo || '',
       etd: fmtDate(b.etd),
       eta: fmtDate(b.eta),
@@ -280,6 +339,7 @@ export const generateExcel = async ({ status, pol, pod, search } = {}) => {
       manifestStatus: b.manifestStatus || '',
       price: b.price ?? '',
       cost: b.cost ?? '',
+      step: b.step,
       status: b.status,
     })
   }

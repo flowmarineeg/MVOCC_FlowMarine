@@ -6,6 +6,7 @@ export const getMemberById = (id) => api.get(`/team/members/${id}`).then((r) => 
 export const updateMemberRole = (id, data) => api.put(`/team/members/${id}/role`, data).then((r) => r.data.data)
 export const deactivateMember = (id) => api.patch(`/team/members/${id}/deactivate`).then((r) => r.data.data)
 export const reactivateMember = (id) => api.patch(`/team/members/${id}/reactivate`).then((r) => r.data.data)
+export const deleteMember = (id) => api.delete(`/team/members/${id}`).then((r) => r.data)
 
 export const getInvitations = (params = {}) => api.get('/team/invitations', { params }).then((r) => r.data)
 export const resendInvitation = (id) => api.post(`/team/invitations/${id}/resend`).then((r) => r.data.data)

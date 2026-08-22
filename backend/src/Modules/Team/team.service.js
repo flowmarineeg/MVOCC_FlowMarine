@@ -7,6 +7,13 @@ import { sendInvitationEmail } from '../../utils/email.service.js'
 const POPULATE_ROLE = { path: 'role', select: 'name permissions' }
 const INVITE_TTL_MS = () => Number(process.env.INVITATION_EXPIRES_DAYS || 7) * 24 * 60 * 60 * 1000
 
+const MEMBER_STATUSES = ['invited', 'active', 'deactivated']
+const INVITATION_STATUSES = ['pending', 'accepted', 'refused', 'expired', 'revoked']
+
+// Escapes regex metacharacters so `search` can only match literal text —
+// otherwise an unmatched "(" throws, and a crafted pattern risks ReDoS.
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 const createInvitationForUser = async ({ user, roleId, invitedBy }) => {
   const rawToken = generateRawToken()
   const invitation = await Invitation.create({
@@ -66,12 +73,10 @@ export const inviteMember = async ({ email, roleId, invitedBy }) => {
 
 export const listMembers = async ({ status, search, page = 1, limit = 20 } = {}) => {
   const filter = {}
-  if (status) filter.status = status
-  if (search) {
-    filter.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } },
-    ]
+  if (status && MEMBER_STATUSES.includes(status)) filter.status = status
+  if (search && typeof search === 'string') {
+    const regex = { $regex: escapeRegex(search), $options: 'i' }
+    filter.$or = [{ name: regex }, { email: regex }]
   }
 
   const skip = (Number(page) - 1) * Number(limit)
@@ -119,9 +124,23 @@ export const reactivateMember = async (id) => {
   return getMemberById(id)
 }
 
+export const deleteMember = async (id, requestingUserId) => {
+  if (String(id) === String(requestingUserId)) {
+    throw Object.assign(new Error('You cannot delete your own account'), { statusCode: 400 })
+  }
+  const member = await User.findById(id)
+  if (!member) throw Object.assign(new Error('Member not found'), { statusCode: 404 })
+  if (member.status === 'active') {
+    throw Object.assign(new Error('Deactivate this member before deleting them'), { statusCode: 400 })
+  }
+  await Invitation.deleteMany({ user: id })
+  await member.deleteOne()
+  return member
+}
+
 export const listInvitations = async ({ status, page = 1, limit = 20 } = {}) => {
   const filter = {}
-  if (status) filter.status = status
+  if (status && INVITATION_STATUSES.includes(status)) filter.status = status
 
   const skip = (Number(page) - 1) * Number(limit)
   const total = await Invitation.countDocuments(filter)

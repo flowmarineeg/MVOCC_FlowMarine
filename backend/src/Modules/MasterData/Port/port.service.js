@@ -1,4 +1,5 @@
 import Port from './port.model.js'
+import Booking from '../../Export/Booking/booking.model.js'
 
 export const getAllPorts = async (activeOnly = false) => {
   const filter = activeOnly ? { isActive: true } : {}
@@ -21,4 +22,15 @@ export const toggleActive = async (id) => {
   if (!port) throw Object.assign(new Error('Port not found'), { statusCode: 404 })
   port.isActive = !port.isActive
   return port.save()
+}
+
+export const deletePort = async (id) => {
+  const port = await Port.findById(id)
+  if (!port) throw Object.assign(new Error('Port not found'), { statusCode: 404 })
+  const usedInBookings = await Booking.countDocuments({ $or: [{ pol: id }, { pod: id }] })
+  if (usedInBookings > 0) {
+    throw Object.assign(new Error(`Port is used by ${usedInBookings} booking(s)`), { statusCode: 409 })
+  }
+  await port.deleteOne()
+  return port
 }

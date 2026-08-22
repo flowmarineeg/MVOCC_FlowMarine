@@ -11,6 +11,7 @@ router.get('/members/:id', authenticate, authorize('team:read'), ctrl.getMemberB
 router.put('/members/:id/role', authenticate, authorize('team:update'), updateMemberRoleRules, ctrl.updateMemberRole)
 router.patch('/members/:id/deactivate', authenticate, authorize('team:update'), ctrl.deactivateMember)
 router.patch('/members/:id/reactivate', authenticate, authorize('team:update'), ctrl.reactivateMember)
+router.delete('/members/:id', authenticate, authorize('team:update'), ctrl.deleteMember)
 router.get('/invitations', authenticate, authorize('team:read'), ctrl.getInvitations)
 router.post('/invitations/:id/resend', authenticate, authorize('team:invite'), ctrl.resendInvitation)
 router.delete('/invitations/:id', authenticate, authorize('team:invite'), ctrl.revokeInvitation)

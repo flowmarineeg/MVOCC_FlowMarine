@@ -10,16 +10,16 @@
   --color-card: #f9faf3;      /* ledger sheet surface, lifted off paper */
   --color-line: #d9dac9;      /* hairline rule on paper */
 
-  --color-rust: #c1541f;      /* corten container steel — primary accent */
+  --color-rust: #ae4c1c;      /* corten container steel — primary accent (darkened for AA text contrast on paper/card) */
   --color-rust-dark: #9e4218;
-  --color-signal: #d89a3e;    /* brass signal lamp — pending */
+  --color-signal: #825c25;    /* brass signal lamp — pending (darkened from #d89a3e, which read ~2.3:1 on paper/card) */
   --color-stamp: #2e6650;     /* ledger stamp green — confirmed */
   --color-brick: #9a3324;     /* cancelled */
-  --color-muted: #5b6b70;     /* secondary text on paper */
+  --color-muted: #526065;     /* secondary text on paper (darkened for a comfortable AA margin) */
 
-  --font-sans: var(--font-plex-sans);
+  --font-sans: var(--font-alexandria);
   --font-mono: var(--font-plex-mono);
-  --font-display: var(--font-stencil);
+  --font-display: var(--font-alexandria);
 }
 
 body {

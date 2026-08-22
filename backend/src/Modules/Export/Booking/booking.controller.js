@@ -1,3 +1,4 @@
+import path from 'path'
 import { validationResult } from 'express-validator'
 import * as service from './booking.service.js'
 import { logAction, getRequestMeta } from '../../AuditLog/auditLog.service.js'
@@ -6,7 +7,20 @@ export const createBooking = async (req, res, next) => {
   try {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
-    const { booking, stockWarnings } = await service.createBooking(req.body)
+    // shippingDeclaration must only ever come from an actual uploaded file —
+    // never from the JSON body, or a client could plant an arbitrary filePath
+    // (e.g. "../../../.env") that the attachment-download route would later read.
+    const payload = { ...req.body }
+    delete payload.shippingDeclaration
+    if (req.file) {
+      payload.shippingDeclaration = {
+        fileName: req.file.originalname,
+        filePath: req.file.filename,
+        mimeType: req.file.mimetype,
+        uploadedAt: new Date(),
+      }
+    }
+    const { booking, stockWarnings } = await service.createBooking(payload)
     res.status(201).json({
       success: true,
       data: booking,
@@ -29,6 +43,44 @@ export const getBookingById = async (req, res, next) => {
   try {
     const booking = await service.getBookingById(req.params.id)
     res.json({ success: true, data: booking })
+  } catch (err) { next(err) }
+}
+
+export const getAttachment = async (req, res, next) => {
+  try {
+    const booking = await service.getBookingById(req.params.id)
+    if (!booking.shippingDeclaration?.filePath) {
+      return res.status(404).json({ success: false, message: 'No shipping declaration attached to this booking' })
+    }
+    // path.basename strips any directory components as defense in depth —
+    // filePath should only ever be a bare, server-generated filename anyway.
+    const filePath = path.join(process.cwd(), 'uploads', 'shipping-declarations', path.basename(booking.shippingDeclaration.filePath))
+    res.download(filePath, booking.shippingDeclaration.fileName)
+  } catch (err) { next(err) }
+}
+
+export const updateStep1 = async (req, res, next) => {
+  try {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
+    const payload = { ...req.body }
+    delete payload.shippingDeclaration
+    if (req.file) {
+      payload.shippingDeclaration = {
+        fileName: req.file.originalname,
+        filePath: req.file.filename,
+        mimeType: req.file.mimetype,
+        uploadedAt: new Date(),
+      }
+    }
+    const { booking, stockWarnings } = await service.updateStep1(req.params.id, payload)
+    res.json({
+      success: true,
+      data: booking,
+      ...(stockWarnings.length > 0 && {
+        warnings: { message: 'Some container quantities exceed available stock', details: stockWarnings },
+      }),
+    })
   } catch (err) { next(err) }
 }
 
@@ -60,6 +112,17 @@ export const cancelBooking = async (req, res, next) => {
       description: `Cancelled booking ${booking.jobNo}`, result: 'SUCCESS', ...getRequestMeta(req),
     })
     res.json({ success: true, data: booking })
+  } catch (err) { next(err) }
+}
+
+export const deleteBooking = async (req, res, next) => {
+  try {
+    const booking = await service.deleteBooking(req.params.id)
+    await logAction({
+      user: req.user, action: 'DELETE', resource: 'Booking', resourceId: booking.jobNo,
+      description: `Deleted booking ${booking.jobNo}`, result: 'SUCCESS', ...getRequestMeta(req),
+    })
+    res.json({ success: true, message: 'Booking deleted' })
   } catch (err) { next(err) }
 }
 

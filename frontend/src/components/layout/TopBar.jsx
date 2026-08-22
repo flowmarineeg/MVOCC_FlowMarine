@@ -1,16 +1,26 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { FaBars, FaUserCircle, FaSignOutAlt } from 'react-icons/fa'
 import { useAuth } from '@/context/AuthContext'
+import Modal from '@/components/ui/Modal'
 
 export default function TopBar({ onMenuClick }) {
   const { user, logout } = useAuth()
   const router = useRouter()
+  const [logoutOpen, setLogoutOpen] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
 
   const handleLogout = async () => {
-    await logout()
-    router.push('/login')
+    setLoggingOut(true)
+    try {
+      await logout()
+      router.push('/login')
+    } finally {
+      setLoggingOut(false)
+      setLogoutOpen(false)
+    }
   }
 
   return (
@@ -33,13 +43,24 @@ export default function TopBar({ onMenuClick }) {
           </span>
         </div>
         <button
-          onClick={handleLogout}
+          onClick={() => setLogoutOpen(true)}
           title="Sign out"
           className="flex h-9 w-9 items-center justify-center text-muted transition-colors hover:bg-brick/10 hover:text-brick"
         >
           <FaSignOutAlt />
         </button>
       </div>
+
+      <Modal
+        isOpen={logoutOpen}
+        onClose={() => setLogoutOpen(false)}
+        onConfirm={handleLogout}
+        title="Sign out?"
+        message="You'll need to log in again to access the dashboard."
+        confirmLabel="Sign out"
+        danger
+        loading={loggingOut}
+      />
     </header>
   )
 }

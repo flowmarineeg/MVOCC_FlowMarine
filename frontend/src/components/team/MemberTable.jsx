@@ -1,13 +1,23 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { FaBan, FaUndo } from 'react-icons/fa'
+import { FaBan, FaUndo, FaTrash } from 'react-icons/fa'
 import Badge from '@/components/ui/Badge'
 import Select from '@/components/ui/Select'
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleString() : 'Never')
 
-export default function MemberTable({ members = [], roles = [], currentUserId, canManage = false, onChangeRole, onDeactivate, onReactivate, busyId }) {
+export default function MemberTable({
+  members = [],
+  roles = [],
+  currentUserId,
+  canManage = false,
+  onChangeRole,
+  onDeactivate,
+  onReactivate,
+  onDeleteRequest,
+  busyId,
+}) {
   const roleOptions = roles.map((r) => ({ value: r._id, label: r.name }))
 
   return (
@@ -68,6 +78,16 @@ export default function MemberTable({ members = [], roles = [], currentUserId, c
                       title="Reactivate"
                     >
                       <FaUndo className="text-xs" />
+                    </button>
+                  )}
+                  {canManage && m.status !== 'active' && String(m._id) !== String(currentUserId) && (
+                    <button
+                      onClick={() => onDeleteRequest(m)}
+                      disabled={busyId === m._id}
+                      className="flex h-8 w-8 items-center justify-center text-muted transition-colors hover:bg-brick/10 hover:text-brick disabled:opacity-40"
+                      title="Delete"
+                    >
+                      <FaTrash className="text-xs" />
                     </button>
                   )}
                 </div>

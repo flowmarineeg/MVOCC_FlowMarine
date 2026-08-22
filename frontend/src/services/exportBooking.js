@@ -9,6 +9,9 @@ export const getBookingById = (id) =>
 export const createBooking = (data) =>
   api.post('/export/bookings', data).then((r) => r.data)
 
+export const updateStep1 = (id, data) =>
+  api.put(`/export/bookings/${id}/step1`, data).then((r) => r.data)
+
 export const updateStep2 = (id, data) =>
   api.put(`/export/bookings/${id}/step2`, data).then((r) => r.data.data)
 
@@ -17,6 +20,9 @@ export const confirmBooking = (id) =>
 
 export const cancelBooking = (id) =>
   api.put(`/export/bookings/${id}/cancel`).then((r) => r.data.data)
+
+export const deleteBooking = (id) =>
+  api.delete(`/export/bookings/${id}`).then((r) => r.data)
 
 export const getPreview = (params = {}) =>
   api.get('/export/bookings/preview', { params }).then((r) => r.data)

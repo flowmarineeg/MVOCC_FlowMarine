@@ -22,6 +22,11 @@ const errorHandler = (err, req, res, next) => {
     message = `Invalid ${err.path}: ${err.value}`
   }
 
+  // Multer upload error (file too large, unexpected field, etc.)
+  if (err.name === 'MulterError') {
+    statusCode = 400
+  }
+
   res.status(statusCode).json({
     success: false,
     message,

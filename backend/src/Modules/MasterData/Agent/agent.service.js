@@ -1,9 +1,11 @@
 import Agent from './agent.model.js'
 
+const AGENT_TYPES = ['POL', 'POD', 'BOTH']
+
 export const getAllAgents = async ({ type, activeOnly } = {}) => {
   const filter = {}
   if (activeOnly) filter.isActive = true
-  if (type) filter.type = { $in: [type, 'BOTH'] }
+  if (type && AGENT_TYPES.includes(type)) filter.type = { $in: [type, 'BOTH'] }
   return Agent.find(filter).sort({ name: 1 })
 }
 

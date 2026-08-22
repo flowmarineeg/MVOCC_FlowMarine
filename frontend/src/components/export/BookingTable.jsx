@@ -2,11 +2,11 @@
 
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { FaEye, FaEdit, FaCheckCircle, FaBan } from 'react-icons/fa'
+import { FaEye, FaEdit, FaCheckCircle, FaBan, FaTrash } from 'react-icons/fa'
 import Badge from '@/components/ui/Badge'
 import Plate from '@/components/ui/Plate'
 
-export default function BookingTable({ bookings = [], canUpdate = false, onConfirm, onCancel, confirmingId, cancellingId }) {
+export default function BookingTable({ bookings = [], canUpdate = false, onConfirm, onCancel, onDeleteRequest, confirmingId, cancellingId }) {
   return (
     <div className="overflow-x-auto border border-ink/15 bg-card">
       <table className="w-full text-sm">
@@ -18,6 +18,7 @@ export default function BookingTable({ bookings = [], canUpdate = false, onConfi
             <th className="px-4 py-3">POD</th>
             <th className="px-4 py-3">Containers</th>
             <th className="px-4 py-3">B/L No</th>
+            <th className="px-4 py-3">Step</th>
             <th className="px-4 py-3">Status</th>
             <th className="px-4 py-3 text-right">Actions</th>
           </tr>
@@ -39,6 +40,7 @@ export default function BookingTable({ bookings = [], canUpdate = false, onConfi
                 {b.containers?.map((c) => `${c.containerType?.code || '?'} x${c.quantity}`).join(', ')}
               </td>
               <td className="px-4 py-3 font-mono text-xs text-muted">{b.blNo || '-'}</td>
+              <td className="px-4 py-3 font-mono text-xs text-muted">Step {b.step ?? 1}</td>
               <td className="px-4 py-3"><Badge value={b.status} /></td>
               <td className="px-4 py-3">
                 <div className="flex items-center justify-end gap-1">
@@ -51,9 +53,9 @@ export default function BookingTable({ bookings = [], canUpdate = false, onConfi
                   </Link>
                   {canUpdate && b.status !== 'cancelled' && (
                     <Link
-                      href={`/export/bookings/${b._id}/step2`}
+                      href={`/export/bookings/${b._id}/edit`}
                       className="flex h-8 w-8 items-center justify-center text-muted transition-colors hover:bg-ink/5 hover:text-ink"
-                      title="Edit Step 2"
+                      title="Edit"
                     >
                       <FaEdit className="text-xs" />
                     </Link>
@@ -76,6 +78,15 @@ export default function BookingTable({ bookings = [], canUpdate = false, onConfi
                       title="Cancel"
                     >
                       <FaBan className="text-xs" />
+                    </button>
+                  )}
+                  {canUpdate && b.status !== 'confirmed' && (
+                    <button
+                      onClick={() => onDeleteRequest(b)}
+                      className="flex h-8 w-8 items-center justify-center text-muted transition-colors hover:bg-brick/10 hover:text-brick"
+                      title="Delete"
+                    >
+                      <FaTrash className="text-xs" />
                     </button>
                   )}
                 </div>

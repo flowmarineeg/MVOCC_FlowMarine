@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { FaArrowLeft, FaEdit } from 'react-icons/fa'
+import { FaArrowLeft, FaEdit, FaFileDownload, FaTrash } from 'react-icons/fa'
 import * as bookingApi from '@/services/exportBooking'
 import { PageLoader } from '@/components/ui/Spinner'
 import Badge from '@/components/ui/Badge'
@@ -54,8 +54,10 @@ export default function BookingDetailPage() {
   const [loading, setLoading] = useState(true)
   const [confirming, setConfirming] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
   const load = () => {
     bookingApi
@@ -98,6 +100,18 @@ export default function BookingDetailPage() {
     }
   }
 
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      await bookingApi.deleteBooking(id)
+      toast('Booking deleted', 'success')
+      router.push('/export/bookings')
+    } catch (err) {
+      toast(err.message, 'error')
+      setDeleting(false)
+    }
+  }
+
   if (loading) return <div className="p-6"><PageLoader /></div>
   if (!booking) return null
 
@@ -117,10 +131,10 @@ export default function BookingDetailPage() {
         <div className="flex items-center gap-2">
           {canUpdate && booking.status !== 'cancelled' && (
             <Link
-              href={`/export/bookings/${id}/step2`}
+              href={`/export/bookings/${id}/edit`}
               className="flex items-center gap-2 bg-rust px-4 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark"
             >
-              <FaEdit /> Edit Step 2
+              <FaEdit /> Edit Booking
             </Link>
           )}
           {canUpdate && booking.status === 'pending' && (
@@ -139,6 +153,15 @@ export default function BookingDetailPage() {
               Cancel
             </button>
           )}
+          {canUpdate && booking.status !== 'confirmed' && (
+            <button
+              onClick={() => setDeleteOpen(true)}
+              title="Delete booking"
+              className="flex h-10 w-10 items-center justify-center border border-brick/40 text-brick transition-colors hover:bg-brick/5"
+            >
+              <FaTrash className="text-sm" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -150,27 +173,70 @@ export default function BookingDetailPage() {
         <Row label="POL" value={booking.pol ? `${booking.pol.code} — ${booking.pol.name}` : '—'} />
         <Row label="POD" value={booking.pod ? `${booking.pod.code} — ${booking.pod.name}` : '—'} />
         <Row label="B/L No" value={booking.blNo} />
+        <Row label="Commodity" value={booking.commodity} />
+        <Row label="UCR Number" value={booking.ucrNumber} />
+        <Row label="Export Tax Number" value={booking.exportTaxNumber} />
+        <Row label="Import Tax Number" value={booking.importTaxNumber} />
+        <Row label="Import Country" value={booking.importCountry} />
+        <Row label="No. of Packages" value={booking.packagesCount} />
+        <Row label="VGM (kg)" value={booking.vgm} />
+        <Row label="Dangerous Goods" value={booking.isDangerous ? <span className="font-semibold text-brick">Yes</span> : 'No'} />
+        {booking.isDangerous && <Row label="Dangerous Goods No." value={booking.dangerousNumber} />}
+        <Row
+          label="Shipping Declaration"
+          value={
+            booking.shippingDeclaration?.filePath ? (
+              <a
+                href={`${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api')}/export/bookings/${booking._id}/attachment`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-rust transition-colors hover:text-rust-dark"
+              >
+                <FaFileDownload className="text-xs" /> {booking.shippingDeclaration.fileName}
+              </a>
+            ) : (
+              '—'
+            )
+          }
+        />
         <Row label="Containers" value={booking.containers?.map((c) => `${c.containerType?.code || '?'} x${c.quantity}`).join(', ')} />
       </Section>
 
       <Section title="Operational Details" index="Step 02" delay={0.05}>
+        <Row label="NVOCC" value={booking.nvocc ? `${booking.nvocc.name} (${booking.nvocc.code})` : '—'} />
         <Row label="Price" value={booking.price} />
         <Row label="Cost" value={booking.cost} />
-        <Row label="Free Time (Est.)" value={fmtDate(booking.freeTimeEstimated)} />
-        <Row label="Free Time (Final)" value={fmtDate(booking.freeTimeFinal)} />
+        <Row label="Free Time" value={fmtDate(booking.freeTime)} />
         <Row label="Gate In" value={fmtDate(booking.gateInDate)} />
         <Row label="Gate Out" value={fmtDate(booking.gateOutDate)} />
         <Row label="Container Location" value={booking.containerLocation} />
-        <Row label="Shipper" value={booking.shipper} />
-        <Row label="Consignee" value={booking.consignee} />
-        <Row label="Main Vessel" value={booking.mainVessel ? `${booking.mainVessel.name} (${booking.mainVessel.code})` : '—'} />
+        <Row label="Shipper Name" value={booking.shipper?.name} />
+        <Row label="Shipper Email" value={booking.shipper?.email} />
+        <Row label="Shipper Phone 1" value={booking.shipper?.phone1} />
+        <Row label="Shipper Phone 2" value={booking.shipper?.phone2} />
+        <Row label="Shipper Address" value={booking.shipper?.address} />
+        <Row label="Shipper Tax No." value={booking.shipper?.taxNumber} />
+        <Row label="Consignee Name" value={booking.consignee?.name} />
+        <Row label="Consignee Email" value={booking.consignee?.email} />
+        <Row label="Consignee Phone 1" value={booking.consignee?.phone1} />
+        <Row label="Consignee Phone 2" value={booking.consignee?.phone2} />
+        <Row label="Consignee Address" value={booking.consignee?.address} />
+        <Row label="Consignee Tax No." value={booking.consignee?.taxNumber} />
+        <Row label="Carrier" value={booking.carrier ? `${booking.carrier.name} (${booking.carrier.code})` : '—'} />
+        <Row label="Vessel Name" value={booking.vesselName} />
         <Row label="Voyage No" value={booking.voyageNo} />
         <Row label="ETD" value={fmtDate(booking.etd)} />
         <Row label="ATD" value={fmtDate(booking.atd)} />
         <Row label="ETA" value={fmtDate(booking.eta)} />
         <Row label="ATA" value={fmtDate(booking.ata)} />
-        <Row label="POL Agent" value={booking.polAgent?.name} />
-        <Row label="POD Agent" value={booking.podAgent?.name} />
+        <Row label="POL Agent Name" value={booking.polAgent?.name} />
+        <Row label="POL Agent Email" value={booking.polAgent?.email} />
+        <Row label="POL Agent Phone" value={booking.polAgent?.phone} />
+        <Row label="POL Agent Address" value={booking.polAgent?.address} />
+        <Row label="POD Agent Name" value={booking.podAgent?.name} />
+        <Row label="POD Agent Email" value={booking.podAgent?.email} />
+        <Row label="POD Agent Phone" value={booking.podAgent?.phone} />
+        <Row label="POD Agent Address" value={booking.podAgent?.address} />
         <Row label="Manifest Status" value={<Badge value={booking.manifestStatus} />} />
         <Row label="Notes" value={booking.notes} />
       </Section>
@@ -193,6 +259,16 @@ export default function BookingDetailPage() {
         confirmLabel="Cancel Booking"
         danger
         loading={cancelling}
+      />
+      <Modal
+        isOpen={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={handleDelete}
+        title="Delete this booking?"
+        message={`This will permanently delete booking ${booking.jobNo}. This cannot be undone.`}
+        confirmLabel="Delete Booking"
+        danger
+        loading={deleting}
       />
     </div>
   )

@@ -10,6 +10,7 @@ import { PageLoader } from '@/components/ui/Spinner'
 import EmptyState from '@/components/ui/EmptyState'
 import Pagination from '@/components/ui/Pagination'
 import BookingTable from '@/components/export/BookingTable'
+import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
 
@@ -32,6 +33,8 @@ export default function BookingsListPage() {
   const [exporting, setExporting] = useState(false)
   const [confirmingId, setConfirmingId] = useState(null)
   const [cancellingId, setCancellingId] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
@@ -99,6 +102,20 @@ export default function BookingsListPage() {
       toast(err.message, 'error')
     } finally {
       setCancellingId(null)
+    }
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      await bookingApi.deleteBooking(deleteTarget._id)
+      toast('Booking deleted', 'success')
+      setDeleteTarget(null)
+      fetchBookings()
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -188,12 +205,24 @@ export default function BookingsListPage() {
             canUpdate={canUpdate}
             onConfirm={handleConfirm}
             onCancel={handleCancel}
+            onDeleteRequest={setDeleteTarget}
             confirmingId={confirmingId}
             cancellingId={cancellingId}
           />
           <Pagination page={page} pages={pages} total={total} limit={limit} onPageChange={setPage} onLimitChange={setLimit} />
         </>
       )}
+
+      <Modal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
+        title="Delete this booking?"
+        message={`This will permanently delete booking ${deleteTarget?.jobNo || ''}. This cannot be undone.`}
+        confirmLabel="Delete booking"
+        danger
+        loading={deleting}
+      />
     </div>
   )
 }

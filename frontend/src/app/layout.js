@@ -1,15 +1,9 @@
-import { Big_Shoulders_Stencil, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
+import { Alexandria, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
 
-const stencil = Big_Shoulders_Stencil({
-  variable: "--font-stencil",
-  subsets: ["latin"],
-  weight: ["600", "700", "800"],
-});
-
-const plexSans = IBM_Plex_Sans({
-  variable: "--font-plex-sans",
+const alexandria = Alexandria({
+  variable: "--font-alexandria",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
 });
@@ -29,7 +23,7 @@ export default function RootLayout({ children }) {
   return (
     <html
       lang="en"
-      className={`${stencil.variable} ${plexSans.variable} ${plexMono.variable} h-full antialiased`}
+      className={`${alexandria.variable} ${plexMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <AuthProvider>{children}</AuthProvider>

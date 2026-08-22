@@ -1,10 +1,10 @@
 import { validationResult } from 'express-validator'
-import * as service from './port.service.js'
+import * as service from './nvocc.service.js'
 
 export const getAll = async (req, res, next) => {
   try {
     const activeOnly = req.query.active === 'true'
-    const data = await service.getAllPorts(activeOnly)
+    const data = await service.getAllNvoccs(activeOnly)
     res.json({ success: true, data })
   } catch (err) { next(err) }
 }
@@ -13,7 +13,7 @@ export const create = async (req, res, next) => {
   try {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
-    const data = await service.createPort(req.body)
+    const data = await service.createNvocc(req.body)
     res.status(201).json({ success: true, data })
   } catch (err) { next(err) }
 }
@@ -22,7 +22,7 @@ export const update = async (req, res, next) => {
   try {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
-    const data = await service.updatePort(req.params.id, req.body)
+    const data = await service.updateNvocc(req.params.id, req.body)
     res.json({ success: true, data })
   } catch (err) { next(err) }
 }
@@ -36,7 +36,7 @@ export const toggle = async (req, res, next) => {
 
 export const remove = async (req, res, next) => {
   try {
-    await service.deletePort(req.params.id)
-    res.json({ success: true, message: 'Port deleted' })
+    await service.deleteNvocc(req.params.id)
+    res.json({ success: true, message: 'NVOCC deleted' })
   } catch (err) { next(err) }
 }

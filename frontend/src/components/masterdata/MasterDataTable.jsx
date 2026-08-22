@@ -1,10 +1,10 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { FaEdit, FaToggleOn, FaToggleOff } from 'react-icons/fa'
+import { FaEdit, FaToggleOn, FaToggleOff, FaTrash } from 'react-icons/fa'
 import Badge from '@/components/ui/Badge'
 
-export default function MasterDataTable({ items = [], fields, canUpdate = false, onEdit, onToggle, busyId }) {
+export default function MasterDataTable({ items = [], fields, canUpdate = false, onEdit, onToggle, onDeleteRequest, busyId }) {
   return (
     <div className="overflow-x-auto border border-ink/15 bg-card">
       <table className="w-full text-sm">
@@ -50,6 +50,14 @@ export default function MasterDataTable({ items = [], fields, canUpdate = false,
                       title={item.isActive ? 'Deactivate' : 'Activate'}
                     >
                       {item.isActive ? <FaToggleOn className="text-sm" /> : <FaToggleOff className="text-sm" />}
+                    </button>
+                    <button
+                      onClick={() => onDeleteRequest(item)}
+                      disabled={busyId === item._id}
+                      className="flex h-8 w-8 items-center justify-center text-muted transition-colors hover:bg-brick/10 hover:text-brick disabled:opacity-40"
+                      title="Delete"
+                    >
+                      <FaTrash className="text-xs" />
                     </button>
                   </div>
                 </td>

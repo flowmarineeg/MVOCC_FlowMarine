@@ -1,8 +1,8 @@
 import { body } from 'express-validator'
 
 export const createRules = [
-  body('name').trim().notEmpty().withMessage('Vessel name is required'),
-  body('code').trim().notEmpty().withMessage('Vessel code is required'),
+  body('name').trim().notEmpty().withMessage('NVOCC name is required'),
+  body('code').trim().notEmpty().withMessage('NVOCC code is required'),
 ]
 
 export const updateRules = [

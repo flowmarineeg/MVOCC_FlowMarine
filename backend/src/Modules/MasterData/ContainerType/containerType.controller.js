@@ -45,3 +45,12 @@ export const toggle = async (req, res, next) => {
     next(err)
   }
 }
+
+export const remove = async (req, res, next) => {
+  try {
+    await service.deleteContainerType(req.params.id)
+    res.json({ success: true, message: 'Container type deleted' })
+  } catch (err) {
+    next(err)
+  }
+}

@@ -1,4 +1,6 @@
 import ContainerType from './containerType.model.js'
+import Container from '../Container/container.model.js'
+import Booking from '../../Export/Booking/booking.model.js'
 
 export const getAllContainerTypes = async (activeOnly = false) => {
   const filter = activeOnly ? { isActive: true } : {}
@@ -30,4 +32,21 @@ export const toggleActive = async (id) => {
   if (!ct) throw Object.assign(new Error('Container type not found'), { statusCode: 404 })
   ct.isActive = !ct.isActive
   return ct.save()
+}
+
+export const deleteContainerType = async (id) => {
+  const ct = await ContainerType.findById(id)
+  if (!ct) throw Object.assign(new Error('Container type not found'), { statusCode: 404 })
+  const [usedInBookings, usedInStock] = await Promise.all([
+    Booking.countDocuments({ 'containers.containerType': id }),
+    Container.countDocuments({ containerType: id }),
+  ])
+  if (usedInBookings > 0) {
+    throw Object.assign(new Error(`Container type is used by ${usedInBookings} booking(s)`), { statusCode: 409 })
+  }
+  if (usedInStock > 0) {
+    throw Object.assign(new Error(`Container type has ${usedInStock} container unit(s) in stock`), { statusCode: 409 })
+  }
+  await ct.deleteOne()
+  return ct
 }

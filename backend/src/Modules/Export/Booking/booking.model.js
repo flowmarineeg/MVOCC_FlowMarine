@@ -16,6 +16,31 @@ const containerEntrySchema = new mongoose.Schema(
   { _id: false }
 )
 
+// Shipper / consignee are entered directly on the booking (not master data) —
+// each party's own contact details, not just a company name.
+const partySchema = new mongoose.Schema(
+  {
+    name: { type: String, trim: true },
+    email: { type: String, trim: true, lowercase: true },
+    phone1: { type: String, trim: true },
+    phone2: { type: String, trim: true },
+    address: { type: String, trim: true },
+    taxNumber: { type: String, trim: true },
+  },
+  { _id: false }
+)
+
+// POL/POD agents are free-text at Step 2 rather than a Master Data selection.
+const agentContactSchema = new mongoose.Schema(
+  {
+    name: { type: String, trim: true },
+    email: { type: String, trim: true, lowercase: true },
+    phone: { type: String, trim: true },
+    address: { type: String, trim: true },
+  },
+  { _id: false }
+)
+
 const bookingSchema = new mongoose.Schema(
   {
     // ─── Step 1 — Client Quotation ───────────────────────────────────
@@ -63,34 +88,81 @@ const bookingSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    commodity: {
+      type: String,
+      required: [true, 'Commodity is required'],
+      trim: true,
+    },
+    ucrNumber: {
+      type: String,
+      trim: true,
+    },
+    exportTaxNumber: {
+      type: String,
+      trim: true,
+    },
+    importTaxNumber: {
+      type: String,
+      trim: true,
+    },
+    importCountry: {
+      type: String,
+      trim: true,
+    },
+    packagesCount: {
+      type: Number,
+      min: [0, 'Number of packages must be a positive number'],
+    },
+    vgm: {
+      type: Number,
+      min: [0, 'VGM must be a positive number'],
+    },
+    isDangerous: {
+      type: Boolean,
+      default: false,
+    },
+    dangerousNumber: {
+      type: String,
+      trim: true,
+      validate: {
+        validator: function (v) {
+          return !this.isDangerous || !!(v && v.trim())
+        },
+        message: 'Dangerous goods number is required when cargo is marked dangerous',
+      },
+    },
+    shippingDeclaration: {
+      fileName: { type: String },
+      filePath: { type: String },
+      mimeType: { type: String },
+      uploadedAt: { type: Date },
+    },
 
     // ─── Step 2 — Operational Details ────────────────────────────────
+    nvocc: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Nvocc',
+    },
     price: { type: Number },
     cost: { type: Number },
-    freeTimeEstimated: { type: Date },
-    freeTimeFinal: { type: Date },
+    freeTime: { type: Date },
     gateInDate: { type: Date },
     gateOutDate: { type: Date },
     containerLocation: { type: String, trim: true },
-    shipper: { type: String, trim: true },
-    consignee: { type: String, trim: true },
+    shipper: { type: partySchema },
+    consignee: { type: partySchema },
     etd: { type: Date },
     atd: { type: Date },
     eta: { type: Date },
     ata: { type: Date },
-    mainVessel: {
+    carrier: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Vessel',
+      ref: 'Carrier',
     },
+    vesselName: { type: String, trim: true },
     voyageNo: { type: String, trim: true },
-    polAgent: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Agent',
-    },
-    podAgent: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Agent',
-    },
+    polAgent: { type: agentContactSchema },
+    podAgent: { type: agentContactSchema },
     manifestStatus: {
       type: String,
       enum: ['PENDING', 'SUBMITTED', 'CONFIRMED'],
@@ -113,8 +185,12 @@ const bookingSchema = new mongoose.Schema(
 )
 
 // Indexes
+// (jobNo's unique index comes from `unique: true` on the field itself, above —
+// an explicit schema.index() for it as well previously logged a duplicate-index warning on boot)
 bookingSchema.index({ status: 1 })
 bookingSchema.index({ pol: 1, pod: 1 })
-bookingSchema.index({ jobNo: 1 }, { unique: true })
+bookingSchema.index({ carrier: 1 })
+bookingSchema.index({ nvocc: 1 })
+bookingSchema.index({ 'containers.containerType': 1 })
 
 export default mongoose.model('Booking', bookingSchema)

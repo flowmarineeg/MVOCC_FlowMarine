@@ -19,10 +19,11 @@ import auditLogRoutes from './Modules/AuditLog/auditLog.routes.js'
 
 // ─── Master Data Routes ───────────────────────────────────────────────────────
 import containerTypeRoutes from './Modules/MasterData/ContainerType/containerType.routes.js'
-import vesselRoutes from './Modules/MasterData/Vessel/vessel.routes.js'
+import carrierRoutes from './Modules/MasterData/Carrier/carrier.routes.js'
 import portRoutes from './Modules/MasterData/Port/port.routes.js'
 import agentRoutes from './Modules/MasterData/Agent/agent.routes.js'
-import containerStockRoutes from './Modules/MasterData/ContainerStock/containerStock.routes.js'
+import nvoccRoutes from './Modules/MasterData/Nvocc/nvocc.routes.js'
+import containerRoutes from './Modules/MasterData/Container/container.routes.js'
 
 // ─── Export Routes ────────────────────────────────────────────────────────────
 import bookingRoutes from './Modules/Export/Booking/booking.routes.js'
@@ -64,10 +65,11 @@ app.use('/api/audit-logs', auditLogRoutes)
 
 // ─── Master Data ──────────────────────────────────────────────────────────────
 app.use('/api/master/container-types', containerTypeRoutes)
-app.use('/api/master/vessels', vesselRoutes)
+app.use('/api/master/carriers', carrierRoutes)
 app.use('/api/master/ports', portRoutes)
 app.use('/api/master/agents', agentRoutes)
-app.use('/api/master/container-stock', containerStockRoutes)
+app.use('/api/master/nvoccs', nvoccRoutes)
+app.use('/api/master/containers', containerRoutes)
 
 // ─── Export Module ────────────────────────────────────────────────────────────
 app.use('/api/export/bookings', bookingRoutes)

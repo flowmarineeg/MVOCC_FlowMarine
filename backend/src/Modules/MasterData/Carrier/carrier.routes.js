@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import * as ctrl from './vessel.controller.js'
-import { createRules, updateRules } from './vessel.validation.js'
+import * as ctrl from './carrier.controller.js'
+import { createRules, updateRules } from './carrier.validation.js'
 import { authenticate, authorize } from '../../../Middleware/auth.middleware.js'
 
 const router = Router()
@@ -10,5 +10,6 @@ router.get('/', authorize('masterData:read'), ctrl.getAll)
 router.post('/', authorize('masterData:create'), createRules, ctrl.create)
 router.put('/:id', authorize('masterData:update'), updateRules, ctrl.update)
 router.patch('/:id/toggle', authorize('masterData:update'), ctrl.toggle)
+router.delete('/:id', authorize('masterData:update'), ctrl.remove)
 
 export default router

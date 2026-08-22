@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import * as ctrl from './containerType.controller.js'
-import { createRules, updateRules } from './containerType.validation.js'
+import * as ctrl from './nvocc.controller.js'
+import { createRules, updateRules } from './nvocc.validation.js'
 import { authenticate, authorize } from '../../../Middleware/auth.middleware.js'
 
 const router = Router()

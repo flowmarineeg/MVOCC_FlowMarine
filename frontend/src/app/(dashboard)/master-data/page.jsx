@@ -9,7 +9,7 @@ import { PageLoader } from '@/components/ui/Spinner'
 import EmptyState from '@/components/ui/EmptyState'
 import MasterDataTable from '@/components/masterdata/MasterDataTable'
 import MasterDataFormModal from '@/components/masterdata/MasterDataFormModal'
-import StockTable from '@/components/masterdata/StockTable'
+import Modal from '@/components/ui/Modal'
 
 const ENTITIES = {
   containerTypes: {
@@ -23,18 +23,20 @@ const ENTITIES = {
     create: masterDataApi.createContainerType,
     update: masterDataApi.updateContainerType,
     toggle: masterDataApi.toggleContainerType,
+    delete: masterDataApi.deleteContainerType,
   },
-  vessels: {
-    tabLabel: 'Vessels',
-    singular: 'Vessel',
+  carriers: {
+    tabLabel: 'Carriers',
+    singular: 'Carrier',
     fields: [
-      { key: 'name', label: 'Name' },
-      { key: 'code', label: 'Code' },
+      { key: 'name', label: 'Carrier Name' },
+      { key: 'code', label: 'Carrier Code' },
     ],
-    get: () => masterDataApi.getVessels(false),
-    create: masterDataApi.createVessel,
-    update: masterDataApi.updateVessel,
-    toggle: masterDataApi.toggleVessel,
+    get: () => masterDataApi.getCarriers(false),
+    create: masterDataApi.createCarrier,
+    update: masterDataApi.updateCarrier,
+    toggle: masterDataApi.toggleCarrier,
+    delete: masterDataApi.deleteCarrier,
   },
   ports: {
     tabLabel: 'Ports (POL / POD)',
@@ -48,10 +50,24 @@ const ENTITIES = {
     create: masterDataApi.createPort,
     update: masterDataApi.updatePort,
     toggle: masterDataApi.togglePort,
+    delete: masterDataApi.deletePort,
+  },
+  nvoccs: {
+    tabLabel: 'NVOCC',
+    singular: 'NVOCC',
+    fields: [
+      { key: 'name', label: 'Name' },
+      { key: 'code', label: 'Code' },
+    ],
+    get: () => masterDataApi.getNvoccs(false),
+    create: masterDataApi.createNvocc,
+    update: masterDataApi.updateNvocc,
+    toggle: masterDataApi.toggleNvocc,
+    delete: masterDataApi.deleteNvocc,
   },
 }
 
-const TABS = [...Object.keys(ENTITIES).map((key) => ({ key, label: ENTITIES[key].tabLabel })), { key: 'stock', label: 'Stock' }]
+const TABS = Object.keys(ENTITIES).map((key) => ({ key, label: ENTITIES[key].tabLabel }))
 
 export default function MasterDataPage() {
   const { permissions } = useAuth()
@@ -60,33 +76,39 @@ export default function MasterDataPage() {
   const canUpdate = permissions.includes('masterData:update')
 
   const [tab, setTab] = useState('containerTypes')
-  const [data, setData] = useState({ containerTypes: [], vessels: [], ports: [] })
-  const [stockRows, setStockRows] = useState([])
+  const [data, setData] = useState({ containerTypes: [], carriers: [], ports: [], nvoccs: [] })
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
-  const load = () => {
+  const loadAll = () => {
     Promise.all([
       ENTITIES.containerTypes.get(),
-      ENTITIES.vessels.get(),
+      ENTITIES.carriers.get(),
       ENTITIES.ports.get(),
-      masterDataApi.getContainerStock(),
+      ENTITIES.nvoccs.get(),
     ])
-      .then(([containerTypes, vessels, ports, stock]) => {
-        setData({ containerTypes, vessels, ports })
-        const stockMap = {}
-        stock.forEach((s) => { stockMap[s.containerType._id] = s.availableCount })
-        setStockRows(containerTypes.map((ct) => ({ containerType: ct, availableCount: stockMap[ct._id] ?? 0 })))
+      .then(([containerTypes, carriers, ports, nvoccs]) => {
+        setData({ containerTypes, carriers, ports, nvoccs })
       })
       .catch((err) => toast(err.message, 'error'))
       .finally(() => setLoading(false))
   }
 
+  // A mutation only ever affects the active tab's own list — no need to
+  // re-fetch all four entity types just to refresh one table.
+  const reloadTab = (key) => {
+    ENTITIES[key].get()
+      .then((items) => setData((d) => ({ ...d, [key]: items })))
+      .catch((err) => toast(err.message, 'error'))
+  }
+
   useEffect(() => {
-    load()
+    loadAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -112,7 +134,7 @@ export default function MasterDataPage() {
         toast(`${entity.singular} created`, 'success')
       }
       setModalOpen(false)
-      load()
+      reloadTab(tab)
     } finally {
       setSaving(false)
     }
@@ -123,7 +145,7 @@ export default function MasterDataPage() {
     try {
       await ENTITIES[tab].toggle(item._id)
       toast(item.isActive ? 'Deactivated' : 'Activated', 'success')
-      load()
+      reloadTab(tab)
     } catch (err) {
       toast(err.message, 'error')
     } finally {
@@ -131,20 +153,21 @@ export default function MasterDataPage() {
     }
   }
 
-  const handleStockSave = async (typeId, count) => {
-    setBusyId(typeId)
+  const handleDelete = async () => {
+    setDeleting(true)
     try {
-      await masterDataApi.updateContainerStock(typeId, count)
-      toast('Stock updated', 'success')
-      load()
+      await ENTITIES[tab].delete(deleteTarget._id)
+      toast(`${ENTITIES[tab].singular} deleted`, 'success')
+      setDeleteTarget(null)
+      reloadTab(tab)
     } catch (err) {
       toast(err.message, 'error')
     } finally {
-      setBusyId(null)
+      setDeleting(false)
     }
   }
 
-  const activeEntity = tab === 'stock' ? null : ENTITIES[tab]
+  const activeEntity = ENTITIES[tab]
   const activeItems = activeEntity ? data[tab] : []
 
   return (
@@ -153,7 +176,7 @@ export default function MasterDataPage() {
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Reference Data</p>
           <h1 className="mt-1 font-display text-3xl font-bold uppercase tracking-wide text-ink">Master Data</h1>
-          <p className="mt-1 text-sm text-muted">Ports, vessels, container types, and stock levels</p>
+          <p className="mt-1 text-sm text-muted">Ports, carriers, NVOCCs, and container types</p>
         </div>
         {canCreate && activeEntity && (
           <button
@@ -181,12 +204,6 @@ export default function MasterDataPage() {
 
       {loading ? (
         <PageLoader />
-      ) : tab === 'stock' ? (
-        stockRows.length === 0 ? (
-          <EmptyState title="No container types yet" message="Add a container type first, then set its stock." />
-        ) : (
-          <StockTable rows={stockRows} canUpdate={canUpdate} savingId={busyId} onSave={handleStockSave} />
-        )
       ) : activeItems.length === 0 ? (
         <EmptyState
           title={`No ${activeEntity.tabLabel.toLowerCase()} yet`}
@@ -199,6 +216,7 @@ export default function MasterDataPage() {
           canUpdate={canUpdate}
           onEdit={openEdit}
           onToggle={handleToggle}
+          onDeleteRequest={setDeleteTarget}
           busyId={busyId}
         />
       )}
@@ -215,6 +233,17 @@ export default function MasterDataPage() {
           saving={saving}
         />
       )}
+
+      <Modal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
+        title={`Delete this ${activeEntity?.singular.toLowerCase()}?`}
+        message={`This will permanently delete "${deleteTarget?.name || deleteTarget?.code || deleteTarget?.label || ''}". This cannot be undone.`}
+        confirmLabel="Delete"
+        danger
+        loading={deleting}
+      />
     </div>
   )
 }

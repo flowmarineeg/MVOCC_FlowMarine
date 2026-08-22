@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { FaArrowLeft } from 'react-icons/fa'
 import * as bookingApi from '@/services/exportBooking'
 import * as masterDataApi from '@/services/masterData'
+import * as stockApi from '@/services/stock'
 import { PageLoader } from '@/components/ui/Spinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { useToast } from '@/components/ui/Toast'
@@ -24,15 +25,10 @@ export default function NewBookingPage() {
   const [stockMap, setStockMap] = useState({})
 
   useEffect(() => {
-    Promise.all([masterDataApi.getPorts(), masterDataApi.getContainerTypes(), masterDataApi.getContainerStock()])
-      .then(([portsRes, typesRes, stockRes]) => {
+    Promise.all([masterDataApi.getPorts(), masterDataApi.getContainerTypes(), stockApi.getStockMapByType()])
+      .then(([portsRes, typesRes, map]) => {
         setPorts(portsRes)
         setContainerTypes(typesRes)
-        const map = {}
-        stockRes.forEach((s) => {
-          const typeId = s.containerType?._id || s.containerType
-          map[typeId] = s.availableCount
-        })
         setStockMap(map)
       })
       .catch((err) => toast(err.message, 'error'))

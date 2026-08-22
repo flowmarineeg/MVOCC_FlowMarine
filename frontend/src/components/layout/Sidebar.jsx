@@ -9,6 +9,7 @@ import {
   FaTable,
   FaBoxes,
   FaDatabase,
+  FaWarehouse,
   FaLock,
   FaUsers,
   FaUserShield,
@@ -28,6 +29,7 @@ const NAV = [
     ],
   },
   { type: 'link', label: 'Import', href: '#', icon: FaShip, disabled: true },
+  { type: 'link', label: 'Stock', href: '/stock', icon: FaWarehouse, permission: 'masterData:read' },
   { type: 'link', label: 'Master Data', href: '/master-data', icon: FaDatabase, permission: 'masterData:read' },
   {
     type: 'group',

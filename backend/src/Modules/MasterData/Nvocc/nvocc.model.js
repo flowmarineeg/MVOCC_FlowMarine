@@ -1,15 +1,15 @@
 import mongoose from 'mongoose'
 
-const vesselSchema = new mongoose.Schema(
+const nvoccSchema = new mongoose.Schema(
   {
     name: {
       type: String,
-      required: [true, 'Vessel name is required'],
+      required: [true, 'NVOCC name is required'],
       trim: true,
     },
     code: {
       type: String,
-      required: [true, 'Vessel code is required'],
+      required: [true, 'NVOCC code is required'],
       unique: true,
       uppercase: true,
       trim: true,
@@ -22,4 +22,4 @@ const vesselSchema = new mongoose.Schema(
   { timestamps: true }
 )
 
-export default mongoose.model('Vessel', vesselSchema)
+export default mongoose.model('Nvocc', nvoccSchema)
