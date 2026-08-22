@@ -61,7 +61,7 @@ export default function ContainerDetailModal({ group, onClose, canUpdate, onChan
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 10 }}
             transition={{ duration: 0.15 }}
-            className="relative z-10 w-full max-w-2xl border border-ink/20 bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)]"
+            className="relative z-10 w-full max-w-2xl border border-ink/30 bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)]"
           >
             <div className="flex items-start justify-between gap-4 border-b border-line pb-4">
               <div>

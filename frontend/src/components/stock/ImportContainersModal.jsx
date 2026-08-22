@@ -106,7 +106,7 @@ export default function ImportContainersModal({ isOpen, onClose, onImported }) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 10 }}
             transition={{ duration: 0.15 }}
-            className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col border border-ink/20 bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)]"
+            className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col border border-ink/30 bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)]"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -121,14 +121,14 @@ export default function ImportContainersModal({ isOpen, onClose, onImported }) {
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <label className="flex cursor-pointer items-center gap-2 border border-dashed border-ink/25 bg-paper px-4 py-2.5 text-sm text-muted transition-colors hover:border-rust hover:text-ink">
+              <label className="flex cursor-pointer items-center gap-2 border border-dashed border-ink/35 bg-paper px-4 py-2.5 text-sm text-muted transition-colors hover:border-rust hover:text-ink">
                 <FaFileExcel />
                 {file ? file.name : 'Choose .xlsx / .xls file'}
                 <input type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
               </label>
               <button
                 onClick={handleDownloadTemplate}
-                className="flex items-center gap-2 border border-ink/20 px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-ink/5"
+                className="flex items-center gap-2 border border-ink/30 px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-ink/5"
               >
                 <FaDownload className="text-xs" /> Download Template
               </button>
@@ -142,7 +142,7 @@ export default function ImportContainersModal({ isOpen, onClose, onImported }) {
                 </div>
               ) : preview ? (
                 <>
-                  <div className="mb-3 border border-ink/15 bg-paper p-3 text-xs">
+                  <div className="mb-3 border border-ink/25 bg-paper p-3 text-xs">
                     <p className="font-mono font-semibold uppercase tracking-[0.08em] text-muted">Detected columns in your file</p>
                     <ul className="mt-1.5 space-y-0.5 text-ink">
                       {EXPECTED_COLUMNS.map((expected, i) => (
@@ -161,7 +161,7 @@ export default function ImportContainersModal({ isOpen, onClose, onImported }) {
                     <span className="text-brick">{duplicateCount} duplicate</span>
                   </div>
 
-                  <div className="overflow-x-auto border border-ink/15">
+                  <div className="overflow-x-auto border border-ink/25">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b-2 border-ink text-left font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
@@ -205,7 +205,7 @@ export default function ImportContainersModal({ isOpen, onClose, onImported }) {
               <button
                 onClick={handleClose}
                 disabled={importing}
-                className="border border-ink/20 px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-ink/5 disabled:opacity-50"
+                className="border border-ink/30 px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-ink/5 disabled:opacity-50"
               >
                 Close
               </button>

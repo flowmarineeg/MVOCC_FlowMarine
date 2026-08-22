@@ -4,7 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import * as authApi from '@/services/auth'
 
-const inputCls = 'w-full border border-ink/20 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust'
+const inputCls = 'w-full border border-ink/30 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust'
 const labelCls = 'mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted'
 
 export default function ForgotPasswordPage() {

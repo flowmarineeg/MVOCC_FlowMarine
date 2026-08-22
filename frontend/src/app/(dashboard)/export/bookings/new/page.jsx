@@ -68,7 +68,7 @@ export default function NewBookingPage() {
       ) : loading ? (
         <PageLoader />
       ) : (
-        <div className="border border-ink/15 bg-card p-5 sm:p-6">
+        <div className="border border-ink/25 bg-card p-5 sm:p-6">
           <BookingFormStep1
             ports={ports}
             containerTypes={containerTypes}

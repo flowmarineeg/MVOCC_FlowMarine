@@ -145,7 +145,7 @@ export default function BookingsListPage() {
             <>
               <Link
                 href="/export/preview"
-                className="flex items-center gap-2 border border-ink/20 bg-card px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-ink/5"
+                className="flex items-center gap-2 border border-ink/30 bg-card px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-ink/5"
               >
                 <FaTable /> Preview
               </Link>
@@ -169,14 +169,14 @@ export default function BookingsListPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 border border-ink/15 bg-card p-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 border border-ink/25 bg-card p-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="relative">
           <FaSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-muted" />
           <input
             value={search}
             onChange={handleSearchChange}
             placeholder="Search job no / client / B-L"
-            className="w-full border border-ink/20 bg-paper py-2.5 pl-10 pr-3.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+            className="w-full border border-ink/30 bg-paper py-2.5 pl-10 pr-3.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
           />
         </div>
         <Select options={statusOptions} value={status} onChange={handleStatusChange} placeholder="All Statuses" />

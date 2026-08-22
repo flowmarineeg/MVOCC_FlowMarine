@@ -30,7 +30,7 @@ function Section({ title, index, children, delay = 0 }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, delay }}
-      className="border border-ink/15 bg-card"
+      className="border border-ink/25 bg-card"
     >
       <div className="border-t-[3px] border-rust" />
       <div className="p-5">

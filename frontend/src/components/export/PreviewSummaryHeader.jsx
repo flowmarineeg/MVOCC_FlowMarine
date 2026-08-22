@@ -3,7 +3,7 @@
 function PillGroup({ title, totals, tone }) {
   const entries = Object.entries(totals || {})
   const tones = {
-    ink: 'border-ink/25 text-ink',
+    ink: 'border-ink/35 text-ink',
     rust: 'border-rust/40 text-rust',
     stamp: 'border-stamp/40 text-stamp',
   }
@@ -32,7 +32,7 @@ function PillGroup({ title, totals, tone }) {
 
 export default function PreviewSummaryHeader({ summary }) {
   return (
-    <div className="border border-ink/15 bg-card">
+    <div className="border border-ink/25 bg-card">
       <div className="border-t-[3px] border-rust" />
       <div className="grid grid-cols-1 gap-6 p-5 lg:grid-cols-3">
         <PillGroup title="Container Types" totals={summary?.containerTotals} tone="ink" />

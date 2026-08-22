@@ -16,7 +16,7 @@ export default function AuthLayout({ children }) {
               <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">Ops Console</p>
             </div>
           </div>
-          <div className="border border-ink/15 bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)]">
+          <div className="border border-ink/25 bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)]">
             {children}
           </div>
         </div>

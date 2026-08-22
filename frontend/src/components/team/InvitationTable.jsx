@@ -8,7 +8,7 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleString() : '—')
 
 export default function InvitationTable({ invitations = [], canInvite = false, onResend, onRevoke, busyId }) {
   return (
-    <div className="overflow-x-auto border border-ink/15 bg-card">
+    <div className="overflow-x-auto border border-ink/25 bg-card">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b-2 border-ink text-left font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">

@@ -78,14 +78,14 @@ export default function PreviewPage() {
         <p className="mt-1 text-sm text-muted">Aggregated totals and the full booking table, ready to export</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 border border-ink/15 bg-card p-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 border border-ink/25 bg-card p-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="relative">
           <FaSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-muted" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search job no / client"
-            className="w-full border border-ink/20 bg-paper py-2.5 pl-10 pr-3.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+            className="w-full border border-ink/30 bg-paper py-2.5 pl-10 pr-3.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
           />
         </div>
         <Select options={statusOptions} value={status} onChange={setStatus} placeholder="All Statuses" />

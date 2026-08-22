@@ -4,7 +4,7 @@
 export default function Plate({ children, tone = 'ink', className = '' }) {
   const tones = {
     ink: 'bg-ink text-paper',
-    outline: 'border border-ink/25 text-ink bg-transparent',
+    outline: 'border border-ink/35 text-ink bg-transparent',
   }
   return (
     <span

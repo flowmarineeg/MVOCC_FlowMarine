@@ -156,7 +156,7 @@ export default function BookingEditPage() {
 
           {tab === 'step1' ? (
             <fieldset disabled={isCancelled} className="disabled:opacity-60">
-              <div className="border border-ink/15 bg-card p-5 sm:p-6">
+              <div className="border border-ink/25 bg-card p-5 sm:p-6">
                 <BookingFormStep1
                   key={booking.updatedAt}
                   booking={booking}

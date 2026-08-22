@@ -8,7 +8,7 @@
 
   --color-paper: #edefe5;     /* chart-paper canvas */
   --color-card: #f9faf3;      /* ledger sheet surface, lifted off paper */
-  --color-line: #d9dac9;      /* hairline rule on paper */
+  --color-line: #8a8b71;      /* hairline rule on paper (darkened from #d9dac9, which read ~1.2:1 on paper/card — now ~3:1 non-text contrast) */
 
   --color-rust: #ae4c1c;      /* corten container steel — primary accent (darkened for AA text contrast on paper/card) */
   --color-rust-dark: #9e4218;

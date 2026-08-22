@@ -48,7 +48,7 @@ function buildInitialForm(booking) {
 
 function Section({ title, children }) {
   return (
-    <div className="border border-ink/15 bg-card">
+    <div className="border border-ink/25 bg-card">
       <div className="border-t-[3px] border-rust" />
       <div className="p-5">
         <h3 className="mb-4 font-display text-base font-bold uppercase tracking-wide text-ink">{title}</h3>
@@ -75,7 +75,7 @@ function SubHeading({ children, first }) {
   )
 }
 
-const inputCls = 'w-full border border-ink/20 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust'
+const inputCls = 'w-full border border-ink/30 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust'
 const monoInputCls = `${inputCls} font-mono`
 
 export default function BookingFormStep2({

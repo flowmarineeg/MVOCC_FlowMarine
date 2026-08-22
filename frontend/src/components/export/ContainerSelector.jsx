@@ -26,7 +26,7 @@ export default function ContainerSelector({ containerTypes = [], stockMap = {}, 
         const available = stockMap[row.containerType]
         const overStock = row.containerType && Number(row.quantity) > (available ?? Infinity)
         return (
-          <div key={index} className="flex flex-col gap-2.5 border border-ink/15 bg-paper/60 p-3 sm:flex-row sm:items-start">
+          <div key={index} className="flex flex-col gap-2.5 border border-ink/25 bg-paper/60 p-3 sm:flex-row sm:items-start">
             <div className="flex-1">
               <Select
                 placeholder="Select container type"
@@ -41,13 +41,13 @@ export default function ContainerSelector({ containerTypes = [], stockMap = {}, 
                 min={1}
                 value={row.quantity}
                 onChange={(e) => updateRow(index, { quantity: Number(e.target.value) })}
-                className="w-full border border-ink/20 bg-card px-3.5 py-2.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+                className="w-full border border-ink/30 bg-card px-3.5 py-2.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust"
                 placeholder="Qty"
               />
             </div>
             <div className="flex items-center gap-2 sm:pt-2.5">
               {row.containerType && (
-                <span className={`inline-flex items-center gap-1 whitespace-nowrap border px-2 py-1 font-mono text-[11px] font-medium ${overStock ? 'border-signal text-signal' : 'border-ink/15 text-muted'}`}>
+                <span className={`inline-flex items-center gap-1 whitespace-nowrap border px-2 py-1 font-mono text-[11px] font-medium ${overStock ? 'border-signal text-signal' : 'border-ink/25 text-muted'}`}>
                   {overStock && <FaExclamationTriangle className="text-[10px]" />}
                   AVAIL {available ?? '—'}
                 </span>

@@ -107,7 +107,7 @@ export default function RolesPage() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {roles.map((role) => (
-            <div key={role._id} className="border border-ink/15 bg-card p-5">
+            <div key={role._id} className="border border-ink/25 bg-card p-5">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <h3 className="font-display text-base font-bold uppercase tracking-wide text-ink">{role.name}</h3>

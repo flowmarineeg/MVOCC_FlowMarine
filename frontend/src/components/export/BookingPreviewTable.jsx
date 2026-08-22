@@ -13,9 +13,9 @@ export default function BookingPreviewTable({ bookings = [], onExport, exporting
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.25 }}
-      className="border border-ink/15 bg-card"
+      className="border border-ink/25 bg-card"
     >
-      <div className="flex items-center justify-between border-b border-ink/15 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-ink/25 px-4 py-3">
         <h3 className="font-display text-base font-bold uppercase tracking-wide text-ink">Booking Preview</h3>
         <button
           onClick={onExport}

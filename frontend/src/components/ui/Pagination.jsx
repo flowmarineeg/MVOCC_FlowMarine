@@ -11,7 +11,7 @@ export default function Pagination({ page, pages, total, limit, onPageChange, on
         <select
           value={limit}
           onChange={(e) => onLimitChange(Number(e.target.value))}
-          className="border border-ink/20 bg-card px-2 py-1 text-ink focus:outline-none focus:ring-1 focus:ring-rust"
+          className="border border-ink/30 bg-card px-2 py-1 text-ink focus:outline-none focus:ring-1 focus:ring-rust"
         >
           {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
@@ -21,7 +21,7 @@ export default function Pagination({ page, pages, total, limit, onPageChange, on
         <button
           onClick={() => onPageChange(page - 1)}
           disabled={page <= 1}
-          className="flex h-8 w-8 items-center justify-center border border-ink/20 text-muted transition-colors hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-30"
+          className="flex h-8 w-8 items-center justify-center border border-ink/30 text-muted transition-colors hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-30"
         >
           <FaChevronLeft size={11} />
         </button>
@@ -39,7 +39,7 @@ export default function Pagination({ page, pages, total, limit, onPageChange, on
               <button
                 key={item}
                 onClick={() => onPageChange(item)}
-                className={`flex h-8 w-8 items-center justify-center border text-sm font-semibold transition-colors ${page === item ? 'border-ink bg-ink text-paper' : 'border-ink/20 text-ink hover:bg-ink/5'}`}
+                className={`flex h-8 w-8 items-center justify-center border text-sm font-semibold transition-colors ${page === item ? 'border-ink bg-ink text-paper' : 'border-ink/30 text-ink hover:bg-ink/5'}`}
               >
                 {item}
               </button>
@@ -48,7 +48,7 @@ export default function Pagination({ page, pages, total, limit, onPageChange, on
         <button
           onClick={() => onPageChange(page + 1)}
           disabled={page >= pages}
-          className="flex h-8 w-8 items-center justify-center border border-ink/20 text-muted transition-colors hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-30"
+          className="flex h-8 w-8 items-center justify-center border border-ink/30 text-muted transition-colors hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-30"
         >
           <FaChevronRight size={11} />
         </button>

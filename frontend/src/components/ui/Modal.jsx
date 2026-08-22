@@ -27,7 +27,7 @@ export default function Modal({ isOpen, onClose, onConfirm, title, message, conf
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 10 }}
             transition={{ duration: 0.15 }}
-            className={`relative z-10 w-full max-w-md border bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)] ${danger ? 'border-brick/40' : 'border-ink/20'}`}
+            className={`relative z-10 w-full max-w-md border bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)] ${danger ? 'border-brick/40' : 'border-ink/30'}`}
           >
             <div className="flex items-start gap-4">
               <div className={`flex h-10 w-10 shrink-0 items-center justify-center border-2 ${danger ? 'border-brick text-brick' : 'border-rust text-rust'}`}>
@@ -45,7 +45,7 @@ export default function Modal({ isOpen, onClose, onConfirm, title, message, conf
               <button
                 onClick={onClose}
                 disabled={loading}
-                className="border border-ink/20 px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-ink/5 disabled:opacity-50"
+                className="border border-ink/30 px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-ink/5 disabled:opacity-50"
               >
                 Cancel
               </button>

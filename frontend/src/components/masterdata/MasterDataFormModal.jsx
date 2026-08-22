@@ -32,7 +32,7 @@ export default function MasterDataFormModal({ isOpen, onClose, onSave, item, fie
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 10 }}
             transition={{ duration: 0.15 }}
-            className="relative z-10 w-full max-w-sm border border-ink/20 bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)]"
+            className="relative z-10 w-full max-w-sm border border-ink/30 bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)]"
           >
             <div className="mb-4 flex items-center justify-between">
               <h3 className="font-display text-lg font-bold uppercase tracking-wide text-ink">{title}</h3>
@@ -50,7 +50,7 @@ export default function MasterDataFormModal({ isOpen, onClose, onSave, item, fie
                     value={values[f.key]}
                     onChange={set(f.key)}
                     required={f.required !== false}
-                    className="w-full border border-ink/20 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+                    className="w-full border border-ink/30 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
                   />
                 </div>
               ))}

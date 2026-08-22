@@ -139,7 +139,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
             value={form.jobNo}
             onChange={setInput('jobNo')}
             disabled={isEdit}
-            className={`${inputCls} font-mono ${errors.jobNo ? 'border-brick' : 'border-ink/20'} ${isEdit ? 'cursor-not-allowed bg-paper text-muted' : ''}`}
+            className={`${inputCls} font-mono ${errors.jobNo ? 'border-brick' : 'border-ink/30'} ${isEdit ? 'cursor-not-allowed bg-paper text-muted' : ''}`}
             placeholder="JOB-2026-0001"
           />
           {errors.jobNo && <p className="mt-1 font-mono text-xs text-brick">{errors.jobNo}</p>}
@@ -151,7 +151,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
           <input
             value={form.commodity}
             onChange={setInput('commodity')}
-            className={`${inputCls} ${errors.commodity ? 'border-brick' : 'border-ink/20'}`}
+            className={`${inputCls} ${errors.commodity ? 'border-brick' : 'border-ink/30'}`}
             placeholder="e.g. Frozen poultry"
           />
           {errors.commodity && <p className="mt-1 font-mono text-xs text-brick">{errors.commodity}</p>}
@@ -166,7 +166,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
           <input
             value={form.clientName}
             onChange={setInput('clientName')}
-            className={`${inputCls} ${errors.clientName ? 'border-brick' : 'border-ink/20'}`}
+            className={`${inputCls} ${errors.clientName ? 'border-brick' : 'border-ink/30'}`}
           />
           {errors.clientName && <p className="mt-1 font-mono text-xs text-brick">{errors.clientName}</p>}
         </div>
@@ -177,7 +177,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
           <input
             value={form.clientPhone}
             onChange={setInput('clientPhone')}
-            className={`${inputCls} ${errors.clientPhone ? 'border-brick' : 'border-ink/20'}`}
+            className={`${inputCls} ${errors.clientPhone ? 'border-brick' : 'border-ink/30'}`}
           />
           {errors.clientPhone && <p className="mt-1 font-mono text-xs text-brick">{errors.clientPhone}</p>}
         </div>
@@ -189,7 +189,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
             type="email"
             value={form.clientEmail}
             onChange={setInput('clientEmail')}
-            className={`${inputCls} ${errors.clientEmail ? 'border-brick' : 'border-ink/20'}`}
+            className={`${inputCls} ${errors.clientEmail ? 'border-brick' : 'border-ink/30'}`}
           />
           {errors.clientEmail && <p className="mt-1 font-mono text-xs text-brick">{errors.clientEmail}</p>}
         </div>
@@ -226,7 +226,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
           <input
             value={form.ucrNumber}
             onChange={setInput('ucrNumber')}
-            className={`${inputCls} border-ink/20 font-mono`}
+            className={`${inputCls} border-ink/30 font-mono`}
             placeholder="Unique Consignment Ref."
           />
         </div>
@@ -237,7 +237,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
           <input
             value={form.exportTaxNumber}
             onChange={setInput('exportTaxNumber')}
-            className={`${inputCls} border-ink/20 font-mono`}
+            className={`${inputCls} border-ink/30 font-mono`}
           />
         </div>
         <div>
@@ -247,7 +247,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
           <input
             value={form.importTaxNumber}
             onChange={setInput('importTaxNumber')}
-            className={`${inputCls} border-ink/20 font-mono`}
+            className={`${inputCls} border-ink/30 font-mono`}
           />
         </div>
         <div>
@@ -257,7 +257,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
           <input
             value={form.importCountry}
             onChange={setInput('importCountry')}
-            className={`${inputCls} border-ink/20`}
+            className={`${inputCls} border-ink/30`}
             placeholder="Country of final destination"
           />
         </div>
@@ -270,7 +270,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
             min="0"
             value={form.packagesCount}
             onChange={setInput('packagesCount')}
-            className={`${inputCls} font-mono ${errors.packagesCount ? 'border-brick' : 'border-ink/20'}`}
+            className={`${inputCls} font-mono ${errors.packagesCount ? 'border-brick' : 'border-ink/30'}`}
           />
           {errors.packagesCount && <p className="mt-1 font-mono text-xs text-brick">{errors.packagesCount}</p>}
         </div>
@@ -286,14 +286,14 @@ export default function BookingFormStep1({ booking = null, ports = [], container
             min="0"
             value={form.vgm}
             onChange={setInput('vgm')}
-            className={`${inputCls} font-mono ${errors.vgm ? 'border-brick' : 'border-ink/20'}`}
+            className={`${inputCls} font-mono ${errors.vgm ? 'border-brick' : 'border-ink/30'}`}
             placeholder="Verified gross mass"
           />
           {errors.vgm && <p className="mt-1 font-mono text-xs text-brick">{errors.vgm}</p>}
         </div>
         <div>
           <label className={labelCls}>Dangerous Goods</label>
-          <div className="flex border border-ink/20">
+          <div className="flex border border-ink/30">
             <button
               type="button"
               onClick={() => set('isDangerous')(false)}
@@ -306,7 +306,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
             <button
               type="button"
               onClick={() => set('isDangerous')(true)}
-              className={`flex-1 border-l border-ink/20 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${
+              className={`flex-1 border-l border-ink/30 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${
                 form.isDangerous ? 'bg-brick text-card' : 'bg-card text-muted hover:text-ink'
               }`}
             >
@@ -325,7 +325,7 @@ export default function BookingFormStep1({ booking = null, ports = [], container
             <input
               value={form.dangerousNumber}
               onChange={setInput('dangerousNumber')}
-              className={`${inputCls} font-mono ${errors.dangerousNumber ? 'border-brick' : 'border-ink/20'}`}
+              className={`${inputCls} font-mono ${errors.dangerousNumber ? 'border-brick' : 'border-ink/30'}`}
               placeholder="UN Number / IMO Class"
             />
             {errors.dangerousNumber && <p className="mt-1 font-mono text-xs text-brick">{errors.dangerousNumber}</p>}
@@ -338,8 +338,8 @@ export default function BookingFormStep1({ booking = null, ports = [], container
           Shipping Declaration <span className="normal-case text-muted/70">(optional, PDF or image)</span>
         </label>
         <label
-          className={`flex cursor-pointer items-center justify-between border bg-card px-3.5 py-2.5 text-sm text-muted transition-colors hover:border-ink/40 ${
-            errors.shippingDeclaration ? 'border-brick' : 'border-ink/20'
+          className={`flex cursor-pointer items-center justify-between border bg-card px-3.5 py-2.5 text-sm text-muted transition-colors hover:border-ink/55 ${
+            errors.shippingDeclaration ? 'border-brick' : 'border-ink/30'
           }`}
         >
           <span className="truncate">
