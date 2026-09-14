@@ -1,4 +1,5 @@
 import mongoose from 'mongoose'
+import crypto from 'crypto'
 import Container from './container.model.js'
 import ContainerType from '../ContainerType/containerType.model.js'
 import Nvocc from '../Nvocc/nvocc.model.js'
@@ -146,6 +147,41 @@ const validateRows = async (rows) => {
       message: 'Ready to import',
     }
   })
+}
+
+// ─── Manual quick-add — no container numbers supplied, so they're auto-
+// generated (unlike the Excel import path, where every number is a real
+// physical container number the operator typed in) ────────────────────────
+const generateContainerNumber = (typeCode, nvoccCode, used) => {
+  let number
+  do {
+    const suffix = crypto.randomBytes(4).toString('hex').toUpperCase()
+    number = `AUTO-${nvoccCode}-${typeCode}-${suffix}`
+  } while (used.has(number))
+  used.add(number)
+  return number
+}
+
+export const quickAddStock = async (containerTypeId, nvoccId, quantity) => {
+  const [type, nvocc] = await Promise.all([
+    ContainerType.findById(containerTypeId),
+    Nvocc.findById(nvoccId),
+  ])
+  if (!type) throw Object.assign(new Error('Container type not found'), { statusCode: 404 })
+  if (!nvocc) throw Object.assign(new Error('NVOCC not found'), { statusCode: 404 })
+
+  const used = new Set(
+    (await Container.find().select('containerNumber').lean()).map((c) => c.containerNumber)
+  )
+
+  const docs = Array.from({ length: quantity }, () => ({
+    containerNumber: generateContainerNumber(type.code, nvocc.code, used),
+    containerType: containerTypeId,
+    nvocc: nvoccId,
+  }))
+
+  const created = await Container.insertMany(docs)
+  return { createdCount: created.length }
 }
 
 export const previewImport = async (rows) => validateRows(rows)

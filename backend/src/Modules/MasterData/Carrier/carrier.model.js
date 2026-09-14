@@ -14,6 +14,28 @@ const carrierSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
+    contractType: {
+      type: String,
+      enum: ['Contract', 'Spot'],
+    },
+    contractValidFrom: {
+      type: Date,
+    },
+    contractValidTo: {
+      type: Date,
+    },
+    localAgentName: {
+      type: String,
+      trim: true,
+    },
+    localAgentContact: {
+      type: String,
+      trim: true,
+    },
+    tradeLane: {
+      type: String,
+      trim: true,
+    },
     isActive: {
       type: Boolean,
       default: true,

@@ -13,6 +13,11 @@ export const PERMISSIONS = [
   { key: 'masterData:create', label: 'Create master data', group: 'Master Data' },
   { key: 'masterData:update', label: 'Update / toggle master data', group: 'Master Data' },
 
+  { key: 'quotation:create', label: 'Create quotation', group: 'Quotation' },
+  { key: 'quotation:read', label: 'View quotations', group: 'Quotation' },
+  { key: 'quotation:update', label: 'Update / send / negotiate quotation', group: 'Quotation' },
+  { key: 'quotation:approve', label: 'Approve a below-minimum-margin quotation', group: 'Quotation' },
+
   { key: 'team:read', label: 'View team & invitations', group: 'Team' },
   { key: 'team:invite', label: 'Invite / resend / revoke', group: 'Team' },
   { key: 'team:update', label: 'Change role / (de)activate members', group: 'Team' },

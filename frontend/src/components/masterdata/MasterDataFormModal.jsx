@@ -6,7 +6,11 @@ import { FaTimes } from 'react-icons/fa'
 
 export default function MasterDataFormModal({ isOpen, onClose, onSave, item, fields, title, saving = false }) {
   const [values, setValues] = useState(() =>
-    fields.reduce((acc, f) => ({ ...acc, [f.key]: item?.[f.key] || '' }), {})
+    fields.reduce((acc, f) => {
+      let val = item?.[f.key] || ''
+      if (f.type === 'date' && val) val = String(val).slice(0, 10)
+      return { ...acc, [f.key]: val }
+    }, {})
   )
   const [error, setError] = useState('')
 
@@ -46,12 +50,27 @@ export default function MasterDataFormModal({ isOpen, onClose, onSave, item, fie
                   <label className="mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
                     {f.label} {f.required !== false && <span className="text-rust">*</span>}
                   </label>
-                  <input
-                    value={values[f.key]}
-                    onChange={set(f.key)}
-                    required={f.required !== false}
-                    className="w-full border border-ink/30 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
-                  />
+                  {f.type === 'select' ? (
+                    <select
+                      value={values[f.key]}
+                      onChange={set(f.key)}
+                      required={f.required !== false}
+                      className="w-full border border-ink/30 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+                    >
+                      <option value="">Select…</option>
+                      {(f.options || []).map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type={f.type || 'text'}
+                      value={values[f.key]}
+                      onChange={set(f.key)}
+                      required={f.required !== false}
+                      className="w-full border border-ink/30 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+                    />
+                  )}
                 </div>
               ))}
               {error && <p className="font-mono text-xs text-brick">{error}</p>}

@@ -25,6 +25,7 @@ const validateContainerEntries = async (containers) => {
 }
 
 export const createBookingRules = [
+  body('quotation').optional({ checkFalsy: true }).isMongoId().withMessage('Valid quotation ID required'),
   body('jobNo').trim().notEmpty().withMessage('Job number is required'),
   body('clientName').trim().notEmpty().withMessage('Client name is required'),
   body('clientPhone').trim().notEmpty().withMessage('Client phone is required'),

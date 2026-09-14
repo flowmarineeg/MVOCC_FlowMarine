@@ -138,6 +138,14 @@ const bookingSchema = new mongoose.Schema(
       uploadedAt: { type: Date },
     },
 
+    // Set once, when this booking was created via a Quotation's
+    // "Convert to Job" action — see Modules/Export/Quotation.
+    quotation: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Quotation',
+      default: null,
+    },
+
     // ─── Step 2 — Operational Details ────────────────────────────────
     nvocc: {
       type: mongoose.Schema.Types.ObjectId,

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { FaFileExcel } from 'react-icons/fa'
+import { FaFileExcel, FaPlus } from 'react-icons/fa'
 import * as stockApi from '@/services/stock'
 import * as masterDataApi from '@/services/masterData'
 import { useAuth } from '@/context/AuthContext'
@@ -12,6 +12,7 @@ import Select from '@/components/ui/Select'
 import StockOverviewTable from '@/components/stock/StockOverviewTable'
 import ContainerDetailModal from '@/components/stock/ContainerDetailModal'
 import ImportContainersModal from '@/components/stock/ImportContainersModal'
+import AddStockModal from '@/components/stock/AddStockModal'
 
 export default function StockPage() {
   const { permissions } = useAuth()
@@ -27,6 +28,7 @@ export default function StockPage() {
   const [loading, setLoading] = useState(true)
   const [viewGroup, setViewGroup] = useState(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
 
   useEffect(() => {
     Promise.all([masterDataApi.getContainerTypes(), masterDataApi.getNvoccs()])
@@ -66,12 +68,20 @@ export default function StockPage() {
           <p className="mt-1 text-sm text-muted">Container inventory by type and NVOCC</p>
         </div>
         {canCreate && (
-          <button
-            onClick={() => setImportOpen(true)}
-            className="flex items-center gap-2 self-start bg-rust px-4 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark"
-          >
-            <FaFileExcel /> Import Excel
-          </button>
+          <div className="flex flex-wrap gap-2 self-start">
+            <button
+              onClick={() => setAddOpen(true)}
+              className="flex items-center gap-2 border border-ink/30 px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-ink/5"
+            >
+              <FaPlus /> Add Stock
+            </button>
+            <button
+              onClick={() => setImportOpen(true)}
+              className="flex items-center gap-2 bg-rust px-4 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark"
+            >
+              <FaFileExcel /> Import Excel
+            </button>
+          </div>
         )}
       </div>
 
@@ -95,6 +105,17 @@ export default function StockPage() {
         onClose={() => setImportOpen(false)}
         onImported={() => {
           setImportOpen(false)
+          loadOverview()
+        }}
+      />
+
+      <AddStockModal
+        isOpen={addOpen}
+        onClose={() => setAddOpen(false)}
+        containerTypes={containerTypes}
+        nvoccs={nvoccs}
+        onAdded={() => {
+          setAddOpen(false)
           loadOverview()
         }}
       />

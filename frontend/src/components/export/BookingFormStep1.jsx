@@ -24,6 +24,28 @@ const emptyForm = {
   containers: [{ containerType: '', quantity: 1 }],
 }
 
+// The backend rejects the same containerType appearing twice in one booking
+// (one row per type is the persisted invariant) — the UI still lets someone
+// add two rows of the same type to build up a quantity, so collapse those
+// into a single summed row right before submit rather than surfacing that
+// backend error after they've already fixed the on-screen stock warning.
+function mergeContainerRows(containers) {
+  const merged = []
+  const indexByType = new Map()
+  containers
+    .filter((c) => c.containerType && c.quantity >= 1)
+    .forEach((c) => {
+      const existingIndex = indexByType.get(c.containerType)
+      if (existingIndex === undefined) {
+        indexByType.set(c.containerType, merged.length)
+        merged.push({ containerType: c.containerType, quantity: Number(c.quantity) })
+      } else {
+        merged[existingIndex].quantity += Number(c.quantity)
+      }
+    })
+  return merged
+}
+
 const labelCls = 'mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted'
 const inputCls = 'w-full border bg-card px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust'
 const ALLOWED_FILE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
@@ -54,9 +76,12 @@ function buildInitialForm(booking) {
   }
 }
 
-export default function BookingFormStep1({ booking = null, ports = [], containerTypes = [], stockMap = {}, submitting = false, onSubmit }) {
+export default function BookingFormStep1({ booking = null, prefill = null, quotationId = null, ports = [], containerTypes = [], stockMap = {}, submitting = false, onSubmit }) {
   const isEdit = !!booking
-  const [form, setForm] = useState(() => buildInitialForm(booking))
+  // `prefill` seeds a brand-new booking's initial state (e.g. from a
+  // Quotation's "Convert to Job" action) without flipping isEdit — unlike
+  // `booking`, which also locks the jobNo field for actual edits.
+  const [form, setForm] = useState(() => (booking ? buildInitialForm(booking) : { ...emptyForm, ...prefill }))
   const [errors, setErrors] = useState({})
 
   const portOptions = ports.map((p) => ({ value: p._id, label: `${p.code} — ${p.name}` }))
@@ -119,11 +144,9 @@ export default function BookingFormStep1({ booking = null, ports = [], container
     if (form.vgm) fd.append('vgm', form.vgm)
     fd.append('isDangerous', String(form.isDangerous))
     if (form.isDangerous) fd.append('dangerousNumber', form.dangerousNumber.trim())
-    fd.append(
-      'containers',
-      JSON.stringify(form.containers.filter((c) => c.containerType && c.quantity >= 1))
-    )
+    fd.append('containers', JSON.stringify(mergeContainerRows(form.containers)))
     if (form.shippingDeclaration) fd.append('shippingDeclaration', form.shippingDeclaration)
+    if (quotationId) fd.append('quotation', quotationId)
 
     onSubmit(fd)
   }

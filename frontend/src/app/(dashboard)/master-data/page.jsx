@@ -31,6 +31,12 @@ const ENTITIES = {
     fields: [
       { key: 'name', label: 'Carrier Name' },
       { key: 'code', label: 'Carrier Code' },
+      { key: 'contractType', label: 'Contract Type', type: 'select', options: ['Contract', 'Spot'], required: false },
+      { key: 'contractValidFrom', label: 'Contract Valid From', type: 'date', required: false },
+      { key: 'contractValidTo', label: 'Contract Valid To', type: 'date', required: false },
+      { key: 'localAgentName', label: 'Local Agent Name', required: false },
+      { key: 'localAgentContact', label: 'Local Agent Contact', required: false },
+      { key: 'tradeLane', label: 'Trade Lane Covered', required: false },
     ],
     get: () => masterDataApi.getCarriers(false),
     create: masterDataApi.createCarrier,
@@ -65,6 +71,16 @@ const ENTITIES = {
     toggle: masterDataApi.toggleNvocc,
     delete: masterDataApi.deleteNvocc,
   },
+  customers: {
+    tabLabel: 'Customers',
+    singular: 'Customer',
+    fields: masterDataApi.CUSTOMER_FORM_FIELDS,
+    get: () => masterDataApi.getCustomers(false),
+    create: masterDataApi.createCustomer,
+    update: masterDataApi.updateCustomer,
+    toggle: masterDataApi.toggleCustomer,
+    delete: masterDataApi.deleteCustomer,
+  },
 }
 
 const TABS = Object.keys(ENTITIES).map((key) => ({ key, label: ENTITIES[key].tabLabel }))
@@ -76,7 +92,7 @@ export default function MasterDataPage() {
   const canUpdate = permissions.includes('masterData:update')
 
   const [tab, setTab] = useState('containerTypes')
-  const [data, setData] = useState({ containerTypes: [], carriers: [], ports: [], nvoccs: [] })
+  const [data, setData] = useState({ containerTypes: [], carriers: [], ports: [], nvoccs: [], customers: [] })
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -91,9 +107,10 @@ export default function MasterDataPage() {
       ENTITIES.carriers.get(),
       ENTITIES.ports.get(),
       ENTITIES.nvoccs.get(),
+      ENTITIES.customers.get(),
     ])
-      .then(([containerTypes, carriers, ports, nvoccs]) => {
-        setData({ containerTypes, carriers, ports, nvoccs })
+      .then(([containerTypes, carriers, ports, nvoccs, customers]) => {
+        setData({ containerTypes, carriers, ports, nvoccs, customers })
       })
       .catch((err) => toast(err.message, 'error'))
       .finally(() => setLoading(false))

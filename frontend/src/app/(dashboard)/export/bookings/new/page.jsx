@@ -1,21 +1,56 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { FaArrowLeft } from 'react-icons/fa'
 import * as bookingApi from '@/services/exportBooking'
 import * as masterDataApi from '@/services/masterData'
 import * as stockApi from '@/services/stock'
+import * as quotationApi from '@/services/quotation'
 import { PageLoader } from '@/components/ui/Spinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
 import BookingFormStep1 from '@/components/export/BookingFormStep1'
 
+// Builds BookingFormStep1's `prefill` shape from an approved Quotation, for
+// the "Convert to Job & Create Booking" flow — only the fields that overlap
+// between the two documents are carried over (see Sprint 005 plan, Explicit
+// Decisions 5 & 6: VGM and jobNo are deliberately NOT auto-filled).
+function prefillFromQuotation(quotation) {
+  return {
+    clientName: quotation.clientName || '',
+    clientPhone: quotation.contactPhone || '',
+    clientEmail: quotation.contactEmail || '',
+    pol: quotation.pol?._id || quotation.pol || '',
+    pod: quotation.pod?._id || quotation.pod || '',
+    commodity: quotation.commodity || '',
+    isDangerous: !!quotation.isDangerous,
+    dangerousNumber: quotation.isDangerous ? `${quotation.unClass || ''} ${quotation.unNumber || ''}`.trim() : '',
+    containers: (quotation.containers || []).map((c) => ({
+      containerType: c.containerType?._id || c.containerType,
+      quantity: c.quantity,
+    })),
+  }
+}
+
+// useSearchParams() requires a Suspense boundary above it in production
+// builds (Next.js throws "Missing Suspense boundary" otherwise) — see
+// node_modules/next/dist/docs/.../use-search-params.md.
 export default function NewBookingPage() {
+  return (
+    <Suspense fallback={<div className="p-6"><PageLoader /></div>}>
+      <NewBookingPageInner />
+    </Suspense>
+  )
+}
+
+function NewBookingPageInner() {
   const router = useRouter()
   const toast = useToast()
+  const searchParams = useSearchParams()
+  const fromQuotationId = searchParams.get('fromQuotation')
   const { permissions } = useAuth()
   const canCreate = permissions.includes('booking:create')
   const [loading, setLoading] = useState(true)
@@ -23,18 +58,25 @@ export default function NewBookingPage() {
   const [ports, setPorts] = useState([])
   const [containerTypes, setContainerTypes] = useState([])
   const [stockMap, setStockMap] = useState({})
+  const [quotation, setQuotation] = useState(null)
 
   useEffect(() => {
-    Promise.all([masterDataApi.getPorts(), masterDataApi.getContainerTypes(), stockApi.getStockMapByType()])
-      .then(([portsRes, typesRes, map]) => {
+    Promise.all([
+      masterDataApi.getPorts(),
+      masterDataApi.getContainerTypes(),
+      stockApi.getStockMapByType(),
+      fromQuotationId ? quotationApi.getQuotationById(fromQuotationId) : Promise.resolve(null),
+    ])
+      .then(([portsRes, typesRes, map, quotationRes]) => {
         setPorts(portsRes)
         setContainerTypes(typesRes)
         setStockMap(map)
+        setQuotation(quotationRes)
       })
       .catch((err) => toast(err.message, 'error'))
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [fromQuotationId])
 
   const handleSubmit = async (data) => {
     setSubmitting(true)
@@ -43,8 +85,24 @@ export default function NewBookingPage() {
       if (res.warnings) {
         toast(res.warnings.message, 'error')
       }
+
+      // Transfers the quotation's carrier/pricing into Step 2 automatically,
+      // so a converted booking arrives fully filled instead of needing a
+      // second manual pass — see the Sprint 005 plan's "Convert to Job" note.
+      if (quotation) {
+        try {
+          await bookingApi.updateStep2(res.data._id, {
+            carrier: quotation.carrier?._id || quotation.carrier || undefined,
+            price: quotation.totalSellingPrice || undefined,
+            cost: quotation.totalBuyingCost || undefined,
+          })
+        } catch (step2Err) {
+          toast(`Booking created, but Step 2 pre-fill failed: ${step2Err.message}`, 'error')
+        }
+      }
+
       toast(`Booking ${res.data.jobNo} created`, 'success')
-      router.push('/export/bookings')
+      router.push(`/export/bookings/${res.data._id}`)
     } catch (err) {
       toast(err.message, 'error')
     } finally {
@@ -60,7 +118,9 @@ export default function NewBookingPage() {
         </Link>
         <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Step 01 of 02</p>
         <h1 className="mt-1 font-display text-2xl font-bold uppercase tracking-wide text-ink">New Booking Request</h1>
-        <p className="mt-1 text-sm text-muted">Client quotation — filed at first contact, enriched later</p>
+        <p className="mt-1 text-sm text-muted">
+          {quotation ? `Converting quotation ${quotation.quotationNo} — review and file a job number` : 'Client quotation — filed at first contact, enriched later'}
+        </p>
       </div>
 
       {!canCreate ? (
@@ -70,6 +130,8 @@ export default function NewBookingPage() {
       ) : (
         <div className="border border-ink/25 bg-card p-5 sm:p-6">
           <BookingFormStep1
+            prefill={quotation ? prefillFromQuotation(quotation) : null}
+            quotationId={quotation?._id || null}
             ports={ports}
             containerTypes={containerTypes}
             stockMap={stockMap}

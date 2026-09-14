@@ -2,6 +2,7 @@ import path from 'path'
 import { validationResult } from 'express-validator'
 import * as service from './booking.service.js'
 import { logAction, getRequestMeta } from '../../AuditLog/auditLog.service.js'
+import { assertConvertible, markConverted } from '../Quotation/quotation.service.js'
 
 export const createBooking = async (req, res, next) => {
   try {
@@ -20,7 +21,19 @@ export const createBooking = async (req, res, next) => {
         uploadedAt: new Date(),
       }
     }
+    // Checked before the booking is created so an ineligible quotation
+    // (not approved / already converted) never leaves an orphaned Booking
+    // behind — then re-checked and committed by markConverted() below.
+    if (payload.quotation) {
+      await assertConvertible(payload.quotation)
+    }
+
     const { booking, stockWarnings } = await service.createBooking(payload)
+
+    if (payload.quotation) {
+      await markConverted(payload.quotation, booking._id)
+    }
+
     res.status(201).json({
       success: true,
       data: booking,

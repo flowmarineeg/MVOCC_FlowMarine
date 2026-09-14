@@ -14,6 +14,7 @@ import {
   FaUsers,
   FaUserShield,
   FaHistory,
+  FaFileInvoiceDollar,
 } from 'react-icons/fa'
 import { useAuth } from '@/context/AuthContext'
 
@@ -24,6 +25,7 @@ const NAV = [
     label: 'Export',
     icon: FaBoxes,
     items: [
+      { label: 'Quotations', href: '/export/quotations', icon: FaFileInvoiceDollar, permission: 'quotation:read' },
       { label: 'Bookings', href: '/export/bookings', icon: FaClipboardList, permission: 'booking:read' },
       { label: 'Preview', href: '/export/preview', icon: FaTable, permission: 'booking:export' },
     ],

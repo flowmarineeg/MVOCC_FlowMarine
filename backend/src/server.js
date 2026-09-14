@@ -24,9 +24,11 @@ import portRoutes from './Modules/MasterData/Port/port.routes.js'
 import agentRoutes from './Modules/MasterData/Agent/agent.routes.js'
 import nvoccRoutes from './Modules/MasterData/Nvocc/nvocc.routes.js'
 import containerRoutes from './Modules/MasterData/Container/container.routes.js'
+import customerRoutes from './Modules/MasterData/Customer/customer.routes.js'
 
 // ─── Export Routes ────────────────────────────────────────────────────────────
 import bookingRoutes from './Modules/Export/Booking/booking.routes.js'
+import quotationRoutes from './Modules/Export/Quotation/quotation.routes.js'
 
 // ─── DB ───────────────────────────────────────────────────────────────────────
 connectDB()
@@ -70,9 +72,11 @@ app.use('/api/master/ports', portRoutes)
 app.use('/api/master/agents', agentRoutes)
 app.use('/api/master/nvoccs', nvoccRoutes)
 app.use('/api/master/containers', containerRoutes)
+app.use('/api/master/customers', customerRoutes)
 
 // ─── Export Module ────────────────────────────────────────────────────────────
 app.use('/api/export/bookings', bookingRoutes)
+app.use('/api/export/quotations', quotationRoutes)
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 app.use((req, res) => {

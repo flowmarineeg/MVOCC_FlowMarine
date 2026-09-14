@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs'
+import { validationResult } from 'express-validator'
 import * as service from './container.service.js'
 
 export const getOverview = async (req, res, next) => {
@@ -14,6 +15,16 @@ export const getAll = async (req, res, next) => {
     const { containerType, nvocc } = req.query
     const data = await service.getContainers({ containerType, nvocc })
     res.json({ success: true, data })
+  } catch (err) { next(err) }
+}
+
+export const quickAdd = async (req, res, next) => {
+  try {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
+    const { containerType, nvocc, quantity } = req.body
+    const data = await service.quickAddStock(containerType, nvocc, Number(quantity))
+    res.status(201).json({ success: true, data })
   } catch (err) { next(err) }
 }
 

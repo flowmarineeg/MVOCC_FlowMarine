@@ -20,6 +20,9 @@ export const getContainers = ({ containerType, nvocc } = {}) =>
 
 export const deleteContainer = (id) => api.delete(`/master/containers/${id}`).then((r) => r.data)
 
+export const quickAddStock = ({ containerType, nvocc, quantity }) =>
+  api.post('/master/containers/quick-add', { containerType, nvocc, quantity }).then((r) => r.data.data)
+
 export const previewImportContainers = (file) => {
   const formData = new FormData()
   formData.append('file', file)

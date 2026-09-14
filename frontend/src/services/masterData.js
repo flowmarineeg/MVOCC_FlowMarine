@@ -30,3 +30,22 @@ export const deletePort = (id) => api.delete(`/master/ports/${id}`).then((r) => 
 
 export const getAgents = (type = null, activeOnly = true) =>
   api.get('/master/agents', { params: { ...(type && { type }), active: activeOnly } }).then((r) => r.data.data)
+
+export const getCustomers = (activeOnly = true) =>
+  api.get('/master/customers', { params: { active: activeOnly } }).then((r) => r.data.data)
+export const createCustomer = (data) => api.post('/master/customers', data).then((r) => r.data.data)
+export const updateCustomer = (id, data) => api.put(`/master/customers/${id}`, data).then((r) => r.data.data)
+export const toggleCustomer = (id) => api.patch(`/master/customers/${id}/toggle`).then((r) => r.data.data)
+export const deleteCustomer = (id) => api.delete(`/master/customers/${id}`).then((r) => r.data)
+
+// Shared between the Master Data "Customers" tab and the Quotation form's
+// inline "+ New Client" popup so both stay in sync with one field list.
+export const CUSTOMER_FORM_FIELDS = [
+  { key: 'date', label: 'Date', type: 'date', required: false },
+  { key: 'name', label: 'Name' },
+  { key: 'address', label: 'Address', required: false },
+  { key: 'phone', label: 'Phone', required: false },
+  { key: 'email', label: 'Email', type: 'email', required: false },
+  { key: 'taxNumber', label: 'Tax Number', required: false },
+  { key: 'taxRegister', label: 'Tax Register', required: false },
+]

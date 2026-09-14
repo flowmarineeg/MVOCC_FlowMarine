@@ -27,7 +27,9 @@ export default function MasterDataTable({ items = [], fields, canUpdate = false,
               className="border-b border-line last:border-0 hover:bg-paper/70 transition-colors"
             >
               {fields.map((f) => (
-                <td key={f.key} className="px-4 py-3 text-ink">{item[f.key]}</td>
+                <td key={f.key} className="px-4 py-3 text-ink">
+                  {f.type === 'date' && item[f.key] ? new Date(item[f.key]).toLocaleDateString() : item[f.key]}
+                </td>
               ))}
               <td className="px-4 py-3"><Badge value={item.isActive ? 'active' : 'inactive'} /></td>
               {canUpdate && (
