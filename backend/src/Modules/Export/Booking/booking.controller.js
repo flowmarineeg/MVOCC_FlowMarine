@@ -4,29 +4,24 @@ import * as service from './booking.service.js'
 import { logAction, getRequestMeta } from '../../AuditLog/auditLog.service.js'
 import { assertConvertible, markConverted } from '../Quotation/quotation.service.js'
 
-// shippingDeclaration/bookingConfirmationFile must only ever come from an
-// actual uploaded file — never from the JSON body, or a client could plant
-// an arbitrary filePath (e.g. "../../../.env") that the download routes
-// would later read. `files` is req.files (from .fields()) when present.
+// shippingDeclaration/bookingConfirmationFile/customsCertificateFile must
+// only ever come from an actual uploaded file — never from the JSON body,
+// or a client could plant an arbitrary filePath (e.g. "../../../.env") that
+// the download routes would later read. `files` is req.files (from
+// .fields()) when present.
+const FILE_FIELDS = ['shippingDeclaration', 'bookingConfirmationFile', 'customsCertificateFile']
+
 const applyUploadedFiles = (payload, files) => {
-  delete payload.shippingDeclaration
-  delete payload.bookingConfirmationFile
-  const shippingDeclaration = files?.shippingDeclaration?.[0]
-  if (shippingDeclaration) {
-    payload.shippingDeclaration = {
-      fileName: shippingDeclaration.originalname,
-      filePath: shippingDeclaration.filename,
-      mimeType: shippingDeclaration.mimetype,
-      uploadedAt: new Date(),
-    }
-  }
-  const bookingConfirmationFile = files?.bookingConfirmationFile?.[0]
-  if (bookingConfirmationFile) {
-    payload.bookingConfirmationFile = {
-      fileName: bookingConfirmationFile.originalname,
-      filePath: bookingConfirmationFile.filename,
-      mimeType: bookingConfirmationFile.mimetype,
-      uploadedAt: new Date(),
+  for (const field of FILE_FIELDS) {
+    delete payload[field]
+    const file = files?.[field]?.[0]
+    if (file) {
+      payload[field] = {
+        fileName: file.originalname,
+        filePath: file.filename,
+        mimeType: file.mimetype,
+        uploadedAt: new Date(),
+      }
     }
   }
 }
@@ -98,6 +93,43 @@ export const getConfirmationFile = async (req, res, next) => {
     }
     const filePath = path.join(process.cwd(), 'uploads', 'booking-confirmations', path.basename(booking.bookingConfirmationFile.filePath))
     res.download(filePath, booking.bookingConfirmationFile.fileName)
+  } catch (err) { next(err) }
+}
+
+export const getBlJobs = async (req, res, next) => {
+  try {
+    const { page, limit, search } = req.query
+    const result = await service.getBlJobs({ page, limit, search })
+    res.json({ success: true, ...result })
+  } catch (err) { next(err) }
+}
+
+export const getBlById = async (req, res, next) => {
+  try {
+    const booking = await service.getBlById(req.params.id)
+    res.json({ success: true, data: booking })
+  } catch (err) { next(err) }
+}
+
+export const updateBl = async (req, res, next) => {
+  try {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
+    const payload = { ...req.body }
+    applyUploadedFiles(payload, req.files)
+    const booking = await service.updateBl(req.params.id, payload)
+    res.json({ success: true, data: booking })
+  } catch (err) { next(err) }
+}
+
+export const getCustomsCertificateFile = async (req, res, next) => {
+  try {
+    const booking = await service.getBlById(req.params.id)
+    if (!booking.customsCertificateFile?.filePath) {
+      return res.status(404).json({ success: false, message: 'No customs certificate attached to this job' })
+    }
+    const filePath = path.join(process.cwd(), 'uploads', 'customs-certificates', path.basename(booking.customsCertificateFile.filePath))
+    res.download(filePath, booking.customsCertificateFile.fileName)
   } catch (err) { next(err) }
 }
 

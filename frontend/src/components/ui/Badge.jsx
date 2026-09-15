@@ -31,6 +31,8 @@ const variants = {
   approved: { color: 'var(--color-stamp)', label: 'Approved' },
   rejected: { color: 'var(--color-brick)', label: 'Rejected' },
   job_created: { color: 'var(--color-stamp)', label: 'Job Created' },
+  Pending: { color: 'var(--color-signal)', label: 'Pending' },
+  Confirmed: { color: 'var(--color-stamp)', label: 'Confirmed' },
 }
 
 // The "ink stamp" — this app's signature status mark. A booking's status

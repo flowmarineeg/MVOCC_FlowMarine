@@ -13,6 +13,7 @@ const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'applicatio
 const UPLOAD_DIRS = {
   shippingDeclaration: path.join(process.cwd(), 'uploads', 'shipping-declarations'),
   bookingConfirmationFile: path.join(process.cwd(), 'uploads', 'booking-confirmations'),
+  customsCertificateFile: path.join(process.cwd(), 'uploads', 'customs-certificates'),
 }
 for (const dir of Object.values(UPLOAD_DIRS)) fs.mkdirSync(dir, { recursive: true })
 
@@ -47,6 +48,7 @@ const upload = multer({
 export const uploadBookingFiles = upload.fields([
   { name: 'shippingDeclaration', maxCount: 1 },
   { name: 'bookingConfirmationFile', maxCount: 1 },
+  { name: 'customsCertificateFile', maxCount: 1 },
 ])
 
 // Normalizes the two multer shapes (`.single()` → req.file, `.fields()` →
@@ -68,6 +70,7 @@ const matchesSignature = (buffer, signature) => signature.every((byte, i) => buf
 const FIELD_LABELS = {
   shippingDeclaration: 'Shipping declaration',
   bookingConfirmationFile: 'Booking confirmation file',
+  customsCertificateFile: 'Customs certificate file',
 }
 
 // Factory so the same verification logic covers both file fields — call once

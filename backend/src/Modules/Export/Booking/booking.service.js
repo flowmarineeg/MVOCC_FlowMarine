@@ -139,6 +139,68 @@ export const updateBooking = async (id, data) => {
   return { booking, stockWarnings }
 }
 
+// ─── B&L (Bill of Lading / documentation) sub-API ──────────────────────────────
+// Deliberately field-limited (BL_PROJECTION) so a bl:read/bl:update-only role
+// never sees the rest of a booking's ops data (price/cost/carrier/containers/
+// depot/etc.) — see the bl:read/bl:update gating in booking.routes.js.
+const BL_CONTEXT_FIELDS = [
+  'jobNo', 'clientName', 'clientPhone', 'clientEmail', 'pol', 'pod',
+  'shipper', 'consignee', 'exportTaxNumber', 'importTaxNumber', 'atd', 'eta', 'etd', 'ata',
+  'jobStatus', 'quotation', 'createdAt', 'updatedAt', 'status',
+]
+
+const BL_EDITABLE_FIELDS = [
+  'elHarkaRepName', 'exportCustomsDeclarationNo', 'certificateReceivedDate', 'customsCertificateFile',
+  'hblNumber', 'mblNumber', 'notifyPartyName', 'notifyPartyAddress', 'destinationAgentDetails',
+  'consigneeToOrder', 'blDraftVersion', 'draftSentToClientDate', 'clientConfirmationStatus',
+  'blType', 'telexReleaseSentDate', 'numberOfOriginalBLs', 'freightTermsOnBL', 'placeOfIssue', 'dateOfIssue',
+  'finalLoadListStatus', 'dgManifestRequired', 'dgManifestStatus', 'reeferManifestRequired', 'reeferManifestStatus',
+  'paymentRequestSent', 'invoiceStatus', 'preAlertSent', 'subManifestNafezaSubmitted', 'subManifestIssuedSent',
+  'podAgentUpdateLog', 'customerNotifiedDate',
+]
+
+const BL_PROJECTION = [...BL_CONTEXT_FIELDS, ...BL_EDITABLE_FIELDS].join(' ')
+
+const BL_POPULATE_FIELDS = [
+  { path: 'pol', select: 'name code country' },
+  { path: 'pod', select: 'name code country' },
+  { path: 'quotation', select: 'quotationNo' },
+]
+
+export const getBlJobs = async ({ page = 1, limit = 20, search } = {}) => {
+  const filter = buildBookingFilter({ search, searchFields: ['jobNo', 'clientName'] })
+  const skip = (Number(page) - 1) * Number(limit)
+  const total = await Booking.countDocuments(filter)
+  const bookings = await Booking.find(filter)
+    .select(BL_PROJECTION)
+    .populate(BL_POPULATE_FIELDS)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(Number(limit))
+  return { bookings, total, page: Number(page), pages: Math.ceil(total / Number(limit)) }
+}
+
+export const getBlById = async (id) => {
+  const booking = await Booking.findById(id).select(BL_PROJECTION).populate(BL_POPULATE_FIELDS)
+  if (!booking) throw Object.assign(new Error('Job not found'), { statusCode: 404 })
+  return booking
+}
+
+export const updateBl = async (id, data) => {
+  const booking = await Booking.findById(id)
+  if (!booking) throw Object.assign(new Error('Job not found'), { statusCode: 404 })
+  if (booking.status === 'cancelled') {
+    throw Object.assign(new Error('Cannot update a cancelled booking'), { statusCode: 400 })
+  }
+
+  for (const field of BL_EDITABLE_FIELDS) {
+    if (data[field] !== undefined) booking[field] = data[field]
+  }
+  await booking.save()
+
+  return Booking.findById(id).select(BL_PROJECTION).populate(BL_POPULATE_FIELDS)
+}
+
 // ─── Confirm Booking ──────────────────────────────────────────────────────────
 export const confirmBooking = async (id) => {
   const booking = await Booking.findById(id)
@@ -210,6 +272,10 @@ export const deleteBooking = async (id) => {
   }
   if (booking.bookingConfirmationFile?.filePath) {
     const filePath = path.join(process.cwd(), 'uploads', 'booking-confirmations', booking.bookingConfirmationFile.filePath)
+    fs.unlink(filePath, () => {})
+  }
+  if (booking.customsCertificateFile?.filePath) {
+    const filePath = path.join(process.cwd(), 'uploads', 'customs-certificates', booking.customsCertificateFile.filePath)
     fs.unlink(filePath, () => {})
   }
 

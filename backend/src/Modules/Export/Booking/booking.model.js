@@ -264,6 +264,104 @@ const bookingSchema = new mongoose.Schema(
       enum: ['pending', 'confirmed', 'cancelled'],
       default: 'pending',
     },
+
+    // ══════════════════════════════════════════════════════════════════
+    // B&L (Bill of Lading / documentation) — a separate tab, gated by its
+    // own bl:read/bl:update permissions rather than booking:*, so a
+    // documentation-only role can use this without full Booking ops
+    // access. See BL_PROJECTION/BL_EDITABLE_FIELDS in booking.service.js.
+    // Deliberately does NOT duplicate `atd` (used as "actual sail date")
+    // or add a second closing-status field — `jobStatus` above already
+    // covers job closure (completed / closed_invoiced).
+    // ══════════════════════════════════════════════════════════════════
+
+    // ─── Customs Certificate ────────────────────────────────────────
+    elHarkaRepName: { type: String, trim: true },
+    exportCustomsDeclarationNo: { type: String, trim: true },
+    certificateReceivedDate: { type: Date },
+    customsCertificateFile: {
+      fileName: { type: String },
+      filePath: { type: String },
+      mimeType: { type: String },
+      uploadedAt: { type: Date },
+    },
+
+    // ─── BL Parties & Draft BL ──────────────────────────────────────
+    // Shipper/consignee name+address+tax numbers printed on the BL are
+    // NOT duplicated here — they already exist as `shipper`/`consignee`
+    // and `exportTaxNumber`/`importTaxNumber` above.
+    hblNumber: { type: String, trim: true },
+    mblNumber: { type: String, trim: true },
+    notifyPartyName: { type: String, trim: true },
+    notifyPartyAddress: { type: String, trim: true },
+    destinationAgentDetails: { type: String, trim: true },
+    consigneeToOrder: { type: Boolean, default: false },
+    blDraftVersion: { type: String, trim: true },
+    draftSentToClientDate: { type: Date },
+    clientConfirmationStatus: {
+      type: String,
+      enum: ['Pending', 'Confirmed'],
+      default: 'Pending',
+    },
+
+    // ─── BL Release ──────────────────────────────────────────────────
+    blType: {
+      type: String,
+      enum: ['Original 3/3', 'Seaway Bill', 'Express Release', 'Telex Release'],
+      default: 'Telex Release',
+    },
+    // "⭐ Milestone" (product-note code FM-11-NV — a fixed UI label, not
+    // stored here).
+    telexReleaseSentDate: { type: Date },
+    numberOfOriginalBLs: { type: Number, min: [0, 'Must be a positive number'] },
+    freightTermsOnBL: {
+      type: String,
+      enum: ['Freight Prepaid', 'Freight Collect'],
+    },
+    placeOfIssue: { type: String, trim: true },
+    dateOfIssue: { type: Date },
+
+    // ─── Sea/Customs Closure ─────────────────────────────────────────
+    // This checklist only becomes editable in the UI once `atd` (Actual
+    // Time of Departure, above) is set — no separate "actual sail date"
+    // field is stored twice.
+    finalLoadListStatus: {
+      type: String,
+      enum: ['Pending', 'Sent'],
+      default: 'Pending',
+    },
+    dgManifestRequired: { type: Boolean, default: false },
+    dgManifestStatus: {
+      type: String,
+      enum: ['N/A', 'Pending', 'Sent'],
+      default: 'N/A',
+    },
+    reeferManifestRequired: { type: Boolean, default: false },
+    reeferManifestStatus: {
+      type: String,
+      enum: ['N/A', 'Pending', 'Sent'],
+      default: 'N/A',
+    },
+    // "⭐ Milestone" fields below (codes are fixed UI labels, not stored).
+    paymentRequestSent: { type: Boolean, default: false },
+    invoiceStatus: {
+      type: String,
+      enum: ['Draft', 'Issued', 'Paid'],
+      default: 'Draft',
+    },
+    preAlertSent: { type: Boolean, default: false },
+    subManifestNafezaSubmitted: { type: Boolean, default: false },
+    subManifestIssuedSent: { type: Boolean, default: false },
+
+    // ─── Final Follow-up & Closing ───────────────────────────────────
+    // ETA vs ATA is a computed display in the BL form (both fields
+    // already exist above) — not stored twice. Job closing itself is
+    // `jobStatus` (completed / closed_invoiced), not a separate field.
+    podAgentUpdateLog: {
+      type: [{ date: { type: Date, required: true }, note: { type: String, trim: true } }],
+      default: [],
+    },
+    customerNotifiedDate: { type: Date },
   },
   { timestamps: true }
 )

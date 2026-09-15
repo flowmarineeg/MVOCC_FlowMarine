@@ -136,3 +136,45 @@ export const updateBookingRules = [
   body('commodity').optional().trim().notEmpty().withMessage('Commodity cannot be empty'),
   ...sharedOptionalRules,
 ]
+
+// B&L (Bill of Lading / documentation) — a field set disjoint from
+// updateBookingRules above, validated separately since it's served by its
+// own bl:update-gated route (see booking.routes.js).
+export const blUpdateRules = [
+  body('elHarkaRepName').optional().trim(),
+  body('exportCustomsDeclarationNo').optional().trim(),
+  body('certificateReceivedDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid certificate received date'),
+
+  body('hblNumber').optional().trim(),
+  body('mblNumber').optional().trim(),
+  body('notifyPartyName').optional().trim(),
+  body('notifyPartyAddress').optional().trim(),
+  body('destinationAgentDetails').optional().trim(),
+  body('consigneeToOrder').optional().isBoolean().withMessage('consigneeToOrder must be true or false').toBoolean(),
+  body('blDraftVersion').optional().trim(),
+  body('draftSentToClientDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid draft-sent date'),
+  body('clientConfirmationStatus').optional({ checkFalsy: true }).isIn(['Pending', 'Confirmed']).withMessage('Invalid client confirmation status'),
+
+  body('blType').optional({ checkFalsy: true }).isIn(['Original 3/3', 'Seaway Bill', 'Express Release', 'Telex Release']).withMessage('Invalid B/L type'),
+  body('telexReleaseSentDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid telex release date'),
+  body('numberOfOriginalBLs').optional({ checkFalsy: true }).isInt({ min: 0 }).withMessage('Must be a positive whole number'),
+  body('freightTermsOnBL').optional({ checkFalsy: true }).isIn(['Freight Prepaid', 'Freight Collect']).withMessage('Invalid freight terms'),
+  body('placeOfIssue').optional().trim(),
+  body('dateOfIssue').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid date of issue'),
+
+  body('finalLoadListStatus').optional({ checkFalsy: true }).isIn(['Pending', 'Sent']).withMessage('Invalid final load list status'),
+  body('dgManifestRequired').optional().isBoolean().withMessage('dgManifestRequired must be true or false').toBoolean(),
+  body('dgManifestStatus').optional({ checkFalsy: true }).isIn(['N/A', 'Pending', 'Sent']).withMessage('Invalid DG manifest status'),
+  body('reeferManifestRequired').optional().isBoolean().withMessage('reeferManifestRequired must be true or false').toBoolean(),
+  body('reeferManifestStatus').optional({ checkFalsy: true }).isIn(['N/A', 'Pending', 'Sent']).withMessage('Invalid reefer manifest status'),
+  body('paymentRequestSent').optional().isBoolean().withMessage('paymentRequestSent must be true or false').toBoolean(),
+  body('invoiceStatus').optional({ checkFalsy: true }).isIn(['Draft', 'Issued', 'Paid']).withMessage('Invalid invoice status'),
+  body('preAlertSent').optional().isBoolean().withMessage('preAlertSent must be true or false').toBoolean(),
+  body('subManifestNafezaSubmitted').optional().isBoolean().withMessage('subManifestNafezaSubmitted must be true or false').toBoolean(),
+  body('subManifestIssuedSent').optional().isBoolean().withMessage('subManifestIssuedSent must be true or false').toBoolean(),
+
+  body('podAgentUpdateLog').optional().isArray().withMessage('podAgentUpdateLog must be a list'),
+  body('podAgentUpdateLog.*.date').isISO8601().withMessage('Each POD agent update needs a valid date'),
+  body('podAgentUpdateLog.*.note').optional().trim(),
+  body('customerNotifiedDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid customer-notified date'),
+]

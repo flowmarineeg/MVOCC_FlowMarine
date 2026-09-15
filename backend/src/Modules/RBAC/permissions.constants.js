@@ -18,6 +18,9 @@ export const PERMISSIONS = [
   { key: 'quotation:update', label: 'Update / send / negotiate quotation', group: 'Quotation' },
   { key: 'quotation:approve', label: 'Approve a below-minimum-margin quotation', group: 'Quotation' },
 
+  { key: 'bl:read', label: 'View B&L documentation', group: 'BL' },
+  { key: 'bl:update', label: 'Update B&L documentation', group: 'BL' },
+
   { key: 'team:read', label: 'View team & invitations', group: 'Team' },
   { key: 'team:invite', label: 'Invite / resend / revoke', group: 'Team' },
   { key: 'team:update', label: 'Change role / (de)activate members', group: 'Team' },
