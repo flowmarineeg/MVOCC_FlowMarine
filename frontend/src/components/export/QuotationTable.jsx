@@ -6,7 +6,9 @@ import { FaEye, FaEdit, FaExclamationTriangle } from 'react-icons/fa'
 import Badge from '@/components/ui/Badge'
 import Plate from '@/components/ui/Plate'
 
-export default function QuotationTable({ quotations = [], canUpdate = false }) {
+const LOCKED_STATUSES = ['sent', 'approved', 'rejected']
+
+export default function QuotationTable({ quotations = [], canUpdate = false, canOverrideLock = false }) {
   return (
     <div className="overflow-x-auto border border-ink/25 bg-card">
       <table className="w-full text-sm">
@@ -16,7 +18,7 @@ export default function QuotationTable({ quotations = [], canUpdate = false }) {
             <th className="px-4 py-3">Client</th>
             <th className="px-4 py-3">POL</th>
             <th className="px-4 py-3">POD</th>
-            <th className="px-4 py-3">Carrier</th>
+            <th className="px-4 py-3">NVOCC</th>
             <th className="px-4 py-3">Margin</th>
             <th className="px-4 py-3">Status</th>
             <th className="px-4 py-3 text-right">Actions</th>
@@ -35,7 +37,7 @@ export default function QuotationTable({ quotations = [], canUpdate = false }) {
               <td className="px-4 py-3 text-ink">{q.clientName}</td>
               <td className="px-4 py-3 font-mono text-xs text-muted">{q.pol?.code || '-'}</td>
               <td className="px-4 py-3 font-mono text-xs text-muted">{q.pod?.code || '-'}</td>
-              <td className="px-4 py-3 font-mono text-xs text-muted">{q.carrier?.code || '-'}</td>
+              <td className="px-4 py-3 font-mono text-xs text-muted">{q.nvocc?.code || '-'}</td>
               <td className="px-4 py-3 font-mono text-xs">
                 <span className={q.belowMinMargin ? 'inline-flex items-center gap-1 text-brick' : 'text-muted'}>
                   {q.belowMinMargin && <FaExclamationTriangle className="text-[10px]" />}
@@ -52,7 +54,7 @@ export default function QuotationTable({ quotations = [], canUpdate = false }) {
                   >
                     <FaEye className="text-xs" />
                   </Link>
-                  {canUpdate && !['approved', 'rejected'].includes(q.status) && (
+                  {canUpdate && (!LOCKED_STATUSES.includes(q.status) || canOverrideLock) && (
                     <Link
                       href={`/export/quotations/${q._id}`}
                       className="flex h-8 w-8 items-center justify-center text-muted transition-colors hover:bg-ink/5 hover:text-ink"

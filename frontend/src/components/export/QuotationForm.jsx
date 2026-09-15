@@ -18,6 +18,8 @@ const toDateInput = (d) => {
   return (d instanceof Date ? d.toISOString() : String(d)).slice(0, 10)
 }
 
+const formatDateTime = (d) => (d ? new Date(d).toLocaleString() : '-')
+
 function emptyForm(currentUser) {
   return {
     quotationNo: '',
@@ -29,7 +31,7 @@ function emptyForm(currentUser) {
     contactEmail: '',
     clientReferenceNo: '',
     inquiryDate: toDateInput(new Date()),
-    salesRep: currentUser?._id || currentUser?.id || '',
+    salesRep: currentUser?.name || currentUser?.email || '',
     commodity: '',
     hsCode: '',
     containers: [{ containerType: '', quantity: 1 }],
@@ -45,7 +47,7 @@ function emptyForm(currentUser) {
     incoterms: '',
     targetEtd: '',
     specialNotes: '',
-    carrier: '',
+    nvocc: '',
     buyingCurrency: 'USD',
     rateValidFrom: '',
     rateValidTo: '',
@@ -77,7 +79,7 @@ function buildInitialForm(quotation, currentUser) {
     contactEmail: quotation.contactEmail || '',
     clientReferenceNo: quotation.clientReferenceNo || '',
     inquiryDate: toDateInput(quotation.inquiryDate) || toDateInput(new Date()),
-    salesRep: quotation.salesRep?._id || quotation.salesRep || currentUser?._id || currentUser?.id || '',
+    salesRep: quotation.salesRep || currentUser?.name || currentUser?.email || '',
     commodity: quotation.commodity || '',
     hsCode: quotation.hsCode || '',
     containers: (quotation.containers || []).map((c) => ({
@@ -96,7 +98,7 @@ function buildInitialForm(quotation, currentUser) {
     incoterms: quotation.incoterms || '',
     targetEtd: toDateInput(quotation.targetEtd),
     specialNotes: quotation.specialNotes || '',
-    carrier: quotation.carrier?._id || quotation.carrier || '',
+    nvocc: quotation.nvocc?._id || quotation.nvocc || '',
     buyingCurrency: quotation.buyingCurrency || 'USD',
     rateValidFrom: toDateInput(quotation.rateValidFrom),
     rateValidTo: toDateInput(quotation.rateValidTo),
@@ -160,20 +162,24 @@ function FreightRateRows({ containerTypes, selectedIds, values, onChange, curren
   )
 }
 
+const LOCKED_STATUSES = ['sent', 'approved', 'rejected']
+
 export default function QuotationForm({
   quotation = null,
   customers = [],
   ports = [],
   containerTypes = [],
-  carriers = [],
-  teamMembers = [],
+  nvoccs = [],
   currentUser = null,
   submitting = false,
+  canOverrideLock = false,
   onSubmit,
   onCustomerCreated,
 }) {
   const isEdit = !!quotation
-  const isLocked = isEdit && ['approved', 'rejected'].includes(quotation.status)
+  const isNormallyLocked = isEdit && LOCKED_STATUSES.includes(quotation.status)
+  const isLocked = isNormallyLocked && !canOverrideLock
+  const isOverriding = isNormallyLocked && canOverrideLock
   const [form, setForm] = useState(() => buildInitialForm(quotation, currentUser))
   const [errors, setErrors] = useState({})
   const [newClientOpen, setNewClientOpen] = useState(false)
@@ -186,8 +192,8 @@ export default function QuotationForm({
 
   const portOptions = ports.map((p) => ({ value: p._id, label: `${p.code} — ${p.name}` }))
   const customerOptions = customers.map((c) => ({ value: c._id, label: c.name }))
-  const carrierOptions = carriers.map((c) => ({ value: c._id, label: `${c.code} — ${c.name}` }))
-  const salesRepOptions = teamMembers.map((m) => ({ value: m._id, label: m.name || m.email }))
+  const nvoccOptions = nvoccs.map((n) => ({ value: n._id, label: `${n.code} — ${n.name}` }))
+  const selectedNvocc = nvoccs.find((n) => n._id === form.nvocc) || null
 
   const selectedContainerTypeIds = [...new Set(form.containers.map((c) => c.containerType).filter(Boolean))]
 
@@ -205,14 +211,26 @@ export default function QuotationForm({
 
   const handleSelectCustomer = (id) => {
     const c = customers.find((x) => x._id === id)
-    setForm((f) => ({ ...f, customer: id, clientName: c?.name || '' }))
+    setForm((f) => ({
+      ...f,
+      customer: id,
+      clientName: c?.name || '',
+      contactPhone: c?.phone || '',
+      contactEmail: c?.email || '',
+    }))
   }
 
   const handleCreateCustomer = async (values) => {
     setCreatingCustomer(true)
     try {
       const created = await masterDataApi.createCustomer(values)
-      setForm((f) => ({ ...f, customer: created._id, clientName: created.name }))
+      setForm((f) => ({
+        ...f,
+        customer: created._id,
+        clientName: created.name,
+        contactPhone: created.phone || '',
+        contactEmail: created.email || '',
+      }))
       setNewClientOpen(false)
       onCustomerCreated?.(created)
     } finally {
@@ -220,14 +238,14 @@ export default function QuotationForm({
     }
   }
 
-  const handleCarrierChange = async (carrierId) => {
-    set('carrier')(carrierId)
+  const handleNvoccChange = async (nvoccId) => {
+    set('nvocc')(nvoccId)
     setRateNote('')
-    if (!carrierId) return
+    if (!nvoccId) return
     const hasBuyingData = Object.keys(form.oceanFreightBuyingByType).length > 0 || form.rateSourceReference
     if (hasBuyingData) return
     try {
-      const suggestion = await quotationApi.suggestRate(carrierId, quotation?._id)
+      const suggestion = await quotationApi.suggestRate(nvoccId, quotation?._id)
       if (!suggestion) return
       setForm((f) => ({
         ...f,
@@ -246,7 +264,7 @@ export default function QuotationForm({
         destinationCharge: suggestion.destinationCharge ?? '',
         rateSourceReference: suggestion.rateSourceReference || '',
       }))
-      setRateNote(`Prefilled from the last quotation (${suggestion.quotationNo}) using this carrier — edit freely, some rates are Spot.`)
+      setRateNote(`Prefilled from the last quotation (${suggestion.quotationNo}) using this NVOCC — edit freely, some rates are Spot.`)
     } catch {
       // best-effort suggestion only — silently skip if the lookup fails
     }
@@ -261,6 +279,7 @@ export default function QuotationForm({
     const next = {}
     if (!form.quotationNo.trim()) next.quotationNo = 'Quotation number is required'
     if (!form.customer) next.customer = form.customerType === 'new' ? 'Create the new client first' : 'Select a client'
+    if (!form.salesRep.trim()) next.salesRep = 'Sales representative is required'
     if (!form.commodity.trim()) next.commodity = 'Commodity is required'
     if (!form.pol) next.pol = 'Port of loading is required'
     if (!form.pod) next.pod = 'Port of discharge is required'
@@ -293,7 +312,7 @@ export default function QuotationForm({
       contactEmail: form.contactEmail.trim(),
       clientReferenceNo: form.clientReferenceNo.trim(),
       inquiryDate: form.inquiryDate,
-      salesRep: form.salesRep,
+      salesRep: form.salesRep.trim(),
       commodity: form.commodity.trim(),
       hsCode: form.hsCode.trim(),
       containers,
@@ -309,7 +328,7 @@ export default function QuotationForm({
       incoterms: form.incoterms || undefined,
       targetEtd: form.targetEtd || undefined,
       specialNotes: form.specialNotes.trim(),
-      carrier: form.carrier || undefined,
+      nvocc: form.nvocc || undefined,
       buyingCurrency: form.buyingCurrency,
       rateValidFrom: form.rateValidFrom || undefined,
       rateValidTo: form.rateValidTo || undefined,
@@ -341,7 +360,33 @@ export default function QuotationForm({
   return (
     <>
     <form onSubmit={handleSubmit} className="space-y-6">
+      {isOverriding && (
+        <div className="flex items-center gap-2 border border-signal/40 bg-signal/10 px-4 py-3 text-sm text-signal">
+          <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.1em]">Override active</span>
+          <span>This quotation is {quotation.status} and normally locked — you can edit it because you hold the quotation:approve permission.</span>
+        </div>
+      )}
       <fieldset disabled={isLocked} className="space-y-6">
+        {isEdit && (
+          <div className="grid grid-cols-1 gap-x-6 gap-y-2 border border-ink/20 bg-paper/60 p-4 text-sm sm:grid-cols-3">
+            <div>
+              <span className={labelCls}>Created At</span>
+              <p className="font-mono text-ink">{formatDateTime(quotation.createdAt)}</p>
+            </div>
+            <div>
+              <span className={labelCls}>Last Updated</span>
+              <p className="font-mono text-ink">{formatDateTime(quotation.updatedAt)}</p>
+            </div>
+            <div>
+              <span className={labelCls}>Updated By</span>
+              <p className="text-ink">
+                {quotation.updatedBy?.name || '-'}
+                {quotation.updatedBy?.email && <span className="text-muted"> ({quotation.updatedBy.email})</span>}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* 1. Client Request */}
         <div className={sectionCls}>
           <h2 className={sectionTitleCls}>1. Client Request Data</h2>
@@ -448,20 +493,11 @@ export default function QuotationForm({
               <label className={labelCls}>Client Reference No</label>
               <input value={form.clientReferenceNo} onChange={setInput('clientReferenceNo')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
-            {teamMembers.length > 0 ? (
-              <Select
-                label="Sales Representative"
-                options={salesRepOptions}
-                value={form.salesRep}
-                onChange={set('salesRep')}
-                placeholder="Select rep"
-              />
-            ) : (
-              <div>
-                <label className={labelCls}>Sales Representative</label>
-                <input value={currentUser?.name || currentUser?.email || ''} disabled className={`${inputCls} cursor-not-allowed border-ink/30 bg-paper text-muted`} />
-              </div>
-            )}
+            <div>
+              <label className={labelCls}>Sales Representative <span className="text-rust">*</span></label>
+              <input value={form.salesRep} onChange={setInput('salesRep')} className={`${inputCls} ${errors.salesRep ? 'border-brick' : 'border-ink/30'}`} placeholder="Sales rep name" />
+              {errors.salesRep && <p className="mt-1 font-mono text-xs text-brick">{errors.salesRep}</p>}
+            </div>
             <div>
               <label className={labelCls}>Commodity <span className="text-rust">*</span></label>
               <input
@@ -538,11 +574,47 @@ export default function QuotationForm({
           </div>
         </div>
 
-        {/* 2. Carrier */}
+        {/* 2. NVOCC */}
         <div className={sectionCls}>
-          <h2 className={sectionTitleCls}>2. Carrier (Master Data)</h2>
-          <Select label="Select Carrier" placeholder="Choose a shipping line" searchable options={carrierOptions} value={form.carrier} onChange={handleCarrierChange} />
+          <h2 className={sectionTitleCls}>2. NVOCC (Master Data)</h2>
+          <Select label="Select NVOCC" placeholder="Choose an NVOCC" searchable options={nvoccOptions} value={form.nvocc} onChange={handleNvoccChange} />
           {rateNote && <p className="font-mono text-xs text-signal">{rateNote}</p>}
+          {selectedNvocc && (
+            <div className="grid grid-cols-1 gap-x-6 gap-y-3 border border-ink/20 bg-paper/60 p-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <span className={labelCls}>Name</span>
+                <p className="text-sm text-ink">{selectedNvocc.name}</p>
+              </div>
+              <div>
+                <span className={labelCls}>Code</span>
+                <p className="font-mono text-sm text-ink">{selectedNvocc.code}</p>
+              </div>
+              <div>
+                <span className={labelCls}>Contract Type</span>
+                <p className="text-sm text-ink">{selectedNvocc.contractType || '-'}</p>
+              </div>
+              <div>
+                <span className={labelCls}>Contract Valid From</span>
+                <p className="font-mono text-sm text-ink">{selectedNvocc.contractValidFrom ? new Date(selectedNvocc.contractValidFrom).toLocaleDateString() : '-'}</p>
+              </div>
+              <div>
+                <span className={labelCls}>Contract Valid To</span>
+                <p className="font-mono text-sm text-ink">{selectedNvocc.contractValidTo ? new Date(selectedNvocc.contractValidTo).toLocaleDateString() : '-'}</p>
+              </div>
+              <div>
+                <span className={labelCls}>Trade Lane</span>
+                <p className="text-sm text-ink">{selectedNvocc.tradeLane || '-'}</p>
+              </div>
+              <div>
+                <span className={labelCls}>Local Agent Name</span>
+                <p className="text-sm text-ink">{selectedNvocc.localAgentName || '-'}</p>
+              </div>
+              <div>
+                <span className={labelCls}>Local Agent Contact</span>
+                <p className="text-sm text-ink">{selectedNvocc.localAgentContact || '-'}</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 3. Buying */}

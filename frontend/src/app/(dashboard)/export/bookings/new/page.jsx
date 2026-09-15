@@ -86,13 +86,13 @@ function NewBookingPageInner() {
         toast(res.warnings.message, 'error')
       }
 
-      // Transfers the quotation's carrier/pricing into Step 2 automatically,
+      // Transfers the quotation's NVOCC/pricing into Step 2 automatically,
       // so a converted booking arrives fully filled instead of needing a
       // second manual pass — see the Sprint 005 plan's "Convert to Job" note.
       if (quotation) {
         try {
           await bookingApi.updateStep2(res.data._id, {
-            carrier: quotation.carrier?._id || quotation.carrier || undefined,
+            nvocc: quotation.nvocc?._id || quotation.nvocc || undefined,
             price: quotation.totalSellingPrice || undefined,
             cost: quotation.totalBuyingCost || undefined,
           })

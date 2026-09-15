@@ -26,6 +26,7 @@ export default function QuotationsListPage() {
   const { permissions } = useAuth()
   const canCreate = permissions.includes('quotation:create')
   const canUpdate = permissions.includes('quotation:update')
+  const canOverrideLock = permissions.includes('quotation:approve')
 
   const [quotations, setQuotations] = useState([])
   const [loading, setLoading] = useState(true)
@@ -107,7 +108,7 @@ export default function QuotationsListPage() {
         />
       ) : (
         <>
-          <QuotationTable quotations={quotations} canUpdate={canUpdate} />
+          <QuotationTable quotations={quotations} canUpdate={canUpdate} canOverrideLock={canOverrideLock} />
           <Pagination page={page} pages={pages} total={total} limit={limit} onPageChange={setPage} onLimitChange={setLimit} />
         </>
       )}

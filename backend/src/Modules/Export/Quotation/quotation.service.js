@@ -8,17 +8,17 @@ const MIN_MARGIN_PERCENT = 10
 
 const POPULATE_FIELDS = [
   { path: 'customer', select: 'name email phone' },
-  { path: 'salesRep', select: 'name email' },
   { path: 'containers.containerType', select: 'code label' },
   { path: 'por', select: 'name code country' },
   { path: 'pol', select: 'name code country' },
   { path: 'pod', select: 'name code country' },
   { path: 'fpd', select: 'name code country' },
-  { path: 'carrier', select: 'name code contractType tradeLane localAgentName localAgentContact' },
+  { path: 'nvocc', select: 'name code contractType contractValidFrom contractValidTo tradeLane localAgentName localAgentContact' },
   { path: 'oceanFreightBuying.containerType', select: 'code label' },
   { path: 'oceanFreightSelling.containerType', select: 'code label' },
   { path: 'approvedBy', select: 'name email' },
   { path: 'linkedBooking', select: 'jobNo status' },
+  { path: 'updatedBy', select: 'name email' },
 ]
 
 const QUOTATION_STATUSES = ['draft', 'sent', 'negotiation', 'approved', 'rejected']
@@ -80,7 +80,7 @@ const EDITABLE_FIELDS = [
   'customerType', 'customer', 'clientName', 'contactPerson', 'contactPhone', 'contactEmail',
   'clientReferenceNo', 'inquiryDate', 'salesRep', 'commodity', 'hsCode', 'containers',
   'grossWeight', 'cbm', 'isDangerous', 'unClass', 'unNumber', 'por', 'pol', 'pod', 'fpd',
-  'incoterms', 'targetEtd', 'specialNotes', 'carrier',
+  'incoterms', 'targetEtd', 'specialNotes', 'nvocc',
   'buyingCurrency', 'rateValidFrom', 'rateValidTo', 'oceanFreightBuying', 'polChargesBuying',
   'podLocalChargesBuying', 'freeTimeBuyingDays', 'destinationCharge', 'rateSourceReference',
   'sellingCurrency', 'exchangeRate', 'oceanFreightSelling', 'polChargesSelling',
@@ -97,7 +97,8 @@ const clearDangerousFieldsIfNotDangerous = (quotation) => {
 // ─── Create ───────────────────────────────────────────────────────────────
 export const createQuotation = async (data, currentUser) => {
   const payload = { ...data }
-  if (!payload.salesRep) payload.salesRep = currentUser?._id || currentUser?.id
+  if (!payload.salesRep) payload.salesRep = currentUser?.name || currentUser?.email
+  payload.updatedBy = currentUser?._id || currentUser?.id
   const quotation = new Quotation(payload)
   clearDangerousFieldsIfNotDangerous(quotation)
   applyProfitability(quotation)
@@ -126,12 +127,22 @@ export const getQuotationById = async (id) => {
   return quotation
 }
 
+// Once a quotation has gone out (sent) or reached a decision (approved/
+// rejected), editing is locked down to holders of quotation:approve
+// (admin gets this automatically; manager has it by default — see the
+// seed role matrix) rather than every quotation:update holder — same
+// reused-permission pattern as the margin-approval gate below.
+const LOCKED_STATUSES = ['sent', 'approved', 'rejected']
+
 // ─── Update sections 1–5 ────────────────────────────────────────────────────
-export const updateQuotation = async (id, data) => {
+export const updateQuotation = async (id, data, currentUser, { canOverride } = {}) => {
   const quotation = await Quotation.findById(id)
   if (!quotation) throw Object.assign(new Error('Quotation not found'), { statusCode: 404 })
-  if (quotation.status === 'approved' || quotation.status === 'rejected') {
-    throw Object.assign(new Error(`Cannot edit a quotation with status: ${quotation.status}`), { statusCode: 400 })
+  if (LOCKED_STATUSES.includes(quotation.status) && !canOverride) {
+    throw Object.assign(
+      new Error(`Cannot edit a quotation with status: ${quotation.status} — requires quotation:approve permission`),
+      { statusCode: 403 }
+    )
   }
 
   for (const field of EDITABLE_FIELDS) {
@@ -139,6 +150,7 @@ export const updateQuotation = async (id, data) => {
   }
   clearDangerousFieldsIfNotDangerous(quotation)
   applyProfitability(quotation)
+  quotation.updatedBy = currentUser?._id || currentUser?.id
 
   await quotation.save()
   await quotation.populate(POPULATE_FIELDS)
@@ -177,24 +189,25 @@ export const updateStatus = async (id, { status, rejectionReason }, { canApprove
   return { quotation, allowed }
 }
 
-export const applyStatusChange = async (quotation, status, { rejectionReason, approvedByUserId } = {}) => {
+export const applyStatusChange = async (quotation, status, { rejectionReason, approvedByUserId, updatedByUserId } = {}) => {
   quotation.status = status
   if (status === 'rejected') quotation.rejectionReason = rejectionReason.trim()
   if (status === 'approved') quotation.approvedBy = approvedByUserId
+  quotation.updatedBy = updatedByUserId
   await quotation.save()
   await quotation.populate(POPULATE_FIELDS)
   return quotation
 }
 
-// ─── Suggest last buying rate for a carrier ─────────────────────────────────
+// ─── Suggest last buying rate for an NVOCC ──────────────────────────────────
 // "the system suggests the last contracted price, if one was saved" — rather
-// than a separate carrier-rate-history master table, this looks up the most
-// recent OTHER quotation that used the same carrier and returns its buying
-// section as a starting point; the user can still edit it freely (some rates
-// are Spot, not Contract).
-export const suggestRateForCarrier = async (carrierId, excludeId) => {
-  if (!mongoose.Types.ObjectId.isValid(carrierId)) return null
-  const filter = { carrier: carrierId }
+// than a separate rate-history master table, this looks up the most recent
+// OTHER quotation that used the same NVOCC and returns its buying section as
+// a starting point; the user can still edit it freely (some rates are Spot,
+// not Contract).
+export const suggestRateForNvocc = async (nvoccId, excludeId) => {
+  if (!mongoose.Types.ObjectId.isValid(nvoccId)) return null
+  const filter = { nvocc: nvoccId }
   if (excludeId && mongoose.Types.ObjectId.isValid(excludeId)) filter._id = { $ne: excludeId }
 
   const last = await Quotation.findOne(filter)

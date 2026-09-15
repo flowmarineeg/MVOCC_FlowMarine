@@ -30,7 +30,8 @@ export const updateQuotation = async (req, res, next) => {
   try {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
-    const quotation = await service.updateQuotation(req.params.id, req.body)
+    const canOverride = !!req.user?.permissions?.includes('quotation:approve')
+    const quotation = await service.updateQuotation(req.params.id, req.body, req.user, { canOverride })
     res.json({ success: true, data: quotation })
   } catch (err) { next(err) }
 }
@@ -43,7 +44,7 @@ export const updateStatus = async (req, res, next) => {
     const canApprove = !!req.user?.permissions?.includes('quotation:approve')
 
     const { quotation } = await service.updateStatus(req.params.id, { status, rejectionReason }, { canApprove })
-    const updated = await service.applyStatusChange(quotation, status, { rejectionReason, approvedByUserId: req.user.id })
+    const updated = await service.applyStatusChange(quotation, status, { rejectionReason, approvedByUserId: req.user.id, updatedByUserId: req.user.id })
 
     await logAction({
       user: req.user, action: status.toUpperCase(), resource: 'Quotation', resourceId: updated.quotationNo,
@@ -56,9 +57,9 @@ export const updateStatus = async (req, res, next) => {
 
 export const suggestRate = async (req, res, next) => {
   try {
-    const { carrier } = req.query
-    if (!carrier) return res.json({ success: true, data: null })
-    const suggestion = await service.suggestRateForCarrier(carrier, req.query.excludeId)
+    const { nvocc } = req.query
+    if (!nvocc) return res.json({ success: true, data: null })
+    const suggestion = await service.suggestRateForNvocc(nvocc, req.query.excludeId)
     res.json({ success: true, data: suggestion })
   } catch (err) { next(err) }
 }

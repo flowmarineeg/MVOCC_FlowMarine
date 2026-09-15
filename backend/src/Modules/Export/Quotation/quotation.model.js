@@ -74,9 +74,9 @@ const quotationSchema = new mongoose.Schema(
       default: Date.now,
     },
     salesRep: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      type: String,
       required: [true, 'Sales representative is required'],
+      trim: true,
     },
     commodity: {
       type: String,
@@ -126,8 +126,8 @@ const quotationSchema = new mongoose.Schema(
     targetEtd: { type: Date },
     specialNotes: { type: String, trim: true },
 
-    // ─── 2) Carrier ────────────────────────────────────────────────────
-    carrier: { type: mongoose.Schema.Types.ObjectId, ref: 'Carrier' },
+    // ─── 2) NVOCC ──────────────────────────────────────────────────────
+    nvocc: { type: mongoose.Schema.Types.ObjectId, ref: 'Nvocc' },
 
     // ─── 3) Buying ─────────────────────────────────────────────────────
     buyingCurrency: { type: String, trim: true, default: 'USD' },
@@ -176,12 +176,15 @@ const quotationSchema = new mongoose.Schema(
     // ─── Linkage (set once, by the convert-to-booking flow) ─────────────
     linkedBooking: { type: mongoose.Schema.Types.ObjectId, ref: 'Booking', default: null },
     convertedAt: { type: Date, default: null },
+
+    // ─── Tracking (server-set, never trusted from the client) ──────────
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   },
   { timestamps: true }
 )
 
 quotationSchema.index({ status: 1 })
-quotationSchema.index({ carrier: 1 })
+quotationSchema.index({ nvocc: 1 })
 quotationSchema.index({ customer: 1 })
 quotationSchema.index({ salesRep: 1 })
 quotationSchema.index({ 'containers.containerType': 1 })

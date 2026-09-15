@@ -7,7 +7,6 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { FaArrowLeft, FaTimes, FaExclamationTriangle } from 'react-icons/fa'
 import * as quotationApi from '@/services/quotation'
 import * as masterDataApi from '@/services/masterData'
-import * as teamApi from '@/services/team'
 import { PageLoader } from '@/components/ui/Spinner'
 import Badge from '@/components/ui/Badge'
 import Plate from '@/components/ui/Plate'
@@ -90,7 +89,6 @@ export default function QuotationDetailPage() {
   const { permissions, user } = useAuth()
   const canUpdate = permissions.includes('quotation:update')
   const canApprove = permissions.includes('quotation:approve')
-  const canSeeTeam = permissions.includes('team:read')
 
   const [quotation, setQuotation] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -101,8 +99,7 @@ export default function QuotationDetailPage() {
   const [customers, setCustomers] = useState([])
   const [ports, setPorts] = useState([])
   const [containerTypes, setContainerTypes] = useState([])
-  const [carriers, setCarriers] = useState([])
-  const [teamMembers, setTeamMembers] = useState([])
+  const [nvoccs, setNvoccs] = useState([])
 
   const load = () => {
     quotationApi.getQuotationById(id).then(setQuotation).catch((err) => toast(err.message, 'error'))
@@ -114,16 +111,14 @@ export default function QuotationDetailPage() {
       masterDataApi.getCustomers(),
       masterDataApi.getPorts(),
       masterDataApi.getContainerTypes(),
-      masterDataApi.getCarriers(),
-      canSeeTeam ? teamApi.getMembers({ status: 'active', limit: 200 }).then((r) => r.members) : Promise.resolve([]),
+      masterDataApi.getNvoccs(),
     ])
-      .then(([q, customersRes, portsRes, typesRes, carriersRes, members]) => {
+      .then(([q, customersRes, portsRes, typesRes, nvoccsRes]) => {
         setQuotation(q)
         setCustomers(customersRes)
         setPorts(portsRes)
         setContainerTypes(typesRes)
-        setCarriers(carriersRes)
-        setTeamMembers(members)
+        setNvoccs(nvoccsRes)
       })
       .catch((err) => toast(err.message, 'error'))
       .finally(() => setLoading(false))
@@ -228,10 +223,10 @@ export default function QuotationDetailPage() {
         customers={customers}
         ports={ports}
         containerTypes={containerTypes}
-        carriers={carriers}
-        teamMembers={teamMembers}
+        nvoccs={nvoccs}
         currentUser={user}
         submitting={saving}
+        canOverrideLock={canApprove}
         onSubmit={handleSave}
         onCustomerCreated={(c) => setCustomers((prev) => [...prev, c])}
       />

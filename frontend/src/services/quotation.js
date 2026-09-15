@@ -15,5 +15,5 @@ export const updateQuotation = (id, data) =>
 export const updateStatus = (id, data) =>
   api.put(`/export/quotations/${id}/status`, data).then((r) => r.data.data)
 
-export const suggestRate = (carrierId, excludeId) =>
-  api.get('/export/quotations/suggest-rate', { params: { carrier: carrierId, excludeId } }).then((r) => r.data.data)
+export const suggestRate = (nvoccId, excludeId) =>
+  api.get('/export/quotations/suggest-rate', { params: { nvocc: nvoccId, excludeId } }).then((r) => r.data.data)

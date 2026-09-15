@@ -43,7 +43,7 @@ const sharedOptionalRules = [
   body('contactEmail').optional({ checkFalsy: true }).isEmail().withMessage('Invalid contact email'),
   body('clientReferenceNo').optional().trim(),
   body('inquiryDate').optional().isISO8601().withMessage('Invalid inquiry date'),
-  body('salesRep').optional({ checkFalsy: true }).isMongoId().withMessage('Valid sales rep ID required'),
+  body('salesRep').optional().trim(),
   body('hsCode').optional().trim(),
   body('grossWeight').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Gross weight must be a positive number'),
   body('cbm').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('CBM must be a positive number'),
@@ -52,7 +52,7 @@ const sharedOptionalRules = [
   body('incoterms').optional({ checkFalsy: true }).isIn(['EXW', 'FCA', 'FOB', 'CPT', 'CIP', 'CFR', 'CIF', 'DAP', 'DPU', 'DDP']).withMessage('Invalid incoterms'),
   body('targetEtd').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid target ETD'),
   body('specialNotes').optional().trim(),
-  body('carrier').optional({ checkFalsy: true }).isMongoId().withMessage('Valid carrier ID required'),
+  body('nvocc').optional({ checkFalsy: true }).isMongoId().withMessage('Valid NVOCC ID required'),
 
   body('buyingCurrency').optional().trim(),
   body('rateValidFrom').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid rate validity from date'),
