@@ -8,6 +8,7 @@ import MasterDataFormModal from '@/components/masterdata/MasterDataFormModal'
 import * as masterDataApi from '@/services/masterData'
 import * as quotationApi from '@/services/quotation'
 import { computeProfitability } from '@/utils/quotationCalc'
+import { CURRENCY_OPTIONS } from '@/constants/currencies'
 
 // `d` is either a Date instance (e.g. `new Date()` for "default to today")
 // or an ISO date string from the API — String(Date) is NOT yyyy-mm-dd
@@ -621,10 +622,7 @@ export default function QuotationForm({
         <div className={sectionCls}>
           <h2 className={sectionTitleCls}>3. Buying Rate</h2>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-            <div>
-              <label className={labelCls}>Currency</label>
-              <input value={form.buyingCurrency} onChange={setInput('buyingCurrency')} className={`${inputCls} border-ink/30 font-mono uppercase`} maxLength={3} />
-            </div>
+            <Select label="Currency" searchable options={CURRENCY_OPTIONS} value={form.buyingCurrency} onChange={set('buyingCurrency')} />
             <div>
               <label className={labelCls}>Rate Valid From</label>
               <input type="date" value={form.rateValidFrom} onChange={setInput('rateValidFrom')} className={`${inputCls} border-ink/30 font-mono`} />
@@ -680,10 +678,7 @@ export default function QuotationForm({
         <div className={sectionCls}>
           <h2 className={sectionTitleCls}>4. Selling Price to Client</h2>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <div>
-              <label className={labelCls}>Currency</label>
-              <input value={form.sellingCurrency} onChange={setInput('sellingCurrency')} className={`${inputCls} border-ink/30 font-mono uppercase`} maxLength={3} />
-            </div>
+            <Select label="Currency" searchable options={CURRENCY_OPTIONS} value={form.sellingCurrency} onChange={set('sellingCurrency')} />
             <div>
               <label className={labelCls}>Exchange Rate <span className="normal-case text-muted/70">(buying → selling currency)</span></label>
               <input type="number" min="0" step="0.0001" value={form.exchangeRate} onChange={setInput('exchangeRate')} className={`${inputCls} border-ink/30 font-mono`} />

@@ -11,6 +11,7 @@ export default function StockOverviewTable({ rows = [], onView }) {
           <tr className="border-b-2 border-ink text-left font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
             <th className="px-4 py-3">Container Type</th>
             <th className="px-4 py-3">NVOCC</th>
+            <th className="px-4 py-3">Depot</th>
             <th className="px-4 py-3">Available</th>
             <th className="px-4 py-3">Total</th>
             <th className="px-4 py-3 text-right">Actions</th>
@@ -19,7 +20,7 @@ export default function StockOverviewTable({ rows = [], onView }) {
         <tbody>
           {rows.map((row, i) => (
             <motion.tr
-              key={`${row.containerType._id}-${row.nvocc._id}`}
+              key={`${row.containerType._id}-${row.nvocc._id}-${row.depot._id}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
@@ -27,12 +28,13 @@ export default function StockOverviewTable({ rows = [], onView }) {
             >
               <td className="px-4 py-3 text-ink">{row.containerType.code} — {row.containerType.label}</td>
               <td className="px-4 py-3 text-ink">{row.nvocc.name}</td>
+              <td className="px-4 py-3 text-ink">{row.depot.name}</td>
               <td className="px-4 py-3 font-mono text-ink">{row.available}</td>
               <td className="px-4 py-3 font-mono text-muted">{row.total}</td>
               <td className="px-4 py-3">
                 <div className="flex items-center justify-end">
                   <button
-                    onClick={() => onView({ containerType: row.containerType, nvocc: row.nvocc })}
+                    onClick={() => onView({ containerType: row.containerType, nvocc: row.nvocc, depot: row.depot })}
                     className="flex h-8 w-8 items-center justify-center text-muted transition-colors hover:bg-ink/5 hover:text-ink"
                     title="View containers"
                   >

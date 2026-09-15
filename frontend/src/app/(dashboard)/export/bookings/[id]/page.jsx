@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : '—')
+const fmtDateTime = (d) => (d ? new Date(d).toLocaleString() : '—')
 
 function Row({ label, value }) {
   return (
@@ -50,6 +51,7 @@ export default function BookingDetailPage() {
   const toast = useToast()
   const { permissions } = useAuth()
   const canUpdate = permissions.includes('booking:update')
+  const canViewQuotations = permissions.includes('quotation:read')
   const [booking, setBooking] = useState(null)
   const [loading, setLoading] = useState(true)
   const [confirming, setConfirming] = useState(false)
@@ -124,7 +126,7 @@ export default function BookingDetailPage() {
           </Link>
           <div className="flex items-center gap-3">
             <Plate className="text-sm">{booking.jobNo}</Plate>
-            <Badge value={booking.status} />
+            <Badge value={booking.jobStatus} />
           </div>
           <p className="mt-1.5 text-sm text-muted">{booking.clientName}</p>
         </div>
@@ -165,21 +167,43 @@ export default function BookingDetailPage() {
         </div>
       </div>
 
-      <Section title="Client Quotation" index="Step 01">
+      <Section title="Header & Job Info" index="1">
         <Row label="Job No" value={booking.jobNo} />
+        <Row
+          label="Quotation Ref"
+          value={
+            booking.quotation ? (
+              canViewQuotations ? (
+                <Link href={`/export/quotations/${booking.quotation._id}`} className="inline-flex items-center gap-1 text-rust transition-colors hover:text-rust-dark">
+                  {booking.quotation.quotationNo}
+                </Link>
+              ) : (
+                booking.quotation.quotationNo
+              )
+            ) : undefined
+          }
+        />
+        <Row label="Job Opened By" value={booking.jobOpenedBy?.name} />
+        <Row label="Job Opened Date" value={fmtDateTime(booking.createdAt)} />
         <Row label="Client Name" value={booking.clientName} />
         <Row label="Client Phone" value={booking.clientPhone} />
         <Row label="Client Email" value={booking.clientEmail} />
-        <Row label="POL" value={booking.pol ? `${booking.pol.code} — ${booking.pol.name}` : '—'} />
-        <Row label="POD" value={booking.pod ? `${booking.pod.code} — ${booking.pod.name}` : '—'} />
-        <Row label="B/L No" value={booking.blNo} />
-        <Row label="Commodity" value={booking.commodity} />
         <Row label="UCR Number" value={booking.ucrNumber} />
         <Row label="Export Tax Number" value={booking.exportTaxNumber} />
         <Row label="Import Tax Number" value={booking.importTaxNumber} />
         <Row label="Import Country" value={booking.importCountry} />
         <Row label="No. of Packages" value={booking.packagesCount} />
+      </Section>
+
+      <Section title="Shipment & Cargo" index="2" delay={0.03}>
+        <Row label="POL" value={booking.pol ? `${booking.pol.code} — ${booking.pol.name}` : '—'} />
+        <Row label="POD" value={booking.pod ? `${booking.pod.code} — ${booking.pod.name}` : '—'} />
+        <Row label="Commodity" value={booking.commodity} />
         <Row label="VGM (kg)" value={booking.vgm} />
+        <Row label="Gross Weight (kg)" value={booking.grossWeight} />
+        <Row label="CBM" value={booking.cbm} />
+        <Row label="HS Code" value={booking.hsCode} />
+        <Row label="Package Type" value={booking.packageType} />
         <Row label="Dangerous Goods" value={booking.isDangerous ? <span className="font-semibold text-brick">Yes</span> : 'No'} />
         {booking.isDangerous && <Row label="Dangerous Goods No." value={booking.dangerousNumber} />}
         <Row
@@ -199,17 +223,66 @@ export default function BookingDetailPage() {
             )
           }
         />
-        <Row label="Containers" value={booking.containers?.map((c) => `${c.containerType?.code || '?'} x${c.quantity}`).join(', ')} />
       </Section>
 
-      <Section title="Operational Details" index="Step 02" delay={0.05}>
-        <Row label="NVOCC" value={booking.nvocc ? `${booking.nvocc.name} (${booking.nvocc.code})` : '—'} />
-        <Row label="Price" value={booking.price} />
-        <Row label="Cost" value={booking.cost} />
-        <Row label="Free Time" value={fmtDate(booking.freeTime)} />
+      <Section title="Carrier Booking Confirmation" index="3" delay={0.06}>
+        <Row label="Carrier" value={booking.carrier ? `${booking.carrier.name} (${booking.carrier.code})` : '—'} />
+        <Row label="Vessel Name" value={booking.vesselName} />
+        <Row label="Voyage No" value={booking.voyageNo} />
+        <Row label="B/L No" value={booking.blNo} />
+        <Row label="ETD" value={fmtDate(booking.etd)} />
+        <Row label="ATD" value={fmtDate(booking.atd)} />
+        <Row label="ETA" value={fmtDate(booking.eta)} />
+        <Row label="ATA" value={fmtDate(booking.ata)} />
+        <Row label="Space Confirmation" value={<Badge value={booking.spaceConfirmationStatus} />} />
+        <Row label="Carrier Booking Ref" value={booking.carrierBookingRef} />
+        <Row label="VO Contact Person" value={booking.voContactPerson} />
+        <Row label="SI Cut-off" value={fmtDateTime(booking.siCutoff)} />
+        <Row label="VGM Cut-off" value={fmtDateTime(booking.vgmCutoff)} />
+        <Row label="CY Gate-In Cut-off" value={fmtDateTime(booking.cyGateInCutoff)} />
+        <Row label="Booking Confirmation" value={<Badge value={booking.bookingConfirmationStatus} />} />
+        <Row
+          label="Booking Confirmation File"
+          value={
+            booking.bookingConfirmationFile?.filePath ? (
+              <a
+                href={`${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api')}/export/bookings/${booking._id}/confirmation-file`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-rust transition-colors hover:text-rust-dark"
+              >
+                <FaFileDownload className="text-xs" /> {booking.bookingConfirmationFile.fileName}
+              </a>
+            ) : (
+              '—'
+            )
+          }
+        />
+      </Section>
+
+      <Section title="Customs (Nafeza)" index="4" delay={0.09}>
+        <Row label="Submitted on Nafeza" value={booking.customsSubmitted ? 'Yes' : 'No'} />
+        <Row label="Nafeza Reference No" value={booking.customsReferenceNo} />
+        <Row label="Submitted At" value={fmtDateTime(booking.customsSubmittedAt)} />
+      </Section>
+
+      <Section title="Containers" index="5" delay={0.12}>
+        <Row label="Depot" value={booking.depot?.name} />
+        <Row label="Containers" value={booking.containers?.map((c) => `${c.containerType?.code || '?'} x${c.quantity}`).join(', ')} />
         <Row label="Gate In" value={fmtDate(booking.gateInDate)} />
         <Row label="Gate Out" value={fmtDate(booking.gateOutDate)} />
         <Row label="Container Location" value={booking.containerLocation} />
+      </Section>
+
+      <Section title="Commercial" index="6" delay={0.15}>
+        <Row label="NVOCC" value={booking.nvocc ? `${booking.nvocc.name} (${booking.nvocc.code})` : '—'} />
+        <Row label="Currency" value={booking.currency} />
+        <Row label="Price" value={booking.price} />
+        <Row label="Cost" value={booking.cost} />
+        <Row label="Free Time" value={fmtDate(booking.freeTime)} />
+      </Section>
+
+      <Section title="Parties" index="7" delay={0.18}>
         <Row label="Shipper Name" value={booking.shipper?.name} />
         <Row label="Shipper Email" value={booking.shipper?.email} />
         <Row label="Shipper Phone 1" value={booking.shipper?.phone1} />
@@ -222,13 +295,9 @@ export default function BookingDetailPage() {
         <Row label="Consignee Phone 2" value={booking.consignee?.phone2} />
         <Row label="Consignee Address" value={booking.consignee?.address} />
         <Row label="Consignee Tax No." value={booking.consignee?.taxNumber} />
-        <Row label="Carrier" value={booking.carrier ? `${booking.carrier.name} (${booking.carrier.code})` : '—'} />
-        <Row label="Vessel Name" value={booking.vesselName} />
-        <Row label="Voyage No" value={booking.voyageNo} />
-        <Row label="ETD" value={fmtDate(booking.etd)} />
-        <Row label="ATD" value={fmtDate(booking.atd)} />
-        <Row label="ETA" value={fmtDate(booking.eta)} />
-        <Row label="ATA" value={fmtDate(booking.ata)} />
+      </Section>
+
+      <Section title="Agents" index="8" delay={0.21}>
         <Row label="POL Agent Name" value={booking.polAgent?.name} />
         <Row label="POL Agent Email" value={booking.polAgent?.email} />
         <Row label="POL Agent Phone" value={booking.polAgent?.phone} />
@@ -237,6 +306,9 @@ export default function BookingDetailPage() {
         <Row label="POD Agent Email" value={booking.podAgent?.email} />
         <Row label="POD Agent Phone" value={booking.podAgent?.phone} />
         <Row label="POD Agent Address" value={booking.podAgent?.address} />
+      </Section>
+
+      <Section title="Status & Notes" index="9" delay={0.24}>
         <Row label="Manifest Status" value={<Badge value={booking.manifestStatus} />} />
         <Row label="Notes" value={booking.notes} />
       </Section>

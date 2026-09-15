@@ -43,12 +43,30 @@ const agentContactSchema = new mongoose.Schema(
 
 const bookingSchema = new mongoose.Schema(
   {
-    // ─── Step 1 — Client Quotation ───────────────────────────────────
+    // ─── Section 1 — Header & Job Info ────────────────────────────────
+    // jobNo is server-generated (getNextJobNo() in booking.service.js) —
+    // never accepted from the client, same "delete from payload, server
+    // sets it" pattern as shippingDeclaration.
     jobNo: {
       type: String,
       required: [true, 'Job number is required'],
       unique: true,
       trim: true,
+    },
+    // Independent of `status` below (pending/confirmed/cancelled, which
+    // drives stock allocation) — a parallel, purely descriptive lifecycle
+    // the ops team sets by hand.
+    jobStatus: {
+      type: String,
+      enum: ['open', 'in_progress', 'completed', 'closed_invoiced'],
+      default: 'open',
+    },
+    // Set once at creation from req.user, never edited afterward.
+    // `createdAt` (via timestamps below) doubles as "Job Opened ... Date".
+    jobOpenedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
     clientName: {
       type: String,
@@ -74,6 +92,8 @@ const bookingSchema = new mongoose.Schema(
         message: 'At least one container entry is required',
       },
     },
+
+    // ─── Section 2 — Shipment & Cargo ─────────────────────────────────
     pol: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Port',
@@ -117,6 +137,16 @@ const bookingSchema = new mongoose.Schema(
       type: Number,
       min: [0, 'VGM must be a positive number'],
     },
+    grossWeight: {
+      type: Number,
+      min: [0, 'Gross weight must be a positive number'],
+    },
+    cbm: {
+      type: Number,
+      min: [0, 'CBM must be a positive number'],
+    },
+    hsCode: { type: String, trim: true },
+    packageType: { type: String, trim: true },
     isDangerous: {
       type: Boolean,
       default: false,
@@ -138,6 +168,14 @@ const bookingSchema = new mongoose.Schema(
       uploadedAt: { type: Date },
     },
 
+    // ─── Section 4 — Customs (Nafeza) ─────────────────────────────────
+    // customsSubmittedAt is server-set the instant customsSubmitted flips
+    // false → true (stampCustomsSubmittedAt() in booking.service.js) —
+    // never accepted from the client.
+    customsSubmitted: { type: Boolean, default: false },
+    customsReferenceNo: { type: String, trim: true },
+    customsSubmittedAt: { type: Date, default: null },
+
     // Set once, when this booking was created via a Quotation's
     // "Convert to Job" action — see Modules/Export/Quotation.
     quotation: {
@@ -146,31 +184,73 @@ const bookingSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ─── Step 2 — Operational Details ────────────────────────────────
-    nvocc: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Nvocc',
-    },
-    price: { type: Number },
-    cost: { type: Number },
-    freeTime: { type: Date },
-    gateInDate: { type: Date },
-    gateOutDate: { type: Date },
-    containerLocation: { type: String, trim: true },
-    shipper: { type: partySchema },
-    consignee: { type: partySchema },
-    etd: { type: Date },
-    atd: { type: Date },
-    eta: { type: Date },
-    ata: { type: Date },
+    // ─── Section 3 — Carrier Booking Confirmation ─────────────────────
     carrier: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Carrier',
     },
     vesselName: { type: String, trim: true },
     voyageNo: { type: String, trim: true },
+    etd: { type: Date },
+    atd: { type: Date },
+    eta: { type: Date },
+    ata: { type: Date },
+    spaceConfirmationStatus: {
+      type: String,
+      enum: ['Requested', 'Confirmed', 'Rejected'],
+      default: 'Requested',
+    },
+    carrierBookingRef: { type: String, trim: true },
+    voContactPerson: { type: String, trim: true },
+    siCutoff: { type: Date },
+    vgmCutoff: { type: Date },
+    cyGateInCutoff: { type: Date },
+    // "⭐ Milestone" field (product-note code FM-07-NV — a fixed UI label,
+    // not stored here).
+    bookingConfirmationStatus: {
+      type: String,
+      enum: ['Not Issued', 'Issued'],
+      default: 'Not Issued',
+    },
+    bookingConfirmationFile: {
+      fileName: { type: String },
+      filePath: { type: String },
+      mimeType: { type: String },
+      uploadedAt: { type: Date },
+    },
+
+    // ─── Section 5 — Containers ────────────────────────────────────────
+    // Which depot this booking's containers are allocated from — required
+    // before confirm (enforced in booking.service.js's confirmBooking, not
+    // here, so a draft booking isn't forced to pick one early).
+    depot: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Depot',
+      default: null,
+    },
+    gateInDate: { type: Date },
+    gateOutDate: { type: Date },
+    containerLocation: { type: String, trim: true },
+
+    // ─── Section 6 — Commercial ────────────────────────────────────────
+    nvocc: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Nvocc',
+    },
+    currency: { type: String, trim: true, default: 'USD' },
+    price: { type: Number },
+    cost: { type: Number },
+    freeTime: { type: Date },
+
+    // ─── Section 7 — Parties ───────────────────────────────────────────
+    shipper: { type: partySchema },
+    consignee: { type: partySchema },
+
+    // ─── Section 8 — Agents ────────────────────────────────────────────
     polAgent: { type: agentContactSchema },
     podAgent: { type: agentContactSchema },
+
+    // ─── Section 9 — Status & Notes ────────────────────────────────────
     manifestStatus: {
       type: String,
       enum: ['PENDING', 'SUBMITTED', 'CONFIRMED'],
@@ -184,10 +264,6 @@ const bookingSchema = new mongoose.Schema(
       enum: ['pending', 'confirmed', 'cancelled'],
       default: 'pending',
     },
-    step: {
-      type: Number,
-      default: 1,
-    },
   },
   { timestamps: true }
 )
@@ -199,6 +275,7 @@ bookingSchema.index({ status: 1 })
 bookingSchema.index({ pol: 1, pod: 1 })
 bookingSchema.index({ carrier: 1 })
 bookingSchema.index({ nvocc: 1 })
+bookingSchema.index({ depot: 1 })
 bookingSchema.index({ 'containers.containerType': 1 })
 
 export default mongoose.model('Booking', bookingSchema)

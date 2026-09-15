@@ -25,6 +25,7 @@ import agentRoutes from './Modules/MasterData/Agent/agent.routes.js'
 import nvoccRoutes from './Modules/MasterData/Nvocc/nvocc.routes.js'
 import containerRoutes from './Modules/MasterData/Container/container.routes.js'
 import customerRoutes from './Modules/MasterData/Customer/customer.routes.js'
+import depotRoutes from './Modules/MasterData/Depot/depot.routes.js'
 
 // ─── Export Routes ────────────────────────────────────────────────────────────
 import bookingRoutes from './Modules/Export/Booking/booking.routes.js'
@@ -73,6 +74,7 @@ app.use('/api/master/agents', agentRoutes)
 app.use('/api/master/nvoccs', nvoccRoutes)
 app.use('/api/master/containers', containerRoutes)
 app.use('/api/master/customers', customerRoutes)
+app.use('/api/master/depots', depotRoutes)
 
 // ─── Export Module ────────────────────────────────────────────────────────────
 app.use('/api/export/bookings', bookingRoutes)

@@ -19,7 +19,7 @@ export default function ContainerDetailModal({ group, onClose, canUpdate, onChan
   const load = () => {
     if (!group) return
     stockApi
-      .getContainers({ containerType: group.containerType._id, nvocc: group.nvocc._id })
+      .getContainers({ containerType: group.containerType._id, nvocc: group.nvocc._id, depot: group.depot._id })
       .then(setContainers)
       .catch((err) => toast(err.message, 'error'))
       .finally(() => setLoading(false))
@@ -66,7 +66,7 @@ export default function ContainerDetailModal({ group, onClose, canUpdate, onChan
             <div className="flex items-start justify-between gap-4 border-b border-line pb-4">
               <div>
                 <h3 className="font-display text-lg font-bold uppercase tracking-wide text-ink">
-                  {group.containerType.code} — {group.nvocc.name}
+                  {group.containerType.code} — {group.nvocc.name} — {group.depot.name}
                 </h3>
                 <p className="mt-1 text-sm text-muted">{group.containerType.label}</p>
               </div>
@@ -86,6 +86,9 @@ export default function ContainerDetailModal({ group, onClose, canUpdate, onChan
                     <tr className="border-b-2 border-ink text-left font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
                       <th className="px-3 py-2">Container Number</th>
                       <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2">Booking</th>
+                      <th className="px-3 py-2">Seal Number</th>
+                      <th className="px-3 py-2">Container Status</th>
                       {canUpdate && <th className="px-3 py-2 text-right">Actions</th>}
                     </tr>
                   </thead>
@@ -94,6 +97,9 @@ export default function ContainerDetailModal({ group, onClose, canUpdate, onChan
                       <tr key={c._id} className="border-b border-line last:border-0">
                         <td className="px-3 py-2 font-mono text-ink">{c.containerNumber}</td>
                         <td className="px-3 py-2"><Badge value={c.status} /></td>
+                        <td className="px-3 py-2 text-ink">{c.booking?.jobNo || '-'}</td>
+                        <td className="px-3 py-2 font-mono text-ink">{c.sealNumber || '-'}</td>
+                        <td className="px-3 py-2 text-ink">{c.containerStatus || '-'}</td>
                         {canUpdate && (
                           <td className="px-3 py-2">
                             <div className="flex justify-end">

@@ -22,8 +22,10 @@ export default function StockPage() {
 
   const [containerTypes, setContainerTypes] = useState([])
   const [nvoccs, setNvoccs] = useState([])
+  const [depots, setDepots] = useState([])
   const [filterType, setFilterType] = useState('')
   const [filterNvocc, setFilterNvocc] = useState('')
+  const [filterDepot, setFilterDepot] = useState('')
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [viewGroup, setViewGroup] = useState(null)
@@ -31,10 +33,11 @@ export default function StockPage() {
   const [addOpen, setAddOpen] = useState(false)
 
   useEffect(() => {
-    Promise.all([masterDataApi.getContainerTypes(), masterDataApi.getNvoccs()])
-      .then(([types, nv]) => {
+    Promise.all([masterDataApi.getContainerTypes(), masterDataApi.getNvoccs(), masterDataApi.getDepots()])
+      .then(([types, nv, dp]) => {
         setContainerTypes(types)
         setNvoccs(nv)
+        setDepots(dp)
       })
       .catch((err) => toast(err.message, 'error'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -42,7 +45,7 @@ export default function StockPage() {
 
   const loadOverview = () => {
     stockApi
-      .getStockOverview({ containerType: filterType || undefined, nvocc: filterNvocc || undefined })
+      .getStockOverview({ containerType: filterType || undefined, nvocc: filterNvocc || undefined, depot: filterDepot || undefined })
       .then(setRows)
       .catch((err) => toast(err.message, 'error'))
       .finally(() => setLoading(false))
@@ -51,13 +54,14 @@ export default function StockPage() {
   useEffect(() => {
     loadOverview()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterType, filterNvocc])
+  }, [filterType, filterNvocc, filterDepot])
 
   const typeOptions = [
     { value: '', label: 'All container types' },
     ...containerTypes.map((t) => ({ value: t._id, label: `${t.code} — ${t.label}` })),
   ]
   const nvoccOptions = [{ value: '', label: 'All NVOCCs' }, ...nvoccs.map((n) => ({ value: n._id, label: n.name }))]
+  const depotOptions = [{ value: '', label: 'All depots' }, ...depots.map((d) => ({ value: d._id, label: d.name }))]
 
   return (
     <div className="space-y-5 p-4 sm:p-6">
@@ -85,8 +89,9 @@ export default function StockPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:max-w-xl sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:max-w-3xl sm:grid-cols-3">
         <Select label="NVOCC" options={nvoccOptions} value={filterNvocc} onChange={setFilterNvocc} placeholder="All NVOCCs" />
+        <Select label="Depot" options={depotOptions} value={filterDepot} onChange={setFilterDepot} placeholder="All depots" />
         <Select label="Container Type" options={typeOptions} value={filterType} onChange={setFilterType} placeholder="All container types" />
       </div>
 
@@ -114,6 +119,7 @@ export default function StockPage() {
         onClose={() => setAddOpen(false)}
         containerTypes={containerTypes}
         nvoccs={nvoccs}
+        depots={depots}
         onAdded={() => {
           setAddOpen(false)
           loadOverview()

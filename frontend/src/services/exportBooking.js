@@ -9,11 +9,11 @@ export const getBookingById = (id) =>
 export const createBooking = (data) =>
   api.post('/export/bookings', data).then((r) => r.data)
 
-export const updateStep1 = (id, data) =>
-  api.put(`/export/bookings/${id}/step1`, data).then((r) => r.data)
+export const updateBooking = (id, data) =>
+  api.put(`/export/bookings/${id}`, data).then((r) => r.data)
 
-export const updateStep2 = (id, data) =>
-  api.put(`/export/bookings/${id}/step2`, data).then((r) => r.data.data)
+export const getConfirmationFileUrl = (id) =>
+  `${api.defaults.baseURL}/export/bookings/${id}/confirmation-file`
 
 export const confirmBooking = (id) =>
   api.put(`/export/bookings/${id}/confirm`).then((r) => r.data.data)

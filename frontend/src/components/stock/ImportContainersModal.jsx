@@ -7,7 +7,7 @@ import * as stockApi from '@/services/stock'
 import { useToast } from '@/components/ui/Toast'
 import Spinner from '@/components/ui/Spinner'
 
-const EXPECTED_COLUMNS = ['Container Type Code', 'NVOCC Code', 'Container Number']
+const EXPECTED_COLUMNS = ['Container Type Code', 'NVOCC Code', 'Depot Code', 'Container Number']
 
 const ROW_STYLES = {
   valid: 'bg-stamp/10 border-l-4 border-stamp',
@@ -64,8 +64,8 @@ export default function ImportContainersModal({ isOpen, onClose, onImported }) {
     if (validRows.length === 0) return
     setImporting(true)
     try {
-      const payload = validRows.map(({ rowNumber, containerTypeCode, nvoccCode, containerNumber }) => ({
-        rowNumber, containerTypeCode, nvoccCode, containerNumber,
+      const payload = validRows.map(({ rowNumber, containerTypeCode, nvoccCode, depotCode, containerNumber }) => ({
+        rowNumber, containerTypeCode, nvoccCode, depotCode, containerNumber,
       }))
       const data = await stockApi.commitImportContainers(payload)
       setResult(data)
@@ -168,6 +168,7 @@ export default function ImportContainersModal({ isOpen, onClose, onImported }) {
                           <th className="px-3 py-2">Row</th>
                           <th className="px-3 py-2">Type Code</th>
                           <th className="px-3 py-2">NVOCC Code</th>
+                          <th className="px-3 py-2">Depot Code</th>
                           <th className="px-3 py-2">Container No.</th>
                           <th className="px-3 py-2">Status</th>
                           <th className="px-3 py-2">Message</th>
@@ -179,6 +180,7 @@ export default function ImportContainersModal({ isOpen, onClose, onImported }) {
                             <td className="px-3 py-2 font-mono text-ink">{row.rowNumber}</td>
                             <td className="px-3 py-2 text-ink">{row.containerTypeCode || '—'}</td>
                             <td className="px-3 py-2 text-ink">{row.nvoccCode || '—'}</td>
+                            <td className="px-3 py-2 text-ink">{row.depotCode || '—'}</td>
                             <td className="px-3 py-2 font-mono text-ink">{row.containerNumber || '—'}</td>
                             <td className="px-3 py-2 font-semibold text-ink">{STATUS_LABEL[row.status]}</td>
                             <td className="px-3 py-2 text-muted">{row.message}</td>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { FaPlus, FaTable, FaFileExcel, FaSearch } from 'react-icons/fa'
+import { FaPlus, FaSearch } from 'react-icons/fa'
 import * as bookingApi from '@/services/exportBooking'
 import * as masterDataApi from '@/services/masterData'
 import Select from '@/components/ui/Select'
@@ -26,13 +26,10 @@ export default function BookingsListPage() {
   const { permissions } = useAuth()
   const canCreate = permissions.includes('booking:create')
   const canUpdate = permissions.includes('booking:update')
-  const canExport = permissions.includes('booking:export')
+  const canViewQuotations = permissions.includes('quotation:read')
   const [bookings, setBookings] = useState([])
   const [ports, setPorts] = useState([])
   const [loading, setLoading] = useState(true)
-  const [exporting, setExporting] = useState(false)
-  const [confirmingId, setConfirmingId] = useState(null)
-  const [cancellingId, setCancellingId] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
 
@@ -79,32 +76,6 @@ export default function BookingsListPage() {
   const handlePolChange = setFilter(setPol)
   const handlePodChange = setFilter(setPod)
 
-  const handleConfirm = async (id) => {
-    setConfirmingId(id)
-    try {
-      await bookingApi.confirmBooking(id)
-      toast('Booking confirmed', 'success')
-      fetchBookings()
-    } catch (err) {
-      toast(err.message, 'error')
-    } finally {
-      setConfirmingId(null)
-    }
-  }
-
-  const handleCancel = async (id) => {
-    setCancellingId(id)
-    try {
-      await bookingApi.cancelBooking(id)
-      toast('Booking cancelled', 'success')
-      fetchBookings()
-    } catch (err) {
-      toast(err.message, 'error')
-    } finally {
-      setCancellingId(null)
-    }
-  }
-
   const handleDelete = async () => {
     setDeleting(true)
     try {
@@ -119,17 +90,6 @@ export default function BookingsListPage() {
     }
   }
 
-  const handleExport = async () => {
-    setExporting(true)
-    try {
-      await bookingApi.exportExcel(filters)
-    } catch (err) {
-      toast(err.message, 'error')
-    } finally {
-      setExporting(false)
-    }
-  }
-
   const portOptions = [{ value: '', label: 'All Ports' }, ...ports.map((p) => ({ value: p._id, label: `${p.code} — ${p.name}` }))]
 
   return (
@@ -141,23 +101,6 @@ export default function BookingsListPage() {
           <p className="mt-1 font-mono text-xs text-muted">{total} record{total === 1 ? '' : 's'} on file</p>
         </div>
         <div className="flex items-center gap-2">
-          {canExport && (
-            <>
-              <Link
-                href="/export/preview"
-                className="flex items-center gap-2 border border-ink/30 bg-card px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-ink/5"
-              >
-                <FaTable /> Preview
-              </Link>
-              <button
-                onClick={handleExport}
-                disabled={exporting}
-                className="flex items-center gap-2 border border-stamp/40 bg-stamp/10 px-4 py-2.5 text-sm font-medium text-stamp transition-colors hover:bg-stamp/20 disabled:opacity-50"
-              >
-                <FaFileExcel /> {exporting ? 'Exporting…' : 'Export Excel'}
-              </button>
-            </>
-          )}
           {canCreate && (
             <Link
               href="/export/bookings/new"
@@ -203,11 +146,8 @@ export default function BookingsListPage() {
           <BookingTable
             bookings={bookings}
             canUpdate={canUpdate}
-            onConfirm={handleConfirm}
-            onCancel={handleCancel}
+            canViewQuotations={canViewQuotations}
             onDeleteRequest={setDeleteTarget}
-            confirmingId={confirmingId}
-            cancellingId={cancellingId}
           />
           <Pagination page={page} pages={pages} total={total} limit={limit} onPageChange={setPage} onLimitChange={setLimit} />
         </>

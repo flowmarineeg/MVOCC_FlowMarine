@@ -4,23 +4,41 @@ import * as service from './booking.service.js'
 import { logAction, getRequestMeta } from '../../AuditLog/auditLog.service.js'
 import { assertConvertible, markConverted } from '../Quotation/quotation.service.js'
 
+// shippingDeclaration/bookingConfirmationFile must only ever come from an
+// actual uploaded file — never from the JSON body, or a client could plant
+// an arbitrary filePath (e.g. "../../../.env") that the download routes
+// would later read. `files` is req.files (from .fields()) when present.
+const applyUploadedFiles = (payload, files) => {
+  delete payload.shippingDeclaration
+  delete payload.bookingConfirmationFile
+  const shippingDeclaration = files?.shippingDeclaration?.[0]
+  if (shippingDeclaration) {
+    payload.shippingDeclaration = {
+      fileName: shippingDeclaration.originalname,
+      filePath: shippingDeclaration.filename,
+      mimeType: shippingDeclaration.mimetype,
+      uploadedAt: new Date(),
+    }
+  }
+  const bookingConfirmationFile = files?.bookingConfirmationFile?.[0]
+  if (bookingConfirmationFile) {
+    payload.bookingConfirmationFile = {
+      fileName: bookingConfirmationFile.originalname,
+      filePath: bookingConfirmationFile.filename,
+      mimeType: bookingConfirmationFile.mimetype,
+      uploadedAt: new Date(),
+    }
+  }
+}
+
 export const createBooking = async (req, res, next) => {
   try {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
-    // shippingDeclaration must only ever come from an actual uploaded file —
-    // never from the JSON body, or a client could plant an arbitrary filePath
-    // (e.g. "../../../.env") that the attachment-download route would later read.
     const payload = { ...req.body }
-    delete payload.shippingDeclaration
-    if (req.file) {
-      payload.shippingDeclaration = {
-        fileName: req.file.originalname,
-        filePath: req.file.filename,
-        mimeType: req.file.mimetype,
-        uploadedAt: new Date(),
-      }
-    }
+    delete payload.jobNo // server-generated — see getNextJobNo() in booking.service.js
+    applyUploadedFiles(payload, req.files)
+
     // Checked before the booking is created so an ineligible quotation
     // (not approved / already converted) never leaves an orphaned Booking
     // behind — then re-checked and committed by markConverted() below.
@@ -28,7 +46,7 @@ export const createBooking = async (req, res, next) => {
       await assertConvertible(payload.quotation)
     }
 
-    const { booking, stockWarnings } = await service.createBooking(payload)
+    const { booking, stockWarnings } = await service.createBooking(payload, req.user)
 
     if (payload.quotation) {
       await markConverted(payload.quotation, booking._id)
@@ -72,21 +90,24 @@ export const getAttachment = async (req, res, next) => {
   } catch (err) { next(err) }
 }
 
-export const updateStep1 = async (req, res, next) => {
+export const getConfirmationFile = async (req, res, next) => {
+  try {
+    const booking = await service.getBookingById(req.params.id)
+    if (!booking.bookingConfirmationFile?.filePath) {
+      return res.status(404).json({ success: false, message: 'No booking confirmation file attached to this booking' })
+    }
+    const filePath = path.join(process.cwd(), 'uploads', 'booking-confirmations', path.basename(booking.bookingConfirmationFile.filePath))
+    res.download(filePath, booking.bookingConfirmationFile.fileName)
+  } catch (err) { next(err) }
+}
+
+export const updateBooking = async (req, res, next) => {
   try {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
     const payload = { ...req.body }
-    delete payload.shippingDeclaration
-    if (req.file) {
-      payload.shippingDeclaration = {
-        fileName: req.file.originalname,
-        filePath: req.file.filename,
-        mimeType: req.file.mimetype,
-        uploadedAt: new Date(),
-      }
-    }
-    const { booking, stockWarnings } = await service.updateStep1(req.params.id, payload)
+    applyUploadedFiles(payload, req.files)
+    const { booking, stockWarnings } = await service.updateBooking(req.params.id, payload)
     res.json({
       success: true,
       data: booking,
@@ -94,15 +115,6 @@ export const updateStep1 = async (req, res, next) => {
         warnings: { message: 'Some container quantities exceed available stock', details: stockWarnings },
       }),
     })
-  } catch (err) { next(err) }
-}
-
-export const updateStep2 = async (req, res, next) => {
-  try {
-    const errors = validationResult(req)
-    if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
-    const booking = await service.updateStep2(req.params.id, req.body)
-    res.json({ success: true, data: booking })
   } catch (err) { next(err) }
 }
 

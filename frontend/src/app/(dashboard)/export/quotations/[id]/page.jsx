@@ -170,7 +170,7 @@ export default function QuotationDetailPage() {
           </Link>
           <div className="flex items-center gap-3">
             <Plate className="text-sm">{quotation.quotationNo}</Plate>
-            <Badge value={quotation.status} />
+            <Badge value={quotation.linkedBooking ? 'job_created' : quotation.status} />
           </div>
           <p className="mt-1.5 text-sm text-muted">{quotation.clientName}</p>
         </div>

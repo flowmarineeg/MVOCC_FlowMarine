@@ -1,7 +1,7 @@
 import api from './api.js'
 
-export const getStockOverview = ({ containerType, nvocc } = {}) =>
-  api.get('/master/containers/overview', { params: { containerType, nvocc } }).then((r) => r.data.data)
+export const getStockOverview = ({ containerType, nvocc, depot } = {}) =>
+  api.get('/master/containers/overview', { params: { containerType, nvocc, depot } }).then((r) => r.data.data)
 
 // { [containerTypeId]: totalAvailableAcrossAllNvoccs } — used by the booking
 // forms' stock-check hint, which isn't NVOCC-specific at Step 1.
@@ -15,13 +15,16 @@ export const getStockMapByType = () =>
     return map
   })
 
-export const getContainers = ({ containerType, nvocc } = {}) =>
-  api.get('/master/containers', { params: { containerType, nvocc } }).then((r) => r.data.data)
+export const getContainers = ({ containerType, nvocc, depot, booking } = {}) =>
+  api.get('/master/containers', { params: { containerType, nvocc, depot, booking } }).then((r) => r.data.data)
 
 export const deleteContainer = (id) => api.delete(`/master/containers/${id}`).then((r) => r.data)
 
-export const quickAddStock = ({ containerType, nvocc, quantity }) =>
-  api.post('/master/containers/quick-add', { containerType, nvocc, quantity }).then((r) => r.data.data)
+export const updateContainerUnit = (id, data) =>
+  api.put(`/master/containers/${id}`, data).then((r) => r.data.data)
+
+export const quickAddStock = ({ containerType, nvocc, depot, quantity }) =>
+  api.post('/master/containers/quick-add', { containerType, nvocc, depot, quantity }).then((r) => r.data.data)
 
 export const previewImportContainers = (file) => {
   const formData = new FormData()

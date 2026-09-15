@@ -41,8 +41,7 @@ export default function BookingPreviewTable({ bookings = [], onExport, exporting
               <th className="px-3 py-2.5">Voyage</th>
               <th className="px-3 py-2.5">ETD</th>
               <th className="px-3 py-2.5">ETA</th>
-              <th className="px-3 py-2.5">Step</th>
-              <th className="px-3 py-2.5">Status</th>
+              <th className="px-3 py-2.5">Job Status</th>
             </tr>
           </thead>
           <tbody>
@@ -60,8 +59,7 @@ export default function BookingPreviewTable({ bookings = [], onExport, exporting
                 <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-muted">{b.voyageNo}</td>
                 <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-muted">{fmtDate(b.etd)}</td>
                 <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-muted">{fmtDate(b.eta)}</td>
-                <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-muted">Step {b.step ?? 1}</td>
-                <td className="whitespace-nowrap px-3 py-2.5"><Badge value={b.status} /></td>
+                <td className="whitespace-nowrap px-3 py-2.5"><Badge value={b.jobStatus} /></td>
               </tr>
             ))}
           </tbody>

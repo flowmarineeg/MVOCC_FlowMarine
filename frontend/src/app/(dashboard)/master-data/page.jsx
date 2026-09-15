@@ -10,6 +10,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import MasterDataTable from '@/components/masterdata/MasterDataTable'
 import MasterDataFormModal from '@/components/masterdata/MasterDataFormModal'
 import Modal from '@/components/ui/Modal'
+import { COUNTRY_NAMES } from '@/constants/countries'
 
 const ENTITIES = {
   containerTypes: {
@@ -44,7 +45,7 @@ const ENTITIES = {
     fields: [
       { key: 'name', label: 'Name' },
       { key: 'code', label: 'Code (UN/LOCODE)' },
-      { key: 'country', label: 'Country' },
+      { key: 'country', label: 'Country', type: 'select', options: COUNTRY_NAMES },
     ],
     get: () => masterDataApi.getPorts(false),
     create: masterDataApi.createPort,
@@ -71,6 +72,19 @@ const ENTITIES = {
     toggle: masterDataApi.toggleNvocc,
     delete: masterDataApi.deleteNvocc,
   },
+  depots: {
+    tabLabel: 'Depots',
+    singular: 'Depot',
+    fields: [
+      { key: 'name', label: 'Depot Name' },
+      { key: 'code', label: 'Depot Code' },
+    ],
+    get: () => masterDataApi.getDepots(false),
+    create: masterDataApi.createDepot,
+    update: masterDataApi.updateDepot,
+    toggle: masterDataApi.toggleDepot,
+    delete: masterDataApi.deleteDepot,
+  },
   customers: {
     tabLabel: 'Customers',
     singular: 'Customer',
@@ -92,7 +106,7 @@ export default function MasterDataPage() {
   const canUpdate = permissions.includes('masterData:update')
 
   const [tab, setTab] = useState('containerTypes')
-  const [data, setData] = useState({ containerTypes: [], carriers: [], ports: [], nvoccs: [], customers: [] })
+  const [data, setData] = useState({ containerTypes: [], carriers: [], ports: [], nvoccs: [], depots: [], customers: [] })
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -107,10 +121,11 @@ export default function MasterDataPage() {
       ENTITIES.carriers.get(),
       ENTITIES.ports.get(),
       ENTITIES.nvoccs.get(),
+      ENTITIES.depots.get(),
       ENTITIES.customers.get(),
     ])
-      .then(([containerTypes, carriers, ports, nvoccs, customers]) => {
-        setData({ containerTypes, carriers, ports, nvoccs, customers })
+      .then(([containerTypes, carriers, ports, nvoccs, depots, customers]) => {
+        setData({ containerTypes, carriers, ports, nvoccs, depots, customers })
       })
       .catch((err) => toast(err.message, 'error'))
       .finally(() => setLoading(false))
@@ -193,7 +208,7 @@ export default function MasterDataPage() {
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Reference Data</p>
           <h1 className="mt-1 font-display text-3xl font-bold uppercase tracking-wide text-ink">Master Data</h1>
-          <p className="mt-1 text-sm text-muted">Ports, carriers, NVOCCs, and container types</p>
+          <p className="mt-1 text-sm text-muted">Ports, carriers, NVOCCs, depots, and container types</p>
         </div>
         {canCreate && activeEntity && (
           <button

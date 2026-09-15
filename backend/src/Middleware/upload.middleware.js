@@ -3,13 +3,25 @@ import path from 'path'
 import crypto from 'crypto'
 import multer from 'multer'
 
-const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'shipping-declarations')
-fs.mkdirSync(UPLOAD_DIR, { recursive: true })
-
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
 
+// Booking can carry two independent file fields — the original shipping
+// declaration (Section 2) and the newer booking confirmation file
+// (Section 3) — each stored in its own directory, sharing one multer
+// instance/fileFilter/signature-verification logic since they're
+// structurally identical (same allowlist, same "PDF or image" rule).
+const UPLOAD_DIRS = {
+  shippingDeclaration: path.join(process.cwd(), 'uploads', 'shipping-declarations'),
+  bookingConfirmationFile: path.join(process.cwd(), 'uploads', 'booking-confirmations'),
+}
+for (const dir of Object.values(UPLOAD_DIRS)) fs.mkdirSync(dir, { recursive: true })
+
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+  destination: (req, file, cb) => {
+    const dir = UPLOAD_DIRS[file.fieldname]
+    if (!dir) return cb(Object.assign(new Error(`Unexpected file field "${file.fieldname}"`), { statusCode: 400 }))
+    cb(null, dir)
+  },
   filename: (req, file, cb) => {
     const unique = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
     cb(null, `${unique}${path.extname(file.originalname)}`)
@@ -18,7 +30,7 @@ const storage = multer.diskStorage({
 
 const fileFilter = (req, file, cb) => {
   if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-    return cb(Object.assign(new Error('Shipping declaration must be a PDF or an image (JPG, PNG, WEBP)'), { statusCode: 400 }), false)
+    return cb(Object.assign(new Error('File must be a PDF or an image (JPG, PNG, WEBP)'), { statusCode: 400 }), false)
   }
   cb(null, true)
 }
@@ -29,7 +41,21 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 })
 
-export const uploadShippingDeclaration = upload.single('shippingDeclaration')
+// Both POST / (create) and PUT /:id (update) accept either file field, both,
+// or neither — the Job form's Section 2/3 file pickers aren't gated by
+// create-vs-edit mode, so both routes must be able to receive either.
+export const uploadBookingFiles = upload.fields([
+  { name: 'shippingDeclaration', maxCount: 1 },
+  { name: 'bookingConfirmationFile', maxCount: 1 },
+])
+
+// Normalizes the two multer shapes (`.single()` → req.file, `.fields()` →
+// req.files[field][0]) into one lookup.
+const getUploadedFile = (req, fieldName) => {
+  if (req.files?.[fieldName]?.[0]) return req.files[fieldName][0]
+  if (req.file?.fieldname === fieldName) return req.file
+  return null
+}
 
 // fileFilter above only sees the client-supplied multipart Content-Type and
 // filename — both attacker-controlled — before any bytes have arrived, so a
@@ -39,9 +65,18 @@ export const uploadShippingDeclaration = upload.single('shippingDeclaration')
 // and rejecting the request if they don't match.
 const matchesSignature = (buffer, signature) => signature.every((byte, i) => buffer[i] === byte)
 
-export const verifyShippingDeclarationSignature = (req, res, next) => {
-  if (!req.file) return next()
-  fs.readFile(req.file.path, (err, buffer) => {
+const FIELD_LABELS = {
+  shippingDeclaration: 'Shipping declaration',
+  bookingConfirmationFile: 'Booking confirmation file',
+}
+
+// Factory so the same verification logic covers both file fields — call once
+// per field in the route chain; each call no-ops if that field wasn't
+// uploaded on this request.
+export const verifyFileSignature = (fieldName) => (req, res, next) => {
+  const file = getUploadedFile(req, fieldName)
+  if (!file) return next()
+  fs.readFile(file.path, (err, buffer) => {
     if (err) return next(err)
 
     const valid =
@@ -51,9 +86,9 @@ export const verifyShippingDeclarationSignature = (req, res, next) => {
       (matchesSignature(buffer, [0x52, 0x49, 0x46, 0x46]) && buffer.slice(8, 12).toString('ascii') === 'WEBP') // RIFF....WEBP
 
     if (!valid) {
-      fs.unlink(req.file.path, () => {})
+      fs.unlink(file.path, () => {})
       return next(Object.assign(
-        new Error('Shipping declaration file content does not match a PDF or image — the file may be mislabeled or corrupted'),
+        new Error(`${FIELD_LABELS[fieldName] || 'File'} content does not match a PDF or image — the file may be mislabeled or corrupted`),
         { statusCode: 400 }
       ))
     }

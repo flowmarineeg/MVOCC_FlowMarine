@@ -21,11 +21,16 @@ const variants = {
   FAILURE: { color: 'var(--color-brick)', label: 'Failure' },
   available: { color: 'var(--color-stamp)', label: 'Available' },
   allocated: { color: 'var(--color-signal)', label: 'Allocated' },
+  open: { color: 'var(--color-signal)', label: 'Open' },
+  in_progress: { color: 'var(--color-signal)', label: 'In Progress' },
+  completed: { color: 'var(--color-stamp)', label: 'Completed' },
+  closed_invoiced: { color: 'var(--color-muted)', label: 'Closed - Invoiced' },
   draft: { color: 'var(--color-muted)', label: 'Draft' },
   sent: { color: 'var(--color-signal)', label: 'Sent' },
   negotiation: { color: 'var(--color-signal)', label: 'Negotiation' },
   approved: { color: 'var(--color-stamp)', label: 'Approved' },
   rejected: { color: 'var(--color-brick)', label: 'Rejected' },
+  job_created: { color: 'var(--color-stamp)', label: 'Job Created' },
 }
 
 // The "ink stamp" — this app's signature status mark. A booking's status

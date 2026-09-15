@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import mongoose from 'mongoose'
 import Booking from './booking.model.js'
+import JobCounter from './jobCounter.model.js'
 import { checkStock, decrementStock, incrementStock } from '../../MasterData/Container/container.service.js'
 import ExcelJS from 'exceljs'
 
@@ -11,6 +12,9 @@ const POPULATE_FIELDS = [
   { path: 'containers.containerType', select: 'code label' },
   { path: 'carrier', select: 'name code' },
   { path: 'nvocc', select: 'name code' },
+  { path: 'depot', select: 'name code' },
+  { path: 'jobOpenedBy', select: 'name email' },
+  { path: 'quotation', select: 'quotationNo' },
 ]
 
 const BOOKING_STATUSES = ['pending', 'confirmed', 'cancelled']
@@ -42,8 +46,48 @@ const clearDangerousNumberIfNotDangerous = (booking) => {
   if (!booking.isDangerous) booking.dangerousNumber = undefined
 }
 
-// ─── Step 1: Create Booking ───────────────────────────────────────────────────
-export const createBooking = async (data) => {
+// customsSubmittedAt is server-set the instant customsSubmitted flips
+// false → true (and cleared back to null if it's ever toggled back off) —
+// same "server decides, client value ignored" pattern as the dangerous-goods
+// number above. `wasSubmitted` is the value before this update's field-copy
+// loop ran.
+const stampCustomsSubmittedAt = (booking, wasSubmitted) => {
+  if (booking.customsSubmitted && !wasSubmitted) booking.customsSubmittedAt = new Date()
+  else if (!booking.customsSubmitted) booking.customsSubmittedAt = null
+}
+
+// Atomic per-year sequence: "OPS Jobs {year} FLOW MARINE – NVOCC-{seq}".
+// findOneAndUpdate($inc, upsert) means concurrent creates never collide —
+// no read-then-write race.
+const getNextJobNo = async () => {
+  const year = new Date().getFullYear()
+  const key = `job-${year}`
+  const counter = await JobCounter.findOneAndUpdate({ _id: key }, { $inc: { seq: 1 } }, { upsert: true, new: true })
+  return `OPS Jobs ${year} FLOW MARINE – NVOCC-${String(counter.seq).padStart(4, '0')}`
+}
+
+// Every field a Job form submission (create or the single unified update)
+// may set directly. jobNo/jobOpenedBy/customsSubmittedAt/status are always
+// server-controlled and never appear here; `quotation` is set once, only by
+// the convert-to-job flow in booking.controller.js.
+const EDITABLE_FIELDS = [
+  'clientName', 'clientPhone', 'clientEmail', 'pol', 'pod', 'containers', 'blNo',
+  'commodity', 'ucrNumber', 'exportTaxNumber', 'importTaxNumber', 'importCountry',
+  'packagesCount', 'vgm', 'grossWeight', 'cbm', 'hsCode', 'packageType',
+  'isDangerous', 'dangerousNumber', 'shippingDeclaration',
+  'jobStatus', 'customsSubmitted', 'customsReferenceNo',
+  'carrier', 'vesselName', 'voyageNo', 'etd', 'atd', 'eta', 'ata',
+  'spaceConfirmationStatus', 'carrierBookingRef', 'voContactPerson',
+  'siCutoff', 'vgmCutoff', 'cyGateInCutoff',
+  'bookingConfirmationStatus', 'bookingConfirmationFile',
+  'depot', 'gateInDate', 'gateOutDate', 'containerLocation',
+  'nvocc', 'currency', 'price', 'cost', 'freeTime',
+  'shipper', 'consignee', 'polAgent', 'podAgent',
+  'manifestStatus', 'notes',
+]
+
+// ─── Create Booking (single-page create) ──────────────────────────────────────
+export const createBooking = async (data, currentUser) => {
   const stockWarnings = []
   for (const entry of data.containers) {
     const { ok, available } = await checkStock(entry.containerType, entry.quantity)
@@ -51,15 +95,22 @@ export const createBooking = async (data) => {
       stockWarnings.push({ containerTypeId: entry.containerType, requested: entry.quantity, available })
     }
   }
-  const booking = new Booking(data)
+
+  const jobNo = await getNextJobNo()
+  const booking = new Booking({
+    ...data,
+    jobNo,
+    jobOpenedBy: currentUser?._id || currentUser?.id,
+  })
   clearDangerousNumberIfNotDangerous(booking)
+  stampCustomsSubmittedAt(booking, false)
   await booking.save()
   await booking.populate(POPULATE_FIELDS)
   return { booking, stockWarnings }
 }
 
-// ─── Step 1: Update Client Quotation ──────────────────────────────────────────
-export const updateStep1 = async (id, data) => {
+// ─── Update Booking (single unified update — replaces the old Step1/Step2 split) ─
+export const updateBooking = async (id, data) => {
   const booking = await Booking.findById(id)
   if (!booking) throw Object.assign(new Error('Booking not found'), { statusCode: 404 })
   if (booking.status === 'cancelled') {
@@ -76,46 +127,16 @@ export const updateStep1 = async (id, data) => {
     }
   }
 
-  const step1Fields = [
-    'clientName', 'clientPhone', 'clientEmail', 'pol', 'pod', 'containers', 'blNo',
-    'commodity', 'ucrNumber', 'exportTaxNumber', 'importTaxNumber', 'importCountry',
-    'packagesCount', 'vgm', 'isDangerous', 'dangerousNumber', 'shippingDeclaration',
-  ]
-
-  for (const field of step1Fields) {
+  const wasCustomsSubmitted = booking.customsSubmitted
+  for (const field of EDITABLE_FIELDS) {
     if (data[field] !== undefined) booking[field] = data[field]
   }
   clearDangerousNumberIfNotDangerous(booking)
+  stampCustomsSubmittedAt(booking, wasCustomsSubmitted)
 
   await booking.save()
   await booking.populate(POPULATE_FIELDS)
   return { booking, stockWarnings }
-}
-
-// ─── Step 2: Update Operational Details ──────────────────────────────────────
-export const updateStep2 = async (id, data) => {
-  const booking = await Booking.findById(id)
-  if (!booking) throw Object.assign(new Error('Booking not found'), { statusCode: 404 })
-  if (booking.status === 'cancelled') {
-    throw Object.assign(new Error('Cannot update a cancelled booking'), { statusCode: 400 })
-  }
-
-  const step2Fields = [
-    'nvocc', 'price', 'cost', 'freeTime',
-    'gateInDate', 'gateOutDate', 'containerLocation',
-    'shipper', 'consignee', 'etd', 'atd', 'eta', 'ata',
-    'carrier', 'vesselName', 'voyageNo', 'polAgent', 'podAgent',
-    'containers', 'manifestStatus', 'notes', 'blNo',
-  ]
-
-  for (const field of step2Fields) {
-    if (data[field] !== undefined) booking[field] = data[field]
-  }
-  booking.step = 2
-
-  await booking.save()
-  await booking.populate(POPULATE_FIELDS)
-  return booking
 }
 
 // ─── Confirm Booking ──────────────────────────────────────────────────────────
@@ -125,15 +146,20 @@ export const confirmBooking = async (id) => {
   if (booking.status !== 'pending') {
     throw Object.assign(new Error(`Cannot confirm a booking with status: ${booking.status}`), { statusCode: 400 })
   }
+  if (!booking.depot) {
+    throw Object.assign(new Error('Select a depot before confirming this booking'), { statusCode: 400 })
+  }
 
   booking.status = 'confirmed'
   await booking.save()
 
-  // Decrement stock for each container type, scoped to this booking's NVOCC
-  // so allocation never draws down a different NVOCC's physical containers
+  // Decrement stock for each container type, scoped to this booking's
+  // NVOCC + depot so allocation never draws down a different NVOCC's or
+  // depot's physical containers — and stamps each allocated unit with this
+  // booking's id so cancelBooking() can later release exactly these units.
   for (const entry of booking.containers) {
     try {
-      await decrementStock(entry.containerType, entry.quantity, booking.nvocc)
+      await decrementStock(entry.containerType, entry.quantity, booking.nvocc, booking.depot, booking._id)
     } catch (_) {
       // log but don't fail — stock may not be tracked for all types
     }
@@ -155,12 +181,13 @@ export const cancelBooking = async (id) => {
   booking.status = 'cancelled'
   await booking.save()
 
-  // Restore stock if it was previously confirmed, scoped to the same NVOCC
-  // that decrementStock allocated it against on confirm
+  // Restore stock if it was previously confirmed — incrementStock releases
+  // exactly the units decrementStock stamped with this booking's id, not a
+  // FIFO/LIFO guess.
   if (wasConfirmed) {
     for (const entry of booking.containers) {
       try {
-        await incrementStock(entry.containerType, entry.quantity, booking.nvocc)
+        await incrementStock(entry.containerType, entry.quantity, booking.nvocc, booking._id)
       } catch (_) {}
     }
   }
@@ -180,6 +207,10 @@ export const deleteBooking = async (id) => {
   if (booking.shippingDeclaration?.filePath) {
     const filePath = path.join(process.cwd(), 'uploads', 'shipping-declarations', booking.shippingDeclaration.filePath)
     fs.unlink(filePath, () => {}) // best-effort cleanup — a missing file must not block deletion
+  }
+  if (booking.bookingConfirmationFile?.filePath) {
+    const filePath = path.join(process.cwd(), 'uploads', 'booking-confirmations', booking.bookingConfirmationFile.filePath)
+    fs.unlink(filePath, () => {})
   }
 
   await booking.deleteOne()
@@ -253,8 +284,8 @@ export const getPreviewData = async ({ status, pol, pod, search } = {}) => {
     voyageNo: b.voyageNo || '-',
     etd: b.etd || null,
     eta: b.eta || null,
-    step: b.step,
     status: b.status,
+    jobStatus: b.jobStatus,
     manifestStatus: b.manifestStatus,
   }))
 
@@ -283,7 +314,7 @@ export const generateExcel = async ({ status, pol, pod, search } = {}) => {
   }
 
   const columns = [
-    { header: 'Job No', key: 'jobNo', width: 14 },
+    { header: 'Job No', key: 'jobNo', width: 30 },
     { header: 'Client Name', key: 'clientName', width: 22 },
     { header: 'POL', key: 'pol', width: 20 },
     { header: 'POD', key: 'pod', width: 20 },
@@ -300,7 +331,7 @@ export const generateExcel = async ({ status, pol, pod, search } = {}) => {
     { header: 'Manifest Status', key: 'manifestStatus', width: 16 },
     { header: 'Price', key: 'price', width: 12 },
     { header: 'Cost', key: 'cost', width: 12 },
-    { header: 'Step', key: 'step', width: 10 },
+    { header: 'Job Status', key: 'jobStatus', width: 14 },
     { header: 'Status', key: 'status', width: 12 },
   ]
 
@@ -339,7 +370,7 @@ export const generateExcel = async ({ status, pol, pod, search } = {}) => {
       manifestStatus: b.manifestStatus || '',
       price: b.price ?? '',
       cost: b.cost ?? '',
-      step: b.step,
+      jobStatus: b.jobStatus || '',
       status: b.status,
     })
   }

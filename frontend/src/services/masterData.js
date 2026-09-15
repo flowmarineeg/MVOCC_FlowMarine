@@ -21,6 +21,13 @@ export const updateNvocc = (id, data) => api.put(`/master/nvoccs/${id}`, data).t
 export const toggleNvocc = (id) => api.patch(`/master/nvoccs/${id}/toggle`).then((r) => r.data.data)
 export const deleteNvocc = (id) => api.delete(`/master/nvoccs/${id}`).then((r) => r.data)
 
+export const getDepots = (activeOnly = true) =>
+  api.get('/master/depots', { params: { active: activeOnly } }).then((r) => r.data.data)
+export const createDepot = (data) => api.post('/master/depots', data).then((r) => r.data.data)
+export const updateDepot = (id, data) => api.put(`/master/depots/${id}`, data).then((r) => r.data.data)
+export const toggleDepot = (id) => api.patch(`/master/depots/${id}/toggle`).then((r) => r.data.data)
+export const deleteDepot = (id) => api.delete(`/master/depots/${id}`).then((r) => r.data)
+
 export const getPorts = (activeOnly = true) =>
   api.get('/master/ports', { params: { active: activeOnly } }).then((r) => r.data.data)
 export const createPort = (data) => api.post('/master/ports', data).then((r) => r.data.data)

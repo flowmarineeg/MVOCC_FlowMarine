@@ -7,20 +7,23 @@ import * as stockApi from '@/services/stock'
 import { useToast } from '@/components/ui/Toast'
 import Select from '@/components/ui/Select'
 
-export default function AddStockModal({ isOpen, onClose, onAdded, containerTypes = [], nvoccs = [] }) {
+export default function AddStockModal({ isOpen, onClose, onAdded, containerTypes = [], nvoccs = [], depots = [] }) {
   const toast = useToast()
   const [containerType, setContainerType] = useState('')
   const [nvocc, setNvocc] = useState('')
+  const [depot, setDepot] = useState('')
   const [quantity, setQuantity] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   const typeOptions = containerTypes.map((t) => ({ value: t._id, label: `${t.code} — ${t.label}` }))
   const nvoccOptions = nvoccs.map((n) => ({ value: n._id, label: n.name }))
+  const depotOptions = depots.map((d) => ({ value: d._id, label: d.name }))
 
   const reset = () => {
     setContainerType('')
     setNvocc('')
+    setDepot('')
     setQuantity('')
     setError('')
   }
@@ -33,18 +36,18 @@ export default function AddStockModal({ isOpen, onClose, onAdded, containerTypes
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
-    if (!containerType || !nvocc) {
-      setError('Select both an NVOCC and a container type')
+    if (!containerType || !nvocc || !depot) {
+      setError('Select an NVOCC, a depot, and a container type')
       return
     }
     const qty = Number(quantity)
-    if (!Number.isInteger(qty) || qty < 1 || qty > 500) {
-      setError('Quantity must be a whole number between 1 and 500')
+    if (!Number.isInteger(qty) || qty < 1) {
+      setError('Quantity must be a whole number of at least 1')
       return
     }
     setSaving(true)
     try {
-      const data = await stockApi.quickAddStock({ containerType, nvocc, quantity: qty })
+      const data = await stockApi.quickAddStock({ containerType, nvocc, depot, quantity: qty })
       toast(`${data.createdCount} container(s) added to stock`, 'success')
       reset()
       onAdded?.()
@@ -80,6 +83,7 @@ export default function AddStockModal({ isOpen, onClose, onAdded, containerTypes
             </div>
             <form onSubmit={handleSubmit} className="space-y-4">
               <Select label="NVOCC" options={nvoccOptions} value={nvocc} onChange={setNvocc} placeholder="Select NVOCC" required />
+              <Select label="Depot" options={depotOptions} value={depot} onChange={setDepot} placeholder="Select depot" required />
               <Select label="Container Type" options={typeOptions} value={containerType} onChange={setContainerType} placeholder="Select container type" required />
               <div>
                 <label className="mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
@@ -88,7 +92,6 @@ export default function AddStockModal({ isOpen, onClose, onAdded, containerTypes
                 <input
                   type="number"
                   min="1"
-                  max="500"
                   value={quantity}
                   onChange={(e) => setQuantity(e.target.value)}
                   required

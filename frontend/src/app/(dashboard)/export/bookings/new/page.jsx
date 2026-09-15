@@ -12,12 +12,14 @@ import { PageLoader } from '@/components/ui/Spinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
-import BookingFormStep1 from '@/components/export/BookingFormStep1'
+import BookingForm from '@/components/export/BookingForm'
 
-// Builds BookingFormStep1's `prefill` shape from an approved Quotation, for
-// the "Convert to Job & Create Booking" flow — only the fields that overlap
+// Builds BookingForm's `prefill` shape from an approved Quotation, for the
+// "Convert to Job & Create Booking" flow — only the fields that overlap
 // between the two documents are carried over (see Sprint 005 plan, Explicit
-// Decisions 5 & 6: VGM and jobNo are deliberately NOT auto-filled).
+// Decisions 5 & 6: VGM is deliberately NOT auto-filled). NVOCC/pricing are
+// now part of this same one-page submission instead of a second chained
+// Step 2 call, since the Job form no longer has separate steps.
 function prefillFromQuotation(quotation) {
   return {
     clientName: quotation.clientName || '',
@@ -32,6 +34,9 @@ function prefillFromQuotation(quotation) {
       containerType: c.containerType?._id || c.containerType,
       quantity: c.quantity,
     })),
+    nvocc: quotation.nvocc?._id || quotation.nvocc || '',
+    price: quotation.totalSellingPrice || '',
+    cost: quotation.totalBuyingCost || '',
   }
 }
 
@@ -57,6 +62,9 @@ function NewBookingPageInner() {
   const [submitting, setSubmitting] = useState(false)
   const [ports, setPorts] = useState([])
   const [containerTypes, setContainerTypes] = useState([])
+  const [carriers, setCarriers] = useState([])
+  const [nvoccs, setNvoccs] = useState([])
+  const [depots, setDepots] = useState([])
   const [stockMap, setStockMap] = useState({})
   const [quotation, setQuotation] = useState(null)
 
@@ -64,12 +72,18 @@ function NewBookingPageInner() {
     Promise.all([
       masterDataApi.getPorts(),
       masterDataApi.getContainerTypes(),
+      masterDataApi.getCarriers(),
+      masterDataApi.getNvoccs(),
+      masterDataApi.getDepots(),
       stockApi.getStockMapByType(),
       fromQuotationId ? quotationApi.getQuotationById(fromQuotationId) : Promise.resolve(null),
     ])
-      .then(([portsRes, typesRes, map, quotationRes]) => {
+      .then(([portsRes, typesRes, carriersRes, nvoccsRes, depotsRes, map, quotationRes]) => {
         setPorts(portsRes)
         setContainerTypes(typesRes)
+        setCarriers(carriersRes)
+        setNvoccs(nvoccsRes)
+        setDepots(depotsRes)
         setStockMap(map)
         setQuotation(quotationRes)
       })
@@ -85,22 +99,6 @@ function NewBookingPageInner() {
       if (res.warnings) {
         toast(res.warnings.message, 'error')
       }
-
-      // Transfers the quotation's NVOCC/pricing into Step 2 automatically,
-      // so a converted booking arrives fully filled instead of needing a
-      // second manual pass — see the Sprint 005 plan's "Convert to Job" note.
-      if (quotation) {
-        try {
-          await bookingApi.updateStep2(res.data._id, {
-            nvocc: quotation.nvocc?._id || quotation.nvocc || undefined,
-            price: quotation.totalSellingPrice || undefined,
-            cost: quotation.totalBuyingCost || undefined,
-          })
-        } catch (step2Err) {
-          toast(`Booking created, but Step 2 pre-fill failed: ${step2Err.message}`, 'error')
-        }
-      }
-
       toast(`Booking ${res.data.jobNo} created`, 'success')
       router.push(`/export/bookings/${res.data._id}`)
     } catch (err) {
@@ -116,10 +114,10 @@ function NewBookingPageInner() {
         <Link href="/export/bookings" className="mb-2 inline-flex items-center gap-2 text-sm text-muted transition-colors hover:text-ink">
           <FaArrowLeft className="text-xs" /> Back to bookings
         </Link>
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Step 01 of 02</p>
-        <h1 className="mt-1 font-display text-2xl font-bold uppercase tracking-wide text-ink">New Booking Request</h1>
+        <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Booking &amp; Job</p>
+        <h1 className="mt-1 font-display text-2xl font-bold uppercase tracking-wide text-ink">New Job / Booking</h1>
         <p className="mt-1 text-sm text-muted">
-          {quotation ? `Converting quotation ${quotation.quotationNo} — review and file a job number` : 'Client quotation — filed at first contact, enriched later'}
+          {quotation ? `Converting quotation ${quotation.quotationNo} — review and file the job` : 'Client request through carrier booking, customs, and containers — one screen'}
         </p>
       </div>
 
@@ -128,17 +126,18 @@ function NewBookingPageInner() {
       ) : loading ? (
         <PageLoader />
       ) : (
-        <div className="border border-ink/25 bg-card p-5 sm:p-6">
-          <BookingFormStep1
-            prefill={quotation ? prefillFromQuotation(quotation) : null}
-            quotationId={quotation?._id || null}
-            ports={ports}
-            containerTypes={containerTypes}
-            stockMap={stockMap}
-            submitting={submitting}
-            onSubmit={handleSubmit}
-          />
-        </div>
+        <BookingForm
+          prefill={quotation ? prefillFromQuotation(quotation) : null}
+          quotationId={quotation?._id || null}
+          ports={ports}
+          containerTypes={containerTypes}
+          carriers={carriers}
+          nvoccs={nvoccs}
+          depots={depots}
+          stockMap={stockMap}
+          submitting={submitting}
+          onSubmit={handleSubmit}
+        />
       )}
     </div>
   )

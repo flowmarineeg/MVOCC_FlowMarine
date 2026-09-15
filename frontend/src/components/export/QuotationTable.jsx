@@ -44,7 +44,7 @@ export default function QuotationTable({ quotations = [], canUpdate = false, can
                   {(q.profitMarginPercent ?? 0).toFixed(1)}%
                 </span>
               </td>
-              <td className="px-4 py-3"><Badge value={q.status} /></td>
+              <td className="px-4 py-3"><Badge value={q.linkedBooking ? 'job_created' : q.status} /></td>
               <td className="px-4 py-3">
                 <div className="flex items-center justify-end gap-1">
                   <Link
