@@ -1,6 +1,7 @@
 import { body } from 'express-validator'
 import mongoose from 'mongoose'
 import ContainerType from '../../MasterData/ContainerType/containerType.model.js'
+import { ORIGIN_LINE_KEYS, DESTINATION_LINE_KEYS } from './quotation.model.js'
 
 // Same shape as booking.validation.js's validateContainerEntries — checks
 // for duplicate container types and confirms every referenced ContainerType
@@ -21,6 +22,37 @@ const validateContainerEntries = async (containers) => {
   }
   return true
 }
+
+const RATE_LINE_FIELDS = ['rate20', 'rate40', 'qty20', 'qty40']
+
+// Rules for one rate table (Origin or Destination, Buying or Selling):
+// every fixed line and every free-form custom line carries the same four
+// optional non-negative numbers. `prefix` is e.g. 'buyingOrigin'.
+const rateTableRules = (prefix, lineKeys) => [
+  body(prefix).optional().isObject().withMessage(`${prefix} must be an object`),
+  ...lineKeys.flatMap((key) =>
+    RATE_LINE_FIELDS.map((field) =>
+      body(`${prefix}.${key}.${field}`).optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage(`${key} ${field} must be a positive number`)
+    )
+  ),
+  body(`${prefix}.custom`).optional().isArray(),
+  body(`${prefix}.custom.*.label`).optional().trim().notEmpty().withMessage('Custom charge label is required'),
+  ...RATE_LINE_FIELDS.map((field) =>
+    body(`${prefix}.custom.*.${field}`).optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage(`Custom charge ${field} must be a positive number`)
+  ),
+]
+
+// The Destination table has its own currency; when it differs from the
+// Origin table's, a conversion rate into the Origin currency is required.
+const destinationRateRule = (side) =>
+  body(`${side}DestinationRate`).custom((value, { req }) => {
+    const base = req.body[`${side}Currency`]
+    const destination = req.body[`${side}DestinationCurrency`]
+    if (base && destination && base !== destination && !(Number(value) > 0)) {
+      throw new Error(`Exchange rate is required when the ${side} destination currency differs from the origin currency`)
+    }
+    return true
+  })
 
 const dangerousGoodsRules = [
   body('isDangerous').optional().isBoolean().withMessage('isDangerous must be true or false').toBoolean(),
@@ -57,27 +89,19 @@ const sharedOptionalRules = [
   body('buyingCurrency').optional().trim(),
   body('rateValidFrom').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid rate validity from date'),
   body('rateValidTo').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid rate validity to date'),
-  body('oceanFreightBuying').optional().isArray(),
-  body('oceanFreightBuying.*.containerType').optional().isMongoId(),
-  body('oceanFreightBuying.*.rate').optional().isFloat({ min: 0 }),
-  body('polChargesBuying.thc').optional({ checkFalsy: true }).isFloat({ min: 0 }),
-  body('polChargesBuying.documentation').optional({ checkFalsy: true }).isFloat({ min: 0 }),
-  body('polChargesBuying.seal').optional({ checkFalsy: true }).isFloat({ min: 0 }),
-  body('polChargesBuying.edi').optional({ checkFalsy: true }).isFloat({ min: 0 }),
-  body('podLocalChargesBuying').optional({ checkFalsy: true }).isFloat({ min: 0 }),
+  body('buyingDestinationCurrency').optional().trim(),
+  ...rateTableRules('buyingOrigin', ORIGIN_LINE_KEYS),
+  ...rateTableRules('buyingDestination', DESTINATION_LINE_KEYS),
+  destinationRateRule('buying'),
   body('freeTimeBuyingDays').optional({ checkFalsy: true }).isFloat({ min: 0 }),
-  body('destinationCharge').optional({ checkFalsy: true }).isFloat({ min: 0 }),
   body('rateSourceReference').optional().trim(),
 
   body('sellingCurrency').optional().trim(),
   body('exchangeRate').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Exchange rate must be a positive number'),
-  body('oceanFreightSelling').optional().isArray(),
-  body('oceanFreightSelling.*.containerType').optional().isMongoId(),
-  body('oceanFreightSelling.*.rate').optional().isFloat({ min: 0 }),
-  body('polChargesSelling').optional({ checkFalsy: true }).isFloat({ min: 0 }),
-  body('otherFeesToClient').optional().isArray(),
-  body('otherFeesToClient.*.label').optional().trim().notEmpty(),
-  body('otherFeesToClient.*.amount').optional().isFloat({ min: 0 }),
+  body('sellingDestinationCurrency').optional().trim(),
+  ...rateTableRules('sellingOrigin', ORIGIN_LINE_KEYS),
+  ...rateTableRules('sellingDestination', DESTINATION_LINE_KEYS),
+  destinationRateRule('selling'),
   body('paymentTerms').optional({ checkFalsy: true }).isIn(['Freight Prepaid', 'Freight Collect']).withMessage('Invalid payment terms'),
   body('validUntil').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid valid-until date'),
 ]

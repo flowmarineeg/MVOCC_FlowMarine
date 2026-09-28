@@ -1,5 +1,6 @@
 import mongoose from 'mongoose'
-import Quotation from './quotation.model.js'
+import Quotation, { ORIGIN_LINE_KEYS, DESTINATION_LINE_KEYS } from './quotation.model.js'
+import ContainerType from '../../MasterData/ContainerType/containerType.model.js'
 
 // MVP scope cut — no settings/admin-configurable UI exists yet in this
 // codebase, so the minimum acceptable margin is a plain constant here,
@@ -14,8 +15,6 @@ const POPULATE_FIELDS = [
   { path: 'pod', select: 'name code country' },
   { path: 'fpd', select: 'name code country' },
   { path: 'nvocc', select: 'name code contractType contractValidFrom contractValidTo tradeLane localAgentName localAgentContact' },
-  { path: 'oceanFreightBuying.containerType', select: 'code label' },
-  { path: 'oceanFreightSelling.containerType', select: 'code label' },
   { path: 'approvedBy', select: 'name email' },
   { path: 'linkedBooking', select: 'jobNo status' },
   { path: 'updatedBy', select: 'name email' },
@@ -38,32 +37,80 @@ const buildQuotationFilter = ({ status, search } = {}) => {
   return filter
 }
 
+// Rate tables price each line per container SIZE (20ft / 40ft), and the size
+// is detected from the ContainerType code's leading digits (20DC, 20OT -> 20;
+// 40HC, 40RF, 40OT -> 40). Mirrored in frontend/src/utils/quotationCalc.js.
+const CONTAINER_SIZES = [20, 40]
+
+const getContainerSize = (code) => {
+  const match = /^(\d{2})/.exec(String(code || '').trim())
+  const size = match ? Number(match[1]) : null
+  return CONTAINER_SIZES.includes(size) ? size : null
+}
+
+const getQtyBySize = async (containers) => {
+  const idOf = (c) => c.containerType?._id || c.containerType
+  const types = await ContainerType.find({ _id: { $in: (containers || []).map(idOf) } }).select('code').lean()
+  const sizeById = new Map(types.map((t) => [String(t._id), getContainerSize(t.code)]))
+  const qtyBySize = { 20: 0, 40: 0 }
+  for (const c of containers || []) {
+    const size = sizeById.get(String(idOf(c)))
+    if (size) qtyBySize[size] += Number(c.quantity) || 0
+  }
+  return qtyBySize
+}
+
+// rate × qty for each size; qty falls back to the quotation's container count
+// for that size unless the line carries its own override.
+const lineTotal = (line, qtyBySize) => {
+  if (!line) return 0
+  return CONTAINER_SIZES.reduce((sum, size) => {
+    const override = line[`qty${size}`]
+    const qty = override === undefined || override === null ? qtyBySize[size] : Number(override) || 0
+    return sum + (Number(line[`rate${size}`]) || 0) * qty
+  }, 0)
+}
+
+const tableTotal = (table, keys, qtyBySize) => {
+  if (!table) return 0
+  const fixed = keys.reduce((sum, key) => sum + lineTotal(table[key], qtyBySize), 0)
+  const custom = (table.custom || []).reduce((sum, line) => sum + lineTotal(line, qtyBySize), 0)
+  return fixed + custom
+}
+
+// Destination has its own currency; convert it into the side's base currency
+// (the Origin table's) only when the two actually differ.
+const sideTotal = (origin, destination, { currency, destinationCurrency, destinationRate }, qtyBySize) => {
+  const rate = destinationCurrency && destinationCurrency !== currency ? Number(destinationRate) || 1 : 1
+  return tableTotal(origin, ORIGIN_LINE_KEYS, qtyBySize) + tableTotal(destination, DESTINATION_LINE_KEYS, qtyBySize) * rate
+}
+
 // Server-authoritative profitability calc — recomputed on every create/update
 // regardless of what the client sends, same principle as Booking's
 // clearDangerousNumberIfNotDangerous().
-const applyProfitability = (quotation) => {
-  const qtyByType = new Map(
-    (quotation.containers || []).map((c) => [String(c.containerType?._id || c.containerType), Number(c.quantity) || 0])
+const applyProfitability = async (quotation) => {
+  const qtyBySize = await getQtyBySize(quotation.containers)
+
+  const totalBuyingCost = sideTotal(
+    quotation.buyingOrigin,
+    quotation.buyingDestination,
+    {
+      currency: quotation.buyingCurrency,
+      destinationCurrency: quotation.buyingDestinationCurrency,
+      destinationRate: quotation.buyingDestinationRate,
+    },
+    qtyBySize
   )
-
-  const sumFreight = (rows) =>
-    (rows || []).reduce((sum, row) => {
-      const qty = qtyByType.get(String(row.containerType?._id || row.containerType)) || 0
-      return sum + (Number(row.rate) || 0) * qty
-    }, 0)
-
-  const buyingCharges = quotation.polChargesBuying || {}
-  const totalBuyingCost =
-    sumFreight(quotation.oceanFreightBuying) +
-    (Number(buyingCharges.thc) || 0) +
-    (Number(buyingCharges.documentation) || 0) +
-    (Number(buyingCharges.seal) || 0) +
-    (Number(buyingCharges.edi) || 0) +
-    (Number(quotation.podLocalChargesBuying) || 0) +
-    (Number(quotation.destinationCharge) || 0)
-
-  const otherFees = (quotation.otherFeesToClient || []).reduce((sum, f) => sum + (Number(f.amount) || 0), 0)
-  const totalSellingPrice = sumFreight(quotation.oceanFreightSelling) + (Number(quotation.polChargesSelling) || 0) + otherFees
+  const totalSellingPrice = sideTotal(
+    quotation.sellingOrigin,
+    quotation.sellingDestination,
+    {
+      currency: quotation.sellingCurrency,
+      destinationCurrency: quotation.sellingDestinationCurrency,
+      destinationRate: quotation.sellingDestinationRate,
+    },
+    qtyBySize
+  )
 
   const exchangeRate = Number(quotation.exchangeRate) || 1
   const netProfit = totalSellingPrice - totalBuyingCost * exchangeRate
@@ -81,10 +128,12 @@ const EDITABLE_FIELDS = [
   'clientReferenceNo', 'inquiryDate', 'salesRep', 'commodity', 'hsCode', 'containers',
   'grossWeight', 'cbm', 'isDangerous', 'unClass', 'unNumber', 'por', 'pol', 'pod', 'fpd',
   'incoterms', 'targetEtd', 'specialNotes', 'nvocc',
-  'buyingCurrency', 'rateValidFrom', 'rateValidTo', 'oceanFreightBuying', 'polChargesBuying',
-  'podLocalChargesBuying', 'freeTimeBuyingDays', 'destinationCharge', 'rateSourceReference',
-  'sellingCurrency', 'exchangeRate', 'oceanFreightSelling', 'polChargesSelling',
-  'otherFeesToClient', 'paymentTerms', 'validUntil',
+  'buyingCurrency', 'rateValidFrom', 'rateValidTo', 'buyingOrigin',
+  'buyingDestinationCurrency', 'buyingDestinationRate', 'buyingDestination',
+  'freeTimeBuyingDays', 'rateSourceReference',
+  'sellingCurrency', 'exchangeRate', 'sellingOrigin',
+  'sellingDestinationCurrency', 'sellingDestinationRate', 'sellingDestination',
+  'paymentTerms', 'validUntil',
 ]
 
 const clearDangerousFieldsIfNotDangerous = (quotation) => {
@@ -101,7 +150,7 @@ export const createQuotation = async (data, currentUser) => {
   payload.updatedBy = currentUser?._id || currentUser?.id
   const quotation = new Quotation(payload)
   clearDangerousFieldsIfNotDangerous(quotation)
-  applyProfitability(quotation)
+  await applyProfitability(quotation)
   await quotation.save()
   await quotation.populate(POPULATE_FIELDS)
   return quotation
@@ -149,7 +198,7 @@ export const updateQuotation = async (id, data, currentUser, { canOverride } = {
     if (data[field] !== undefined) quotation[field] = data[field]
   }
   clearDangerousFieldsIfNotDangerous(quotation)
-  applyProfitability(quotation)
+  await applyProfitability(quotation)
   quotation.updatedBy = currentUser?._id || currentUser?.id
 
   await quotation.save()
@@ -212,8 +261,7 @@ export const suggestRateForNvocc = async (nvoccId, excludeId) => {
 
   const last = await Quotation.findOne(filter)
     .sort({ createdAt: -1 })
-    .select('oceanFreightBuying polChargesBuying podLocalChargesBuying freeTimeBuyingDays destinationCharge buyingCurrency rateSourceReference quotationNo createdAt')
-    .populate({ path: 'oceanFreightBuying.containerType', select: 'code label' })
+    .select('buyingCurrency buyingOrigin buyingDestinationCurrency buyingDestinationRate buyingDestination freeTimeBuyingDays rateSourceReference quotationNo createdAt')
 
   return last || null
 }

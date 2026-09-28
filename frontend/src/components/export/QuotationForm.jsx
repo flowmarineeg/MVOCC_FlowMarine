@@ -4,11 +4,12 @@ import { useState } from 'react'
 import Select from '@/components/ui/Select'
 import ContainerSelector from './ContainerSelector'
 import ProfitabilitySummary from './ProfitabilitySummary'
+import RateTable from './RateTable'
 import MasterDataFormModal from '@/components/masterdata/MasterDataFormModal'
 import * as masterDataApi from '@/services/masterData'
 import * as quotationApi from '@/services/quotation'
-import { computeProfitability } from '@/utils/quotationCalc'
-import { CURRENCY_OPTIONS } from '@/constants/currencies'
+import { computeProfitability, getContainerSize, getQtyBySize } from '@/utils/quotationCalc'
+import { CONTAINER_SIZES, ORIGIN_LINES, DESTINATION_LINES } from '@/constants/quotationRates'
 
 // `d` is either a Date instance (e.g. `new Date()` for "default to today")
 // or an ISO date string from the API — String(Date) is NOT yyyy-mm-dd
@@ -20,6 +21,52 @@ const toDateInput = (d) => {
 }
 
 const formatDateTime = (d) => (d ? new Date(d).toLocaleString() : '-')
+
+// A rate table's form state: one { rate20, rate40, qty20, qty40 } per fixed
+// line (kept as strings so an empty input stays empty) plus free-form lines.
+const RATE_FIELDS = ['rate20', 'rate40', 'qty20', 'qty40']
+const emptyLine = () => Object.fromEntries(RATE_FIELDS.map((f) => [f, '']))
+
+const emptyTable = (lines) => ({
+  ...Object.fromEntries(lines.map(({ key }) => [key, emptyLine()])),
+  custom: [],
+})
+
+const lineFromApi = (line) => Object.fromEntries(RATE_FIELDS.map((f) => [f, line?.[f] ?? '']))
+
+const tableFromApi = (table, lines) => ({
+  ...Object.fromEntries(lines.map(({ key }) => [key, lineFromApi(table?.[key])])),
+  custom: (table?.custom || []).map((l) => ({ label: l.label, ...lineFromApi(l) })),
+})
+
+const lineHasData = (line) => RATE_FIELDS.some((f) => line?.[f] !== '' && line?.[f] !== undefined)
+const tableHasData = (table, lines) =>
+  lines.some(({ key }) => lineHasData(table[key])) || (table.custom || []).some(lineHasData)
+
+// Only fields of sizes actually present in the quotation are sent, so a size
+// that was priced and then removed from Section 1 can't leave stale numbers
+// (or a stale QTY override) behind.
+const linePayload = (line, sizes) => {
+  const out = {}
+  sizes.forEach((size) => {
+    ;[`rate${size}`, `qty${size}`].forEach((f) => {
+      if (line[f] !== '' && line[f] !== undefined) out[f] = Number(line[f])
+    })
+  })
+  return out
+}
+
+const tablePayload = (table, lines, sizes) => {
+  const out = {}
+  lines.forEach(({ key }) => {
+    const line = linePayload(table[key], sizes)
+    if (Object.keys(line).length > 0) out[key] = line
+  })
+  out.custom = (table.custom || [])
+    .filter((l) => l.label && l.label.trim())
+    .map((l) => ({ label: l.label.trim(), ...linePayload(l, sizes) }))
+  return out
+}
 
 function emptyForm(currentUser) {
   return {
@@ -52,17 +99,18 @@ function emptyForm(currentUser) {
     buyingCurrency: 'USD',
     rateValidFrom: '',
     rateValidTo: '',
-    oceanFreightBuyingByType: {},
-    polChargesBuying: { thc: '', documentation: '', seal: '', edi: '' },
-    podLocalChargesBuying: '',
+    buyingOrigin: emptyTable(ORIGIN_LINES),
+    buyingDestinationCurrency: 'USD',
+    buyingDestinationRate: 1,
+    buyingDestination: emptyTable(DESTINATION_LINES),
     freeTimeBuyingDays: '',
-    destinationCharge: '',
     rateSourceReference: '',
     sellingCurrency: 'USD',
     exchangeRate: 1,
-    oceanFreightSellingByType: {},
-    polChargesSelling: '',
-    otherFeesToClient: [],
+    sellingOrigin: emptyTable(ORIGIN_LINES),
+    sellingDestinationCurrency: 'USD',
+    sellingDestinationRate: 1,
+    sellingDestination: emptyTable(DESTINATION_LINES),
     paymentTerms: '',
     validUntil: '',
   }
@@ -103,26 +151,18 @@ function buildInitialForm(quotation, currentUser) {
     buyingCurrency: quotation.buyingCurrency || 'USD',
     rateValidFrom: toDateInput(quotation.rateValidFrom),
     rateValidTo: toDateInput(quotation.rateValidTo),
-    oceanFreightBuyingByType: Object.fromEntries(
-      (quotation.oceanFreightBuying || []).map((r) => [r.containerType?._id || r.containerType, r.rate])
-    ),
-    polChargesBuying: {
-      thc: quotation.polChargesBuying?.thc ?? '',
-      documentation: quotation.polChargesBuying?.documentation ?? '',
-      seal: quotation.polChargesBuying?.seal ?? '',
-      edi: quotation.polChargesBuying?.edi ?? '',
-    },
-    podLocalChargesBuying: quotation.podLocalChargesBuying ?? '',
+    buyingOrigin: tableFromApi(quotation.buyingOrigin, ORIGIN_LINES),
+    buyingDestinationCurrency: quotation.buyingDestinationCurrency || quotation.buyingCurrency || 'USD',
+    buyingDestinationRate: quotation.buyingDestinationRate ?? 1,
+    buyingDestination: tableFromApi(quotation.buyingDestination, DESTINATION_LINES),
     freeTimeBuyingDays: quotation.freeTimeBuyingDays ?? '',
-    destinationCharge: quotation.destinationCharge ?? '',
     rateSourceReference: quotation.rateSourceReference || '',
     sellingCurrency: quotation.sellingCurrency || 'USD',
     exchangeRate: quotation.exchangeRate ?? 1,
-    oceanFreightSellingByType: Object.fromEntries(
-      (quotation.oceanFreightSelling || []).map((r) => [r.containerType?._id || r.containerType, r.rate])
-    ),
-    polChargesSelling: quotation.polChargesSelling ?? '',
-    otherFeesToClient: (quotation.otherFeesToClient || []).map((f) => ({ label: f.label, amount: f.amount })),
+    sellingOrigin: tableFromApi(quotation.sellingOrigin, ORIGIN_LINES),
+    sellingDestinationCurrency: quotation.sellingDestinationCurrency || quotation.sellingCurrency || 'USD',
+    sellingDestinationRate: quotation.sellingDestinationRate ?? 1,
+    sellingDestination: tableFromApi(quotation.sellingDestination, DESTINATION_LINES),
     paymentTerms: quotation.paymentTerms || '',
     validUntil: toDateInput(quotation.validUntil),
   }
@@ -135,33 +175,6 @@ const sectionTitleCls = 'font-display text-base font-bold uppercase tracking-wid
 
 const INCOTERMS = ['EXW', 'FCA', 'FOB', 'CPT', 'CIP', 'CFR', 'CIF', 'DAP', 'DPU', 'DDP']
 const PAYMENT_TERMS = ['Freight Prepaid', 'Freight Collect']
-
-function FreightRateRows({ containerTypes, selectedIds, values, onChange, currency }) {
-  if (selectedIds.length === 0) {
-    return <p className="text-sm text-muted">Select container types in Section 1 first.</p>
-  }
-  return (
-    <div className="space-y-2">
-      {selectedIds.map((id) => {
-        const ct = containerTypes.find((c) => c._id === id)
-        return (
-          <div key={id} className="flex items-center gap-3">
-            <span className="w-24 shrink-0 font-mono text-xs text-muted">{ct ? ct.code : id}</span>
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              value={values[id] ?? ''}
-              onChange={(e) => onChange(id, e.target.value)}
-              placeholder={`Rate (${currency})`}
-              className={`${inputCls} border-ink/30 font-mono`}
-            />
-          </div>
-        )
-      })}
-    </div>
-  )
-}
 
 const LOCKED_STATUSES = ['sent', 'approved', 'rejected']
 
@@ -189,26 +202,50 @@ export default function QuotationForm({
 
   const set = (field) => (v) => setForm((f) => ({ ...f, [field]: v }))
   const setInput = (field) => (e) => set(field)(e.target.value)
-  const setNested = (parent, field) => (e) => setForm((f) => ({ ...f, [parent]: { ...f[parent], [field]: e.target.value } }))
 
   const portOptions = ports.map((p) => ({ value: p._id, label: `${p.code} — ${p.name}` }))
   const customerOptions = customers.map((c) => ({ value: c._id, label: c.name }))
   const nvoccOptions = nvoccs.map((n) => ({ value: n._id, label: `${n.code} — ${n.name}` }))
   const selectedNvocc = nvoccs.find((n) => n._id === form.nvocc) || null
 
-  const selectedContainerTypeIds = [...new Set(form.containers.map((c) => c.containerType).filter(Boolean))]
+  // The rate tables' 20ft / 40ft columns follow the containers picked in
+  // Section 1: a size only gets columns while at least one container of it is
+  // selected, and each line's QTY defaults to that size's total quantity.
+  const qtyBySize = getQtyBySize(form.containers, containerTypes)
+  const sizes = CONTAINER_SIZES.filter((s) => qtyBySize[s] > 0)
+  const unsizedCodes = [...new Set(form.containers.map((c) => c.containerType).filter(Boolean))]
+    .map((id) => containerTypes.find((t) => t._id === id))
+    .filter((t) => t && getContainerSize(t.code) === null)
+    .map((t) => t.code)
 
   const totals = computeProfitability({
-    containers: form.containers,
-    oceanFreightBuyingByType: form.oceanFreightBuyingByType,
-    polChargesBuying: form.polChargesBuying,
-    podLocalChargesBuying: form.podLocalChargesBuying,
-    destinationCharge: form.destinationCharge,
-    oceanFreightSellingByType: form.oceanFreightSellingByType,
-    polChargesSelling: form.polChargesSelling,
-    otherFeesToClient: form.otherFeesToClient,
+    qtyBySize,
+    buying: {
+      origin: form.buyingOrigin,
+      destination: form.buyingDestination,
+      currency: form.buyingCurrency,
+      destinationCurrency: form.buyingDestinationCurrency,
+      destinationRate: form.buyingDestinationRate,
+    },
+    selling: {
+      origin: form.sellingOrigin,
+      destination: form.sellingDestination,
+      currency: form.sellingCurrency,
+      destinationCurrency: form.sellingDestinationCurrency,
+      destinationRate: form.sellingDestinationRate,
+    },
     exchangeRate: form.exchangeRate,
   })
+
+  // Changing a side's Origin (base) currency drags its Destination currency
+  // along while the two are still the same, so switching the whole side to
+  // e.g. EGP doesn't suddenly demand a conversion rate for the other table.
+  const handleBaseCurrencyChange = (side) => (currency) =>
+    setForm((f) => ({
+      ...f,
+      [`${side}Currency`]: currency,
+      [`${side}DestinationCurrency`]: f[`${side}DestinationCurrency`] === f[`${side}Currency`] ? currency : f[`${side}DestinationCurrency`],
+    }))
 
   const handleSelectCustomer = (id) => {
     const c = customers.find((x) => x._id === id)
@@ -243,7 +280,8 @@ export default function QuotationForm({
     set('nvocc')(nvoccId)
     setRateNote('')
     if (!nvoccId) return
-    const hasBuyingData = Object.keys(form.oceanFreightBuyingByType).length > 0 || form.rateSourceReference
+    const hasBuyingData =
+      tableHasData(form.buyingOrigin, ORIGIN_LINES) || tableHasData(form.buyingDestination, DESTINATION_LINES) || form.rateSourceReference
     if (hasBuyingData) return
     try {
       const suggestion = await quotationApi.suggestRate(nvoccId, quotation?._id)
@@ -251,18 +289,11 @@ export default function QuotationForm({
       setForm((f) => ({
         ...f,
         buyingCurrency: suggestion.buyingCurrency || f.buyingCurrency,
-        oceanFreightBuyingByType: Object.fromEntries(
-          (suggestion.oceanFreightBuying || []).map((r) => [r.containerType?._id || r.containerType, r.rate])
-        ),
-        polChargesBuying: {
-          thc: suggestion.polChargesBuying?.thc ?? '',
-          documentation: suggestion.polChargesBuying?.documentation ?? '',
-          seal: suggestion.polChargesBuying?.seal ?? '',
-          edi: suggestion.polChargesBuying?.edi ?? '',
-        },
-        podLocalChargesBuying: suggestion.podLocalChargesBuying ?? '',
+        buyingOrigin: tableFromApi(suggestion.buyingOrigin, ORIGIN_LINES),
+        buyingDestinationCurrency: suggestion.buyingDestinationCurrency || suggestion.buyingCurrency || f.buyingDestinationCurrency,
+        buyingDestinationRate: suggestion.buyingDestinationRate ?? 1,
+        buyingDestination: tableFromApi(suggestion.buyingDestination, DESTINATION_LINES),
         freeTimeBuyingDays: suggestion.freeTimeBuyingDays ?? '',
-        destinationCharge: suggestion.destinationCharge ?? '',
         rateSourceReference: suggestion.rateSourceReference || '',
       }))
       setRateNote(`Prefilled from the last quotation (${suggestion.quotationNo}) using this NVOCC — edit freely, some rates are Spot.`)
@@ -270,11 +301,6 @@ export default function QuotationForm({
       // best-effort suggestion only — silently skip if the lookup fails
     }
   }
-
-  const addFeeLine = () => set('otherFeesToClient')([...form.otherFeesToClient, { label: '', amount: '' }])
-  const updateFeeLine = (i, patch) =>
-    set('otherFeesToClient')(form.otherFeesToClient.map((f, idx) => (idx === i ? { ...f, ...patch } : f)))
-  const removeFeeLine = (i) => set('otherFeesToClient')(form.otherFeesToClient.filter((_, idx) => idx !== i))
 
   const validate = () => {
     const next = {}
@@ -288,6 +314,14 @@ export default function QuotationForm({
     if (form.isDangerous && !form.unNumber.trim()) next.unNumber = 'UN Number is required'
     const validContainers = form.containers.filter((c) => c.containerType && c.quantity >= 1)
     if (validContainers.length === 0) next.containers = 'Add at least one container entry'
+    // A Destination table in a different currency than its Origin table needs
+    // a conversion rate, or its total can't be added into the side's total.
+    ;['buying', 'selling'].forEach((side) => {
+      const differs = form[`${side}DestinationCurrency`] !== form[`${side}Currency`]
+      if (differs && !(Number(form[`${side}DestinationRate`]) > 0)) {
+        next[`${side}DestinationRate`] = 'Enter the exchange rate into the origin currency'
+      }
+    })
     setErrors(next)
     return Object.keys(next).length === 0
   }
@@ -297,11 +331,6 @@ export default function QuotationForm({
     if (!validate()) return
 
     const containers = form.containers.filter((c) => c.containerType && c.quantity >= 1)
-    const typeIds = new Set(containers.map((c) => c.containerType))
-    const toRateArray = (byType) =>
-      Object.entries(byType)
-        .filter(([id, rate]) => typeIds.has(id) && rate !== '' && rate !== undefined)
-        .map(([containerType, rate]) => ({ containerType, rate: Number(rate) }))
 
     const payload = {
       quotationNo: form.quotationNo.trim(),
@@ -333,24 +362,18 @@ export default function QuotationForm({
       buyingCurrency: form.buyingCurrency,
       rateValidFrom: form.rateValidFrom || undefined,
       rateValidTo: form.rateValidTo || undefined,
-      oceanFreightBuying: toRateArray(form.oceanFreightBuyingByType),
-      polChargesBuying: {
-        thc: form.polChargesBuying.thc === '' ? undefined : Number(form.polChargesBuying.thc),
-        documentation: form.polChargesBuying.documentation === '' ? undefined : Number(form.polChargesBuying.documentation),
-        seal: form.polChargesBuying.seal === '' ? undefined : Number(form.polChargesBuying.seal),
-        edi: form.polChargesBuying.edi === '' ? undefined : Number(form.polChargesBuying.edi),
-      },
-      podLocalChargesBuying: form.podLocalChargesBuying === '' ? undefined : Number(form.podLocalChargesBuying),
+      buyingOrigin: tablePayload(form.buyingOrigin, ORIGIN_LINES, sizes),
+      buyingDestinationCurrency: form.buyingDestinationCurrency,
+      buyingDestinationRate: form.buyingDestinationRate === '' ? 1 : Number(form.buyingDestinationRate),
+      buyingDestination: tablePayload(form.buyingDestination, DESTINATION_LINES, sizes),
       freeTimeBuyingDays: form.freeTimeBuyingDays === '' ? undefined : Number(form.freeTimeBuyingDays),
-      destinationCharge: form.destinationCharge === '' ? undefined : Number(form.destinationCharge),
       rateSourceReference: form.rateSourceReference.trim(),
       sellingCurrency: form.sellingCurrency,
       exchangeRate: form.exchangeRate === '' ? 1 : Number(form.exchangeRate),
-      oceanFreightSelling: toRateArray(form.oceanFreightSellingByType),
-      polChargesSelling: form.polChargesSelling === '' ? undefined : Number(form.polChargesSelling),
-      otherFeesToClient: form.otherFeesToClient
-        .filter((f) => f.label && f.amount !== '')
-        .map((f) => ({ label: f.label.trim(), amount: Number(f.amount) })),
+      sellingOrigin: tablePayload(form.sellingOrigin, ORIGIN_LINES, sizes),
+      sellingDestinationCurrency: form.sellingDestinationCurrency,
+      sellingDestinationRate: form.sellingDestinationRate === '' ? 1 : Number(form.sellingDestinationRate),
+      sellingDestination: tablePayload(form.sellingDestination, DESTINATION_LINES, sizes),
       paymentTerms: form.paymentTerms || undefined,
       validUntil: form.validUntil || undefined,
     }
@@ -367,7 +390,10 @@ export default function QuotationForm({
           <span>This quotation is {quotation.status} and normally locked — you can edit it because you hold the quotation:approve permission.</span>
         </div>
       )}
-      <fieldset disabled={isLocked} className="space-y-6">
+      {/* min-w-0: a <fieldset> defaults to min-width: min-content, which lets the
+          wide rate tables stretch it (and the whole page) instead of scrolling
+          inside their own overflow-x-auto wrapper on narrow screens. */}
+      <fieldset disabled={isLocked} className="min-w-0 space-y-6">
         {isEdit && (
           <div className="grid grid-cols-1 gap-x-6 gap-y-2 border border-ink/20 bg-paper/60 p-4 text-sm sm:grid-cols-3">
             <div>
@@ -621,8 +647,7 @@ export default function QuotationForm({
         {/* 3. Buying */}
         <div className={sectionCls}>
           <h2 className={sectionTitleCls}>3. Buying Rate</h2>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-            <Select label="Currency" searchable options={CURRENCY_OPTIONS} value={form.buyingCurrency} onChange={set('buyingCurrency')} />
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
               <label className={labelCls}>Rate Valid From</label>
               <input type="date" value={form.rateValidFrom} onChange={setInput('rateValidFrom')} className={`${inputCls} border-ink/30 font-mono`} />
@@ -633,39 +658,42 @@ export default function QuotationForm({
             </div>
           </div>
 
-          <div>
-            <label className={labelCls}>Ocean Freight Buying (per container type)</label>
-            <FreightRateRows
-              containerTypes={containerTypes}
-              selectedIds={selectedContainerTypeIds}
-              values={form.oceanFreightBuyingByType}
-              currency={form.buyingCurrency}
-              onChange={(id, rate) => set('oceanFreightBuyingByType')({ ...form.oceanFreightBuyingByType, [id]: rate })}
-            />
-          </div>
+          {unsizedCodes.length > 0 && (
+            <p className="font-mono text-xs text-signal">
+              {unsizedCodes.join(', ')} {unsizedCodes.length > 1 ? 'have' : 'has'} no 20ft / 40ft size, so {unsizedCodes.length > 1 ? 'they are' : 'it is'} not priced in the rate tables below.
+            </p>
+          )}
 
-          <div>
-            <label className={labelCls}>POL Local Charges Buying</label>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <input type="number" min="0" placeholder="THC" value={form.polChargesBuying.thc} onChange={setNested('polChargesBuying', 'thc')} className={`${inputCls} border-ink/30 font-mono`} />
-              <input type="number" min="0" placeholder="Documentation" value={form.polChargesBuying.documentation} onChange={setNested('polChargesBuying', 'documentation')} className={`${inputCls} border-ink/30 font-mono`} />
-              <input type="number" min="0" placeholder="Seal" value={form.polChargesBuying.seal} onChange={setNested('polChargesBuying', 'seal')} className={`${inputCls} border-ink/30 font-mono`} />
-              <input type="number" min="0" placeholder="EDI" value={form.polChargesBuying.edi} onChange={setNested('polChargesBuying', 'edi')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-          </div>
+          <RateTable
+            title="Origin Charges — Buying Rate"
+            lines={ORIGIN_LINES}
+            value={form.buyingOrigin}
+            onChange={set('buyingOrigin')}
+            sizes={sizes}
+            qtyBySize={qtyBySize}
+            currency={form.buyingCurrency}
+            onCurrencyChange={handleBaseCurrencyChange('buying')}
+          />
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <label className={labelCls}>POD Local Charges Buying</label>
-              <input type="number" min="0" value={form.podLocalChargesBuying} onChange={setInput('podLocalChargesBuying')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
+          <RateTable
+            title="Destination Charges — Buying Rate"
+            lines={DESTINATION_LINES}
+            value={form.buyingDestination}
+            onChange={set('buyingDestination')}
+            sizes={sizes}
+            qtyBySize={qtyBySize}
+            currency={form.buyingDestinationCurrency}
+            onCurrencyChange={set('buyingDestinationCurrency')}
+            baseCurrency={form.buyingCurrency}
+            conversionRate={form.buyingDestinationRate}
+            onConversionRateChange={set('buyingDestinationRate')}
+            conversionError={errors.buyingDestinationRate}
+          />
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
               <label className={labelCls}>Free Time Buying (days)</label>
               <input type="number" min="0" value={form.freeTimeBuyingDays} onChange={setInput('freeTimeBuyingDays')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-            <div>
-              <label className={labelCls}>Destination Charge</label>
-              <input type="number" min="0" value={form.destinationCharge} onChange={setInput('destinationCharge')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
             <div>
               <label className={labelCls}>Rate Source Reference</label>
@@ -677,47 +705,39 @@ export default function QuotationForm({
         {/* 4. Selling */}
         <div className={sectionCls}>
           <h2 className={sectionTitleCls}>4. Selling Price to Client</h2>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <Select label="Currency" searchable options={CURRENCY_OPTIONS} value={form.sellingCurrency} onChange={set('sellingCurrency')} />
-            <div>
-              <label className={labelCls}>Exchange Rate <span className="normal-case text-muted/70">(buying → selling currency)</span></label>
-              <input type="number" min="0" step="0.0001" value={form.exchangeRate} onChange={setInput('exchangeRate')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-          </div>
-
           <div>
-            <label className={labelCls}>Ocean Freight Selling (per container type)</label>
-            <FreightRateRows
-              containerTypes={containerTypes}
-              selectedIds={selectedContainerTypeIds}
-              values={form.oceanFreightSellingByType}
-              currency={form.sellingCurrency}
-              onChange={(id, rate) => set('oceanFreightSellingByType')({ ...form.oceanFreightSellingByType, [id]: rate })}
-            />
+            <label className={labelCls}>Exchange Rate <span className="normal-case text-muted/70">(buying → selling currency, used for profit)</span></label>
+            <input type="number" min="0" step="0.0001" value={form.exchangeRate} onChange={setInput('exchangeRate')} className={`${inputCls} border-ink/30 font-mono sm:w-64`} />
           </div>
 
+          <RateTable
+            title="Origin Charges — Selling Rate"
+            lines={ORIGIN_LINES}
+            value={form.sellingOrigin}
+            onChange={set('sellingOrigin')}
+            sizes={sizes}
+            qtyBySize={qtyBySize}
+            currency={form.sellingCurrency}
+            onCurrencyChange={handleBaseCurrencyChange('selling')}
+          />
+
+          <RateTable
+            title="Destination Charges — Selling Rate"
+            lines={DESTINATION_LINES}
+            value={form.sellingDestination}
+            onChange={set('sellingDestination')}
+            sizes={sizes}
+            qtyBySize={qtyBySize}
+            currency={form.sellingDestinationCurrency}
+            onCurrencyChange={set('sellingDestinationCurrency')}
+            baseCurrency={form.sellingCurrency}
+            conversionRate={form.sellingDestinationRate}
+            onConversionRateChange={set('sellingDestinationRate')}
+            conversionError={errors.sellingDestinationRate}
+          />
+
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <div>
-              <label className={labelCls}>POL Local Charges Selling</label>
-              <input type="number" min="0" value={form.polChargesSelling} onChange={setInput('polChargesSelling')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
             <Select label="Payment Terms" placeholder="Select payment terms" options={PAYMENT_TERMS.map((v) => ({ value: v, label: v }))} value={form.paymentTerms} onChange={set('paymentTerms')} />
-          </div>
-
-          <div>
-            <label className={labelCls}>Other Fees to Client <span className="normal-case text-muted/70">(Documentation Fee, BL Fee, etc.)</span></label>
-            <div className="space-y-2">
-              {form.otherFeesToClient.map((fee, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input value={fee.label} onChange={(e) => updateFeeLine(i, { label: e.target.value })} placeholder="Fee label" className={`${inputCls} border-ink/30`} />
-                  <input type="number" min="0" value={fee.amount} onChange={(e) => updateFeeLine(i, { amount: e.target.value })} placeholder="Amount" className={`${inputCls} w-32 border-ink/30 font-mono`} />
-                  <button type="button" onClick={() => removeFeeLine(i)} className="shrink-0 px-2 py-2.5 text-muted transition-colors hover:text-brick">✕</button>
-                </div>
-              ))}
-              <button type="button" onClick={addFeeLine} className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-rust transition-colors hover:text-rust-dark">
-                + Add fee line
-              </button>
-            </div>
           </div>
 
           <div>

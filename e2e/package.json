@@ -1,0 +1,14 @@
+{
+  "name": "mvocc-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests — run against the live dev servers and the MONGO_URI in backend/.env. Tests create E2E-* data and delete it when done.",
+  "scripts": {
+    "quotation:api": "node quotation/api.e2e.mjs",
+    "quotation:ui": "node quotation/ui.e2e.mjs",
+    "quotation": "node quotation/api.e2e.mjs && node quotation/ui.e2e.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}

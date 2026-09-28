@@ -16,29 +16,35 @@ const containerEntrySchema = new mongoose.Schema(
   { _id: false }
 )
 
-const freightRateSchema = new mongoose.Schema(
-  {
-    containerType: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'ContainerType',
-      required: true,
-    },
-    rate: {
-      type: Number,
-      required: true,
-      min: [0, 'Rate must be a positive number'],
-    },
-  },
+// ─── Rate tables (Buying + Selling share the same shape) ─────────────────
+// Each side has an Origin table and a Destination table. A line is priced per
+// container size: rate20/rate40 × qty20/qty40. qty* is normally left empty —
+// the server then uses the total quantity of that size taken from the
+// quotation's containers — and only set when a line isn't per-container
+// (e.g. BL / Telex / Documentation are per B/L or per shipment).
+const amount = { type: Number, min: [0, 'Must be a positive number'] }
+
+const rateLineFields = { rate20: amount, rate40: amount, qty20: amount, qty40: amount }
+const rateLineSchema = new mongoose.Schema(rateLineFields, { _id: false })
+const customLineSchema = new mongoose.Schema(
+  { label: { type: String, trim: true, required: true }, ...rateLineFields },
   { _id: false }
 )
 
-const feeLineSchema = new mongoose.Schema(
-  {
-    label: { type: String, trim: true, required: true },
-    amount: { type: Number, required: true, min: [0, 'Amount must be a positive number'] },
-  },
-  { _id: false }
-)
+export const ORIGIN_LINE_KEYS = ['oceanFreight', 'dgSurcharge', 'thc', 'bl', 'telex', 'documentation']
+export const DESTINATION_LINE_KEYS = ['adminFee', 'cic', 'cmc', 'dthc', 'lolo', 'importServiceFee', 'deliveryOrder']
+
+const buildTableSchema = (keys) =>
+  new mongoose.Schema(
+    {
+      ...Object.fromEntries(keys.map((key) => [key, { type: rateLineSchema, default: undefined }])),
+      custom: { type: [customLineSchema], default: [] },
+    },
+    { _id: false }
+  )
+
+const originTableSchema = buildTableSchema(ORIGIN_LINE_KEYS)
+const destinationTableSchema = buildTableSchema(DESTINATION_LINE_KEYS)
 
 const quotationSchema = new mongoose.Schema(
   {
@@ -130,27 +136,26 @@ const quotationSchema = new mongoose.Schema(
     nvocc: { type: mongoose.Schema.Types.ObjectId, ref: 'Nvocc' },
 
     // ─── 3) Buying ─────────────────────────────────────────────────────
+    // buyingCurrency is the Origin table's currency and the base currency all
+    // buying totals are expressed in. The Destination table has its own
+    // currency; when it differs, buyingDestinationRate converts it to base.
     buyingCurrency: { type: String, trim: true, default: 'USD' },
     rateValidFrom: { type: Date },
     rateValidTo: { type: Date },
-    oceanFreightBuying: { type: [freightRateSchema], default: [] },
-    polChargesBuying: {
-      thc: { type: Number, min: 0 },
-      documentation: { type: Number, min: 0 },
-      seal: { type: Number, min: 0 },
-      edi: { type: Number, min: 0 },
-    },
-    podLocalChargesBuying: { type: Number, min: [0, 'Must be a positive number'] },
+    buyingOrigin: { type: originTableSchema, default: () => ({}) },
+    buyingDestinationCurrency: { type: String, trim: true, default: 'USD' },
+    buyingDestinationRate: { type: Number, min: [0, 'Exchange rate must be a positive number'], default: 1 },
+    buyingDestination: { type: destinationTableSchema, default: () => ({}) },
     freeTimeBuyingDays: { type: Number, min: [0, 'Must be a positive number'] },
-    destinationCharge: { type: Number, min: [0, 'Must be a positive number'] },
     rateSourceReference: { type: String, trim: true },
 
     // ─── 4) Selling ────────────────────────────────────────────────────
     sellingCurrency: { type: String, trim: true, default: 'USD' },
     exchangeRate: { type: Number, min: [0, 'Exchange rate must be a positive number'], default: 1 },
-    oceanFreightSelling: { type: [freightRateSchema], default: [] },
-    polChargesSelling: { type: Number, min: [0, 'Must be a positive number'] },
-    otherFeesToClient: { type: [feeLineSchema], default: [] },
+    sellingOrigin: { type: originTableSchema, default: () => ({}) },
+    sellingDestinationCurrency: { type: String, trim: true, default: 'USD' },
+    sellingDestinationRate: { type: Number, min: [0, 'Exchange rate must be a positive number'], default: 1 },
+    sellingDestination: { type: destinationTableSchema, default: () => ({}) },
     paymentTerms: {
       type: String,
       enum: ['Freight Prepaid', 'Freight Collect'],
