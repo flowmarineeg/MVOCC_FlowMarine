@@ -51,7 +51,7 @@ export default function BLTable({ jobs = [], canViewQuotations = false }) {
               <td className="px-4 py-3">
                 <div className="flex items-center justify-end">
                   <Link
-                    href={`/export/bl/${j._id}`}
+                    href={`/export/bookings/${j._id}`}
                     className="flex h-8 w-8 items-center justify-center text-muted transition-colors hover:bg-ink/5 hover:text-ink"
                     title="Open B&L"
                   >

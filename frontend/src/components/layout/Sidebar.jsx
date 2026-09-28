@@ -15,7 +15,6 @@ import {
   FaUserShield,
   FaHistory,
   FaFileInvoiceDollar,
-  FaFileContract,
 } from 'react-icons/fa'
 import { useAuth } from '@/context/AuthContext'
 
@@ -27,8 +26,10 @@ const NAV = [
     icon: FaBoxes,
     items: [
       { label: 'Quotations', href: '/export/quotations', icon: FaFileInvoiceDollar, permission: 'quotation:read' },
-      { label: 'Booking & Job', href: '/export/bookings', icon: FaClipboardList, permission: 'booking:read' },
-      { label: 'B&L', href: '/export/bl', icon: FaFileContract, permission: 'bl:read' },
+      // Booking & Job now also hosts B&L (merged into the same details page's
+      // Steps 4/5 — see docs/BOOKING_JOB_MERGE_DATA_REPORT.md), so this entry
+      // stays visible for a bl:read-only role too, even without booking:read.
+      { label: 'Booking & Job', href: '/export/bookings', icon: FaClipboardList, permissions: ['booking:read', 'bl:read'] },
       { label: 'Preview', href: '/export/preview', icon: FaTable, permission: 'booking:export' },
     ],
   },
@@ -75,7 +76,11 @@ export default function Sidebar({ open = false, onClose }) {
   const pathname = usePathname()
   const { permissions } = useAuth()
 
-  const canSee = (entry) => !entry.permission || permissions.includes(entry.permission)
+  // Most entries gate on a single `permission`; a few (Booking & Job, which
+  // also hosts B&L) gate on `permissions` — visible if the user holds ANY
+  // one of them.
+  const canSee = (entry) =>
+    entry.permissions ? entry.permissions.some((p) => permissions.includes(p)) : !entry.permission || permissions.includes(entry.permission)
 
   const visibleNav = NAV
     .map((entry) =>

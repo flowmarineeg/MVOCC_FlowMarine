@@ -64,7 +64,11 @@ const inputCls = 'w-full border bg-card px-3.5 py-2.5 text-sm focus:outline-none
 const sectionCls = 'space-y-5 border border-ink/25 bg-card p-5 sm:p-6'
 const sectionTitleCls = 'font-display text-base font-bold uppercase tracking-wide text-ink'
 
-export default function BLForm({ booking, canUpdate = true, submitting = false, onSubmit }) {
+// Step 4 (Final Shipping Declaration) gets Job Context + Customs Certificate;
+// everything else belongs to Step 5 (BL & Loading List) — see
+// docs/BOOKING_JOB_MERGE_DATA_REPORT.md. Job Context (a read-only recap, not
+// an input) is shown on both, since it's useful framing for either step.
+export default function BLForm({ booking, activeStep, canUpdate = true, submitting = false, onSubmit }) {
   const [form, setForm] = useState(() => buildInitialForm(booking))
   const [newLogDate, setNewLogDate] = useState('')
   const [newLogNote, setNewLogNote] = useState('')
@@ -132,11 +136,17 @@ export default function BLForm({ booking, canUpdate = true, submitting = false, 
 
   const consigneeDisplay = form.consigneeToOrder ? 'To Order' : [booking.consignee?.name, booking.consignee?.address].filter(Boolean).join(' — ') || '-'
 
+  // undefined activeStep -> every section always shown (kept for parity with
+  // BookingForm; BLForm today is only ever used from the merged page, so
+  // activeStep is always provided, but this keeps the component self-safe).
+  const visible = (steps) => activeStep === undefined || steps.includes(activeStep)
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <fieldset disabled={!canUpdate} className="space-y-6">
-        {/* Context recap — read-only, pulled from the booking */}
-        <div className={sectionCls}>
+        {/* Context recap — read-only, pulled from the booking. Shown on both
+            Step 4 (Final S/D) and Step 5 (BL & Loading List). */}
+        <div className={`${sectionCls} ${visible([4, 5]) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Job Context</h2>
           <div className="grid grid-cols-1 gap-x-6 gap-y-3 border border-ink/20 bg-paper/60 p-4 text-sm sm:grid-cols-3">
             <div>
@@ -166,8 +176,8 @@ export default function BLForm({ booking, canUpdate = true, submitting = false, 
           </div>
         </div>
 
-        {/* Customs Certificate */}
-        <div className={sectionCls}>
+        {/* Customs Certificate — Step 4 (Final Shipping Declaration) */}
+        <div className={`${sectionCls} ${visible([4]) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Customs Certificate</h2>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             <div>
@@ -199,8 +209,8 @@ export default function BLForm({ booking, canUpdate = true, submitting = false, 
           </div>
         </div>
 
-        {/* BL Parties & Draft BL */}
-        <div className={sectionCls}>
+        {/* BL Parties & Draft BL — Step 5 (BL & Loading List) */}
+        <div className={`${sectionCls} ${visible([5]) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>BL Parties &amp; Draft BL</h2>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
@@ -249,8 +259,8 @@ export default function BLForm({ booking, canUpdate = true, submitting = false, 
           </div>
         </div>
 
-        {/* BL Release */}
-        <div className={sectionCls}>
+        {/* BL Release — Step 5 */}
+        <div className={`${sectionCls} ${visible([5]) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>BL Release</h2>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             <Select label="B/L Type" options={BL_TYPE_OPTIONS} value={form.blType} onChange={set('blType')} />
@@ -276,12 +286,12 @@ export default function BLForm({ booking, canUpdate = true, submitting = false, 
           </div>
         </div>
 
-        {/* Sea/Customs Closure */}
-        <div className={sectionCls}>
+        {/* Sea/Customs Closure — Step 5 */}
+        <div className={`${sectionCls} ${visible([5]) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Sea/Customs Closure</h2>
           {!closureUnlocked ? (
             <p className="font-mono text-xs text-signal">
-              This checklist unlocks once the Actual Time of Departure (ATD) is set on the Booking & Job edit page.
+              This checklist unlocks once the Actual Time of Departure (ATD) is set in Step 2 (Booking), above.
             </p>
           ) : (
             <p className="font-mono text-xs text-muted">Actual departure recorded — checklist is unlocked.</p>
@@ -328,8 +338,8 @@ export default function BLForm({ booking, canUpdate = true, submitting = false, 
           </fieldset>
         </div>
 
-        {/* Final Follow-up & Closing */}
-        <div className={sectionCls}>
+        {/* Final Follow-up & Closing — Step 5 */}
+        <div className={`${sectionCls} ${visible([5]) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Final Follow-up &amp; Closing</h2>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
             <div>
@@ -346,7 +356,7 @@ export default function BLForm({ booking, canUpdate = true, submitting = false, 
             </div>
           </div>
           <p className="font-mono text-xs text-muted">
-            Job closing is tracked via Job Status on the Booking & Job edit page (Completed / Closed - Invoiced) — not a separate field here.
+            Job closing is tracked via Job Status in Step 2 (Booking), above (Completed / Closed - Invoiced) — not a separate field here.
           </p>
 
           <div>
@@ -374,7 +384,7 @@ export default function BLForm({ booking, canUpdate = true, submitting = false, 
       {canUpdate && (
         <div className="flex justify-end border-t border-line pt-5">
           <button type="submit" disabled={submitting} className="bg-rust px-6 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark disabled:opacity-50">
-            {submitting ? 'Saving…' : 'Save changes'}
+            {submitting ? 'Saving…' : 'Save B&L details'}
           </button>
         </div>
       )}

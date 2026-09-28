@@ -3,45 +3,31 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { motion } from 'framer-motion'
-import { FaArrowLeft, FaEdit, FaFileDownload, FaTrash } from 'react-icons/fa'
+import { FaArrowLeft, FaTrash } from 'react-icons/fa'
 import * as bookingApi from '@/services/exportBooking'
+import * as blApi from '@/services/bl'
+import * as masterDataApi from '@/services/masterData'
+import * as stockApi from '@/services/stock'
 import { PageLoader } from '@/components/ui/Spinner'
+import EmptyState from '@/components/ui/EmptyState'
 import Badge from '@/components/ui/Badge'
 import Plate from '@/components/ui/Plate'
 import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
+import BookingForm from '@/components/export/BookingForm'
+import BLForm from '@/components/export/BLForm'
+import BookingStepBar from '@/components/export/BookingStepBar'
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString() : '—')
-const fmtDateTime = (d) => (d ? new Date(d).toLocaleString() : '—')
-
-function Row({ label, value }) {
+// Small inline notice for a step that mixes Booking-owned and B&L-owned
+// content (Steps 4 & 5) when the viewer only holds one of the two
+// permissions — the OTHER sub-block on that step still renders normally.
+function MissingAccess({ label, permission }) {
   return (
-    <div>
-      <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">{label}</p>
-      <p className="mt-0.5 text-sm text-ink">{value ?? '—'}</p>
+    <div className="border border-dashed border-ink/30 bg-paper/40 p-5 text-sm text-muted">
+      Not authorized to view <span className="font-semibold text-ink">{label}</span> — requires the{' '}
+      <code className="font-mono text-xs text-ink">{permission}</code> permission.
     </div>
-  )
-}
-
-function Section({ title, index, children, delay = 0 }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, delay }}
-      className="border border-ink/25 bg-card"
-    >
-      <div className="border-t-[3px] border-rust" />
-      <div className="p-5">
-        <h3 className="mb-4 flex items-center gap-2 font-display text-base font-bold uppercase tracking-wide text-ink">
-          <span className="font-mono text-xs font-normal tracking-normal text-rust">{index}</span>
-          {title}
-        </h3>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{children}</div>
-      </div>
-    </motion.div>
   )
 }
 
@@ -50,10 +36,29 @@ export default function BookingDetailPage() {
   const router = useRouter()
   const toast = useToast()
   const { permissions } = useAuth()
-  const canUpdate = permissions.includes('booking:update')
+  const canReadBooking = permissions.includes('booking:read')
+  const canUpdateBooking = permissions.includes('booking:update')
+  const canReadBl = permissions.includes('bl:read')
+  const canUpdateBl = permissions.includes('bl:update')
   const canViewQuotations = permissions.includes('quotation:read')
-  const [booking, setBooking] = useState(null)
-  const [loading, setLoading] = useState(true)
+
+  const [bookingData, setBookingData] = useState(null)
+  const [blData, setBlData] = useState(null)
+  const [ports, setPorts] = useState([])
+  const [carriers, setCarriers] = useState([])
+  const [nvoccs, setNvoccs] = useState([])
+  const [depots, setDepots] = useState([])
+  const [containerTypes, setContainerTypes] = useState([])
+  const [stockMap, setStockMap] = useState({})
+  // Lazy-initialized from the (stable, permission-derived) "has neither
+  // permission" case rather than set inside the effect below — calling
+  // setState synchronously in an effect body for that branch would trigger
+  // an avoidable extra render (react-hooks/set-state-in-effect).
+  const [loading, setLoading] = useState(() => canReadBooking || canReadBl)
+  const [step, setStep] = useState(null)
+
+  const [savingBooking, setSavingBooking] = useState(false)
+  const [savingBl, setSavingBl] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -61,18 +66,84 @@ export default function BookingDetailPage() {
   const [cancelOpen, setCancelOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
 
-  const load = () => {
-    bookingApi
-      .getBookingById(id)
-      .then(setBooking)
-      .catch((err) => toast(err.message, 'error'))
-      .finally(() => setLoading(false))
-  }
+  // Drive BookingForm/BLForm's remount-on-save `key`s from two INDEPENDENT
+  // counters, not from bookingData.updatedAt/blData.updatedAt — Booking and
+  // B&L are the same MongoDB document, so its updatedAt changes on every
+  // save regardless of which form caused it. Keying off the shared
+  // timestamp would remount BOTH forms on every save, discarding whatever
+  // unsaved edits a user had already typed into the OTHER form in the
+  // moment before its own remount landed. Each generation only bumps for
+  // the actions that actually change that side's fields.
+  const [bookingGen, setBookingGen] = useState(0)
+  const [blGen, setBlGen] = useState(0)
+
+  // Refetch both projections after any save/confirm/cancel — a Booking-side
+  // change (e.g. ATD) can affect what B&L's Step 5 closure checklist shows,
+  // and vice versa isn't possible today but keeping both in sync is cheap
+  // (one extra GET) and avoids any staleness.
+  const reload = () =>
+    Promise.all([
+      canReadBooking ? bookingApi.getBookingById(id) : Promise.resolve(null),
+      canReadBl ? blApi.getBlById(id) : Promise.resolve(null),
+    ]).then(([b, bl]) => {
+      setBookingData(b)
+      setBlData(bl)
+      return { b, bl }
+    })
 
   useEffect(() => {
-    load()
+    if (!canReadBooking && !canReadBl) return // loading already starts false in this case
+    Promise.all([
+      reload(),
+      canReadBooking ? masterDataApi.getPorts() : Promise.resolve([]),
+      canReadBooking ? masterDataApi.getCarriers() : Promise.resolve([]),
+      canReadBooking ? masterDataApi.getNvoccs() : Promise.resolve([]),
+      canReadBooking ? masterDataApi.getDepots() : Promise.resolve([]),
+      canReadBooking ? masterDataApi.getContainerTypes() : Promise.resolve([]),
+      canReadBooking ? stockApi.getStockMapByType() : Promise.resolve({}),
+    ])
+      .then(([, portsRes, carriersRes, nvoccsRes, depotsRes, typesRes, map]) => {
+        setPorts(portsRes)
+        setCarriers(carriersRes)
+        setNvoccs(nvoccsRes)
+        setDepots(depotsRes)
+        setContainerTypes(typesRes)
+        setStockMap(map)
+        setStep((s) => s ?? (canReadBooking ? 1 : 4))
+      })
+      .catch((err) => toast(err.message, 'error'))
+      .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
+
+  const handleSaveBooking = async (data) => {
+    setSavingBooking(true)
+    try {
+      const res = await bookingApi.updateBooking(id, data)
+      if (res.warnings) toast(res.warnings.message, 'error')
+      toast('Booking details saved', 'success')
+      await reload()
+      setBookingGen((g) => g + 1)
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setSavingBooking(false)
+    }
+  }
+
+  const handleSaveBl = async (data) => {
+    setSavingBl(true)
+    try {
+      await blApi.updateBl(id, data)
+      toast('B&L data saved', 'success')
+      await reload()
+      setBlGen((g) => g + 1)
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setSavingBl(false)
+    }
+  }
 
   const handleConfirm = async () => {
     setConfirming(true)
@@ -80,7 +151,8 @@ export default function BookingDetailPage() {
       await bookingApi.confirmBooking(id)
       toast('Booking confirmed', 'success')
       setConfirmOpen(false)
-      load()
+      await reload()
+      setBookingGen((g) => g + 1)
     } catch (err) {
       toast(err.message, 'error')
     } finally {
@@ -94,7 +166,8 @@ export default function BookingDetailPage() {
       await bookingApi.cancelBooking(id)
       toast('Booking cancelled', 'success')
       setCancelOpen(false)
-      load()
+      await reload()
+      setBookingGen((g) => g + 1)
     } catch (err) {
       toast(err.message, 'error')
     } finally {
@@ -114,8 +187,31 @@ export default function BookingDetailPage() {
     }
   }
 
+  if (!canReadBooking && !canReadBl) {
+    return (
+      <div className="p-4 sm:p-6">
+        <EmptyState title="Not authorized" message="You don't have permission to view this job." />
+      </div>
+    )
+  }
   if (loading) return <div className="p-6"><PageLoader /></div>
-  if (!booking) return null
+  if (!bookingData && !blData) return null
+
+  // Header display falls back to the B&L-scoped context fields (jobNo,
+  // clientName, jobStatus are all part of BL_CONTEXT_FIELDS) when the viewer
+  // has no booking:read, so the header always populates for either role.
+  const header = bookingData || blData
+  const depotMissingForConfirm = bookingData && !bookingData.depot
+
+  // Purely cosmetic per-step "completed" signal (see BookingStepBar) — never
+  // gates navigation.
+  const completed = {
+    1: !!bookingData?.shippingDeclaration?.fileName,
+    2: bookingData?.bookingConfirmationStatus === 'Issued',
+    3: bookingData?.status === 'confirmed',
+    4: !!blData?.certificateReceivedDate,
+    5: !!blData?.dateOfIssue,
+  }
 
   return (
     <div className="space-y-5 p-4 sm:p-6">
@@ -125,223 +221,129 @@ export default function BookingDetailPage() {
             <FaArrowLeft className="text-xs" /> Back to bookings
           </Link>
           <div className="flex items-center gap-3">
-            <Plate className="text-sm">{booking.jobNo}</Plate>
-            <Badge value={booking.jobStatus} />
+            <Plate className="text-sm">{header.jobNo}</Plate>
+            <Badge value={header.jobStatus} />
           </div>
-          <p className="mt-1.5 text-sm text-muted">{booking.clientName}</p>
+          <p className="mt-1.5 text-sm text-muted">{header.clientName}</p>
         </div>
-        <div className="flex items-center gap-2">
-          {canUpdate && booking.status !== 'cancelled' && (
-            <Link
-              href={`/export/bookings/${id}/edit`}
-              className="flex items-center gap-2 bg-rust px-4 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark"
-            >
-              <FaEdit /> Edit Booking
-            </Link>
-          )}
-          {canUpdate && booking.status === 'pending' && (
-            <button
-              onClick={() => setConfirmOpen(true)}
-              className="bg-stamp px-4 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-stamp/90"
-            >
-              Confirm
-            </button>
-          )}
-          {canUpdate && booking.status !== 'cancelled' && (
-            <button
-              onClick={() => setCancelOpen(true)}
-              className="border border-brick/40 px-4 py-2.5 text-sm font-medium text-brick transition-colors hover:bg-brick/5"
-            >
-              Cancel
-            </button>
-          )}
-          {canUpdate && booking.status !== 'confirmed' && (
-            <button
-              onClick={() => setDeleteOpen(true)}
-              title="Delete booking"
-              className="flex h-10 w-10 items-center justify-center border border-brick/40 text-brick transition-colors hover:bg-brick/5"
-            >
-              <FaTrash className="text-sm" />
-            </button>
-          )}
-        </div>
+        {bookingData && canUpdateBooking && (
+          <div className="flex items-center gap-2">
+            {bookingData.status === 'pending' && (
+              <button
+                onClick={() => setConfirmOpen(true)}
+                disabled={depotMissingForConfirm}
+                title={depotMissingForConfirm ? 'Select a depot in Step 3 (Depot / Container) first, then save, before confirming' : undefined}
+                className="bg-stamp px-4 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-stamp/90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Confirm
+              </button>
+            )}
+            {bookingData.status !== 'cancelled' && (
+              <button
+                onClick={() => setCancelOpen(true)}
+                className="border border-brick/40 px-4 py-2.5 text-sm font-medium text-brick transition-colors hover:bg-brick/5"
+              >
+                Cancel
+              </button>
+            )}
+            {bookingData.status !== 'confirmed' && (
+              <button
+                onClick={() => setDeleteOpen(true)}
+                title="Delete booking"
+                className="flex h-10 w-10 items-center justify-center border border-brick/40 text-brick transition-colors hover:bg-brick/5"
+              >
+                <FaTrash className="text-sm" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      <Section title="Header & Job Info" index="1">
-        <Row label="Job No" value={booking.jobNo} />
-        <Row
-          label="Quotation Ref"
-          value={
-            booking.quotation ? (
-              canViewQuotations ? (
-                <Link href={`/export/quotations/${booking.quotation._id}`} className="inline-flex items-center gap-1 text-rust transition-colors hover:text-rust-dark">
-                  {booking.quotation.quotationNo}
-                </Link>
-              ) : (
-                booking.quotation.quotationNo
-              )
-            ) : undefined
-          }
-        />
-        <Row label="Job Opened By" value={booking.jobOpenedBy?.name} />
-        <Row label="Job Opened Date" value={fmtDateTime(booking.createdAt)} />
-        <Row label="Client Name" value={booking.clientName} />
-        <Row label="Client Phone" value={booking.clientPhone} />
-        <Row label="Client Email" value={booking.clientEmail} />
-        <Row label="UCR Number" value={booking.ucrNumber} />
-        <Row label="Export Tax Number" value={booking.exportTaxNumber} />
-        <Row label="Import Tax Number" value={booking.importTaxNumber} />
-        <Row label="Import Country" value={booking.importCountry} />
-        <Row label="No. of Packages" value={booking.packagesCount} />
-      </Section>
+      {bookingData?.quotation && (
+        <p className="-mt-3 font-mono text-xs text-muted">
+          From quotation:{' '}
+          {canViewQuotations ? (
+            <Link href={`/export/quotations/${bookingData.quotation._id}`} className="text-rust transition-colors hover:text-rust-dark">
+              {bookingData.quotation.quotationNo}
+            </Link>
+          ) : (
+            bookingData.quotation.quotationNo
+          )}
+        </p>
+      )}
 
-      <Section title="Shipment & Cargo" index="2" delay={0.03}>
-        <Row label="POL" value={booking.pol ? `${booking.pol.code} — ${booking.pol.name}` : '—'} />
-        <Row label="POD" value={booking.pod ? `${booking.pod.code} — ${booking.pod.name}` : '—'} />
-        <Row label="Commodity" value={booking.commodity} />
-        <Row label="VGM (kg)" value={booking.vgm} />
-        <Row label="Gross Weight (kg)" value={booking.grossWeight} />
-        <Row label="CBM" value={booking.cbm} />
-        <Row label="HS Code" value={booking.hsCode} />
-        <Row label="Package Type" value={booking.packageType} />
-        <Row label="Dangerous Goods" value={booking.isDangerous ? <span className="font-semibold text-brick">Yes</span> : 'No'} />
-        {booking.isDangerous && <Row label="Dangerous Goods No." value={booking.dangerousNumber} />}
-        <Row
-          label="Shipping Declaration"
-          value={
-            booking.shippingDeclaration?.filePath ? (
-              <a
-                href={`${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api')}/export/bookings/${booking._id}/attachment`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-rust transition-colors hover:text-rust-dark"
-              >
-                <FaFileDownload className="text-xs" /> {booking.shippingDeclaration.fileName}
-              </a>
-            ) : (
-              '—'
-            )
-          }
-        />
-      </Section>
+      <BookingStepBar active={step} onChange={setStep} completed={completed} />
 
-      <Section title="Carrier Booking Confirmation" index="3" delay={0.06}>
-        <Row label="Carrier" value={booking.carrier ? `${booking.carrier.name} (${booking.carrier.code})` : '—'} />
-        <Row label="Vessel Name" value={booking.vesselName} />
-        <Row label="Voyage No" value={booking.voyageNo} />
-        <Row label="B/L No" value={booking.blNo} />
-        <Row label="ETD" value={fmtDate(booking.etd)} />
-        <Row label="ATD" value={fmtDate(booking.atd)} />
-        <Row label="ETA" value={fmtDate(booking.eta)} />
-        <Row label="ATA" value={fmtDate(booking.ata)} />
-        <Row label="Space Confirmation" value={<Badge value={booking.spaceConfirmationStatus} />} />
-        <Row label="Carrier Booking Ref" value={booking.carrierBookingRef} />
-        <Row label="VO Contact Person" value={booking.voContactPerson} />
-        <Row label="SI Cut-off" value={fmtDateTime(booking.siCutoff)} />
-        <Row label="VGM Cut-off" value={fmtDateTime(booking.vgmCutoff)} />
-        <Row label="CY Gate-In Cut-off" value={fmtDateTime(booking.cyGateInCutoff)} />
-        <Row label="Booking Confirmation" value={<Badge value={booking.bookingConfirmationStatus} />} />
-        <Row
-          label="Booking Confirmation File"
-          value={
-            booking.bookingConfirmationFile?.filePath ? (
-              <a
-                href={`${(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api')}/export/bookings/${booking._id}/confirmation-file`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-rust transition-colors hover:text-rust-dark"
-              >
-                <FaFileDownload className="text-xs" /> {booking.bookingConfirmationFile.fileName}
-              </a>
-            ) : (
-              '—'
-            )
-          }
-        />
-      </Section>
+      <div className="space-y-6">
+        {bookingData ? (
+          <BookingForm
+            key={`booking-${bookingGen}`}
+            booking={bookingData}
+            activeStep={step}
+            ports={ports}
+            carriers={carriers}
+            nvoccs={nvoccs}
+            depots={depots}
+            containerTypes={containerTypes}
+            stockMap={stockMap}
+            submitting={savingBooking}
+            canUpdate={canUpdateBooking}
+            onSubmit={handleSaveBooking}
+          />
+        ) : [1, 2, 3].includes(step) ? (
+          <EmptyState title="Not authorized" message="You don't have permission to view Booking data." />
+        ) : (
+          <MissingAccess label={step === 4 ? 'Customs (Nafeza)' : 'Status & Notes'} permission="booking:read" />
+        )}
 
-      <Section title="Customs (Nafeza)" index="4" delay={0.09}>
-        <Row label="Submitted on Nafeza" value={booking.customsSubmitted ? 'Yes' : 'No'} />
-        <Row label="Nafeza Reference No" value={booking.customsReferenceNo} />
-        <Row label="Submitted At" value={fmtDateTime(booking.customsSubmittedAt)} />
-      </Section>
+        {(step === 4 || step === 5) &&
+          (blData ? (
+            <BLForm
+              key={`bl-${blGen}`}
+              booking={blData}
+              activeStep={step}
+              canUpdate={canUpdateBl}
+              submitting={savingBl}
+              onSubmit={handleSaveBl}
+            />
+          ) : (
+            <MissingAccess label={step === 4 ? 'Customs Certificate' : 'BL & Loading List'} permission="bl:read" />
+          ))}
+      </div>
 
-      <Section title="Containers" index="5" delay={0.12}>
-        <Row label="Depot" value={booking.depot?.name} />
-        <Row label="Containers" value={booking.containers?.map((c) => `${c.containerType?.code || '?'} x${c.quantity}`).join(', ')} />
-        <Row label="Gate In" value={fmtDate(booking.gateInDate)} />
-        <Row label="Gate Out" value={fmtDate(booking.gateOutDate)} />
-        <Row label="Container Location" value={booking.containerLocation} />
-      </Section>
-
-      <Section title="Commercial" index="6" delay={0.15}>
-        <Row label="NVOCC" value={booking.nvocc ? `${booking.nvocc.name} (${booking.nvocc.code})` : '—'} />
-        <Row label="Currency" value={booking.currency} />
-        <Row label="Price" value={booking.price} />
-        <Row label="Cost" value={booking.cost} />
-        <Row label="Free Time" value={fmtDate(booking.freeTime)} />
-      </Section>
-
-      <Section title="Parties" index="7" delay={0.18}>
-        <Row label="Shipper Name" value={booking.shipper?.name} />
-        <Row label="Shipper Email" value={booking.shipper?.email} />
-        <Row label="Shipper Phone 1" value={booking.shipper?.phone1} />
-        <Row label="Shipper Phone 2" value={booking.shipper?.phone2} />
-        <Row label="Shipper Address" value={booking.shipper?.address} />
-        <Row label="Shipper Tax No." value={booking.shipper?.taxNumber} />
-        <Row label="Consignee Name" value={booking.consignee?.name} />
-        <Row label="Consignee Email" value={booking.consignee?.email} />
-        <Row label="Consignee Phone 1" value={booking.consignee?.phone1} />
-        <Row label="Consignee Phone 2" value={booking.consignee?.phone2} />
-        <Row label="Consignee Address" value={booking.consignee?.address} />
-        <Row label="Consignee Tax No." value={booking.consignee?.taxNumber} />
-      </Section>
-
-      <Section title="Agents" index="8" delay={0.21}>
-        <Row label="POL Agent Name" value={booking.polAgent?.name} />
-        <Row label="POL Agent Email" value={booking.polAgent?.email} />
-        <Row label="POL Agent Phone" value={booking.polAgent?.phone} />
-        <Row label="POL Agent Address" value={booking.polAgent?.address} />
-        <Row label="POD Agent Name" value={booking.podAgent?.name} />
-        <Row label="POD Agent Email" value={booking.podAgent?.email} />
-        <Row label="POD Agent Phone" value={booking.podAgent?.phone} />
-        <Row label="POD Agent Address" value={booking.podAgent?.address} />
-      </Section>
-
-      <Section title="Status & Notes" index="9" delay={0.24}>
-        <Row label="Manifest Status" value={<Badge value={booking.manifestStatus} />} />
-        <Row label="Notes" value={booking.notes} />
-      </Section>
-
-      <Modal
-        isOpen={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        onConfirm={handleConfirm}
-        title="Confirm this booking?"
-        message="This will lock the booking as confirmed and decrement container stock."
-        confirmLabel="Confirm Booking"
-        loading={confirming}
-      />
-      <Modal
-        isOpen={cancelOpen}
-        onClose={() => setCancelOpen(false)}
-        onConfirm={handleCancel}
-        title="Cancel this booking?"
-        message="This will mark the booking as cancelled. If it was confirmed, stock will be restored."
-        confirmLabel="Cancel Booking"
-        danger
-        loading={cancelling}
-      />
-      <Modal
-        isOpen={deleteOpen}
-        onClose={() => setDeleteOpen(false)}
-        onConfirm={handleDelete}
-        title="Delete this booking?"
-        message={`This will permanently delete booking ${booking.jobNo}. This cannot be undone.`}
-        confirmLabel="Delete Booking"
-        danger
-        loading={deleting}
-      />
+      {bookingData && (
+        <>
+          <Modal
+            isOpen={confirmOpen}
+            onClose={() => setConfirmOpen(false)}
+            onConfirm={handleConfirm}
+            title="Confirm this booking?"
+            message="This will lock the booking as confirmed and decrement container stock."
+            confirmLabel="Confirm Booking"
+            loading={confirming}
+          />
+          <Modal
+            isOpen={cancelOpen}
+            onClose={() => setCancelOpen(false)}
+            onConfirm={handleCancel}
+            title="Cancel this booking?"
+            message="This will mark the booking as cancelled. If it was confirmed, stock will be restored."
+            confirmLabel="Cancel Booking"
+            danger
+            loading={cancelling}
+          />
+          <Modal
+            isOpen={deleteOpen}
+            onClose={() => setDeleteOpen(false)}
+            onConfirm={handleDelete}
+            title="Delete this booking?"
+            message={`This will permanently delete booking ${bookingData.jobNo}. This cannot be undone.`}
+            confirmLabel="Delete Booking"
+            danger
+            loading={deleting}
+          />
+        </>
+      )}
     </div>
   )
 }

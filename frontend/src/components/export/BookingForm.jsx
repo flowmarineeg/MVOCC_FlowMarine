@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import Select from '@/components/ui/Select'
-import Modal from '@/components/ui/Modal'
 import ContainerSelector from './ContainerSelector'
 import * as stockApi from '@/services/stock'
 import { COUNTRY_OPTIONS } from '@/constants/countries'
@@ -271,10 +270,30 @@ function AllocatedContainersPanel({ bookingId, canUpdate }) {
   )
 }
 
+// Which of the 5 merged-page steps each section belongs to — see
+// docs/BOOKING_JOB_MERGE_DATA_REPORT.md. `activeStep` is undefined on the
+// plain create page (/export/bookings/new), where every section is always
+// shown, unchanged from before this merge; on the unified details page it's
+// 1-5 and only the matching section(s) are visible (CSS-hidden, not
+// unmounted, so nothing in `form` state is ever lost by switching steps).
+const STEP = {
+  jobIdentity: 2, // Job No/Status, Client — Header & Job Info, part A
+  declarationIdentity: 1, // UCR/tax numbers/import country/packages — Header & Job Info, part B
+  shipmentCargo: 1,
+  parties: 1,
+  carrierBooking: 2,
+  commercial: 2,
+  agents: 2,
+  customsNafeza: 4,
+  containers: 3,
+  statusNotes: 5,
+}
+
 export default function BookingForm({
   booking = null,
   prefill = null,
   quotationId = null,
+  activeStep,
   ports = [],
   containerTypes = [],
   carriers = [],
@@ -282,24 +301,21 @@ export default function BookingForm({
   depots = [],
   stockMap = {},
   submitting = false,
-  confirming = false,
-  cancelling = false,
   canUpdate = true,
   onSubmit,
-  onConfirm,
-  onCancel,
 }) {
   const isEdit = !!booking
   const isCancelled = isEdit && booking.status === 'cancelled'
   const isLocked = isCancelled || !canUpdate
   const [form, setForm] = useState(() => buildInitialForm(booking, prefill))
   const [errors, setErrors] = useState({})
-  const [confirmOpen, setConfirmOpen] = useState(false)
-  const [cancelOpen, setCancelOpen] = useState(false)
 
   const set = (field) => (v) => setForm((f) => ({ ...f, [field]: v }))
   const setInput = (field) => (e) => set(field)(e.target.value)
   const setNested = (section, key) => (e) => setForm((f) => ({ ...f, [section]: { ...f[section], [key]: e.target.value } }))
+
+  // undefined activeStep (the create page) -> every section always shown.
+  const visible = (step) => activeStep === undefined || activeStep === step
 
   const portOptions = ports.map((p) => ({ value: p._id, label: `${p.code} — ${p.name}` }))
   const carrierOptions = carriers.map((c) => ({ value: c._id, label: `${c.code} — ${c.name}` }))
@@ -380,491 +396,444 @@ export default function BookingForm({
   }
 
   const consigneePreview = [form.consignee.name, form.consignee.phone1, form.consignee.email].filter(Boolean).join(' · ')
-  const depotMissingForConfirm = isEdit && !booking.depot
 
   return (
-    <>
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <fieldset disabled={isLocked} className="space-y-6">
-          {/* 1. Header & Job Info */}
-          <div className={sectionCls}>
-            <h2 className={sectionTitleCls}>1. Header &amp; Job Info</h2>
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <fieldset disabled={isLocked} className="space-y-6">
+        {/* Header & Job Info — part A: job/client identity (Step 2 — Booking) */}
+        <div className={`${sectionCls} ${visible(STEP.jobIdentity) ? '' : 'hidden'}`}>
+          <h2 className={sectionTitleCls}>Header &amp; Job Info</h2>
 
-            {isEdit && (
-              <div className="grid grid-cols-1 gap-x-6 gap-y-3 border border-ink/20 bg-paper/60 p-4 text-sm sm:grid-cols-3">
-                <div>
-                  <span className={labelCls}>Job No</span>
-                  <p className="font-mono text-ink">{booking.jobNo}</p>
-                </div>
-                <div>
-                  <span className={labelCls}>Quotation Ref</span>
-                  <p className="font-mono text-ink">{booking.quotation?.quotationNo || '-'}</p>
-                </div>
-                <div>
-                  <span className={labelCls}>Job Opened By / Date</span>
-                  <p className="text-ink">{booking.jobOpenedBy?.name || '-'} · {formatDateTime(booking.createdAt)}</p>
-                </div>
-              </div>
-            )}
-            {!isEdit && (
-              <p className="font-mono text-xs text-muted">Job No is auto-generated on save.</p>
-            )}
-
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <Select label="Job Status" options={JOB_STATUS_OPTIONS} value={form.jobStatus} onChange={set('jobStatus')} />
-            </div>
-
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+          {isEdit && (
+            <div className="grid grid-cols-1 gap-x-6 gap-y-3 border border-ink/20 bg-paper/60 p-4 text-sm sm:grid-cols-3">
               <div>
-                <label className={labelCls}>Client Name <span className="text-rust">*</span></label>
-                <input value={form.clientName} onChange={setInput('clientName')} className={`${inputCls} ${errors.clientName ? 'border-brick' : 'border-ink/30'}`} />
-                {errors.clientName && <p className="mt-1 font-mono text-xs text-brick">{errors.clientName}</p>}
+                <span className={labelCls}>Job No</span>
+                <p className="font-mono text-ink">{booking.jobNo}</p>
               </div>
               <div>
-                <label className={labelCls}>Client Phone <span className="text-rust">*</span></label>
-                <input value={form.clientPhone} onChange={setInput('clientPhone')} className={`${inputCls} ${errors.clientPhone ? 'border-brick' : 'border-ink/30'}`} />
-                {errors.clientPhone && <p className="mt-1 font-mono text-xs text-brick">{errors.clientPhone}</p>}
+                <span className={labelCls}>Quotation Ref</span>
+                <p className="font-mono text-ink">{booking.quotation?.quotationNo || '-'}</p>
               </div>
               <div>
-                <label className={labelCls}>Client Email <span className="text-rust">*</span></label>
-                <input type="email" value={form.clientEmail} onChange={setInput('clientEmail')} className={`${inputCls} ${errors.clientEmail ? 'border-brick' : 'border-ink/30'}`} />
-                {errors.clientEmail && <p className="mt-1 font-mono text-xs text-brick">{errors.clientEmail}</p>}
+                <span className={labelCls}>Job Opened By / Date</span>
+                <p className="text-ink">{booking.jobOpenedBy?.name || '-'} · {formatDateTime(booking.createdAt)}</p>
               </div>
             </div>
+          )}
+          {!isEdit && (
+            <p className="font-mono text-xs text-muted">Job No is auto-generated on save.</p>
+          )}
 
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
-              <div>
-                <label className={labelCls}>UCR Number</label>
-                <input value={form.ucrNumber} onChange={setInput('ucrNumber')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>Exporter Tax Number</label>
-                <input value={form.exportTaxNumber} onChange={setInput('exportTaxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>Importer Tax Number</label>
-                <input value={form.importTaxNumber} onChange={setInput('importTaxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <Select label="Importer Country" searchable placeholder="Select country" options={COUNTRY_OPTIONS} value={form.importCountry} onChange={set('importCountry')} />
-              <div>
-                <label className={labelCls}>No. of Packages <span className="normal-case text-muted/70">(preliminary)</span></label>
-                <input type="number" min="0" value={form.packagesCount} onChange={setInput('packagesCount')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-            </div>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <Select label="Job Status" options={JOB_STATUS_OPTIONS} value={form.jobStatus} onChange={set('jobStatus')} />
+          </div>
 
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
             <div>
-              <label className={labelCls}>Consignee Contact <span className="normal-case text-muted/70">(full details editable in Parties, below)</span></label>
-              <p className="border border-ink/20 bg-paper/60 px-3.5 py-2.5 text-sm text-ink">{consigneePreview || '-'}</p>
+              <label className={labelCls}>Client Name <span className="text-rust">*</span></label>
+              <input value={form.clientName} onChange={setInput('clientName')} className={`${inputCls} ${errors.clientName ? 'border-brick' : 'border-ink/30'}`} />
+              {errors.clientName && <p className="mt-1 font-mono text-xs text-brick">{errors.clientName}</p>}
+            </div>
+            <div>
+              <label className={labelCls}>Client Phone <span className="text-rust">*</span></label>
+              <input value={form.clientPhone} onChange={setInput('clientPhone')} className={`${inputCls} ${errors.clientPhone ? 'border-brick' : 'border-ink/30'}`} />
+              {errors.clientPhone && <p className="mt-1 font-mono text-xs text-brick">{errors.clientPhone}</p>}
+            </div>
+            <div>
+              <label className={labelCls}>Client Email <span className="text-rust">*</span></label>
+              <input type="email" value={form.clientEmail} onChange={setInput('clientEmail')} className={`${inputCls} ${errors.clientEmail ? 'border-brick' : 'border-ink/30'}`} />
+              {errors.clientEmail && <p className="mt-1 font-mono text-xs text-brick">{errors.clientEmail}</p>}
+            </div>
+          </div>
+        </div>
+
+        {/* Shipment & Cargo + Header & Job Info part B (declaration-identity fields) — Step 1 */}
+        <div className={`${sectionCls} ${visible(STEP.shipmentCargo) ? '' : 'hidden'}`}>
+          <h2 className={sectionTitleCls}>Shipment &amp; Cargo</h2>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <Select label="Port of Loading (POL)" required searchable placeholder="Select POL" options={portOptions} value={form.pol} onChange={set('pol')} error={errors.pol} />
+            <Select label="Port of Discharge (POD)" required searchable placeholder="Select POD" options={portOptions} value={form.pod} onChange={set('pod')} error={errors.pod} />
+          </div>
+
+          <div>
+            <label className={labelCls}>Commodity <span className="text-rust">*</span></label>
+            <input value={form.commodity} onChange={setInput('commodity')} className={`${inputCls} ${errors.commodity ? 'border-brick' : 'border-ink/30'}`} placeholder="e.g. Frozen poultry" />
+            {errors.commodity && <p className="mt-1 font-mono text-xs text-brick">{errors.commodity}</p>}
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
+            <div>
+              <label className={labelCls}>UCR Number</label>
+              <input value={form.ucrNumber} onChange={setInput('ucrNumber')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>Exporter Tax Number</label>
+              <input value={form.exportTaxNumber} onChange={setInput('exportTaxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>Importer Tax Number</label>
+              <input value={form.importTaxNumber} onChange={setInput('importTaxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <Select label="Importer Country" searchable placeholder="Select country" options={COUNTRY_OPTIONS} value={form.importCountry} onChange={set('importCountry')} />
+            <div>
+              <label className={labelCls}>No. of Packages <span className="normal-case text-muted/70">(preliminary)</span></label>
+              <input type="number" min="0" value={form.packagesCount} onChange={setInput('packagesCount')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
           </div>
 
-          {/* 2. Shipment & Cargo */}
-          <div className={sectionCls}>
-            <h2 className={sectionTitleCls}>2. Shipment &amp; Cargo</h2>
-
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <Select label="Port of Loading (POL)" required searchable placeholder="Select POL" options={portOptions} value={form.pol} onChange={set('pol')} error={errors.pol} />
-              <Select label="Port of Discharge (POD)" required searchable placeholder="Select POD" options={portOptions} value={form.pod} onChange={set('pod')} error={errors.pod} />
-            </div>
-
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
             <div>
-              <label className={labelCls}>Commodity <span className="text-rust">*</span></label>
-              <input value={form.commodity} onChange={setInput('commodity')} className={`${inputCls} ${errors.commodity ? 'border-brick' : 'border-ink/30'}`} placeholder="e.g. Frozen poultry" />
-              {errors.commodity && <p className="mt-1 font-mono text-xs text-brick">{errors.commodity}</p>}
+              <label className={labelCls}>VGM (kg)</label>
+              <input type="number" min="0" value={form.vgm} onChange={setInput('vgm')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
-
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <label className={labelCls}>VGM (kg)</label>
-                <input type="number" min="0" value={form.vgm} onChange={setInput('vgm')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>Gross Weight (kg)</label>
-                <input type="number" min="0" value={form.grossWeight} onChange={setInput('grossWeight')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>CBM</label>
-                <input type="number" min="0" value={form.cbm} onChange={setInput('cbm')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>HS Code</label>
-                <input value={form.hsCode} onChange={setInput('hsCode')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-            </div>
-
             <div>
-              <label className={labelCls}>Package Type</label>
-              <input value={form.packageType} onChange={setInput('packageType')} className={`${inputCls} border-ink/30 sm:w-64`} placeholder="e.g. Cartons, Pallets" />
+              <label className={labelCls}>Gross Weight (kg)</label>
+              <input type="number" min="0" value={form.grossWeight} onChange={setInput('grossWeight')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
-
             <div>
-              <label className={labelCls}>Dangerous Goods</label>
-              <div className="flex border border-ink/30">
-                <button type="button" onClick={() => set('isDangerous')(false)} className={`flex-1 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${!form.isDangerous ? 'bg-ink text-paper' : 'bg-card text-muted hover:text-ink'}`}>No</button>
-                <button type="button" onClick={() => set('isDangerous')(true)} className={`flex-1 border-l border-ink/30 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${form.isDangerous ? 'bg-brick text-card' : 'bg-card text-muted hover:text-ink'}`}>Yes</button>
-              </div>
+              <label className={labelCls}>CBM</label>
+              <input type="number" min="0" value={form.cbm} onChange={setInput('cbm')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
-            {form.isDangerous && (
-              <div>
-                <label className={labelCls}>Dangerous Goods Number <span className="text-rust">*</span></label>
-                <input value={form.dangerousNumber} onChange={setInput('dangerousNumber')} className={`${inputCls} font-mono sm:w-80 ${errors.dangerousNumber ? 'border-brick' : 'border-ink/30'}`} placeholder="UN Number / IMO Class" />
-                {errors.dangerousNumber && <p className="mt-1 font-mono text-xs text-brick">{errors.dangerousNumber}</p>}
-              </div>
+            <div>
+              <label className={labelCls}>HS Code</label>
+              <input value={form.hsCode} onChange={setInput('hsCode')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+
+          <div>
+            <label className={labelCls}>Package Type</label>
+            <input value={form.packageType} onChange={setInput('packageType')} className={`${inputCls} border-ink/30 sm:w-64`} placeholder="e.g. Cartons, Pallets" />
+          </div>
+
+          <div>
+            <label className={labelCls}>Dangerous Goods</label>
+            <div className="flex border border-ink/30">
+              <button type="button" onClick={() => set('isDangerous')(false)} className={`flex-1 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${!form.isDangerous ? 'bg-ink text-paper' : 'bg-card text-muted hover:text-ink'}`}>No</button>
+              <button type="button" onClick={() => set('isDangerous')(true)} className={`flex-1 border-l border-ink/30 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${form.isDangerous ? 'bg-brick text-card' : 'bg-card text-muted hover:text-ink'}`}>Yes</button>
+            </div>
+          </div>
+          {form.isDangerous && (
+            <div>
+              <label className={labelCls}>Dangerous Goods Number <span className="text-rust">*</span></label>
+              <input value={form.dangerousNumber} onChange={setInput('dangerousNumber')} className={`${inputCls} font-mono sm:w-80 ${errors.dangerousNumber ? 'border-brick' : 'border-ink/30'}`} placeholder="UN Number / IMO Class" />
+              {errors.dangerousNumber && <p className="mt-1 font-mono text-xs text-brick">{errors.dangerousNumber}</p>}
+            </div>
+          )}
+
+          <div>
+            <label className={labelCls}>Shipping Declaration <span className="normal-case text-muted/70">(optional, PDF or image)</span></label>
+            <label className={`flex cursor-pointer items-center justify-between border bg-card px-3.5 py-2.5 text-sm text-muted transition-colors hover:border-ink/55 ${errors.shippingDeclaration ? 'border-brick' : 'border-ink/30'}`}>
+              <span className="truncate">
+                {form.shippingDeclaration ? form.shippingDeclaration.name : isEdit && booking.shippingDeclaration?.fileName ? booking.shippingDeclaration.fileName : 'Choose file (PDF, JPG, PNG)…'}
+              </span>
+              <span className="ml-3 shrink-0 font-mono text-[10px] uppercase tracking-wide text-rust">Browse</span>
+              <input type="file" accept="application/pdf,image/*" className="hidden" onChange={handleFileChange('shippingDeclaration')} />
+            </label>
+            {isEdit && booking.shippingDeclaration?.fileName && !form.shippingDeclaration && (
+              <p className="mt-1 text-xs text-muted">Currently attached — choose a new file to replace it.</p>
             )}
+            {errors.shippingDeclaration && <p className="mt-1 font-mono text-xs text-brick">{errors.shippingDeclaration}</p>}
+          </div>
+        </div>
 
+        {/* Parties — Step 1 (required source info for the shipping declaration) */}
+        <div className={`${sectionCls} ${visible(STEP.parties) ? '' : 'hidden'}`}>
+          <h2 className={sectionTitleCls}>Parties</h2>
+
+          <div>
+            <label className={labelCls}>Consignee Contact <span className="normal-case text-muted/70">(preview — full details below)</span></label>
+            <p className="border border-ink/20 bg-paper/60 px-3.5 py-2.5 text-sm text-ink">{consigneePreview || '-'}</p>
+          </div>
+
+          <p className="font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">Shipper</p>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
-              <label className={labelCls}>Shipping Declaration <span className="normal-case text-muted/70">(optional, PDF or image)</span></label>
-              <label className={`flex cursor-pointer items-center justify-between border bg-card px-3.5 py-2.5 text-sm text-muted transition-colors hover:border-ink/55 ${errors.shippingDeclaration ? 'border-brick' : 'border-ink/30'}`}>
+              <label className={labelCls}>Name</label>
+              <input value={form.shipper.name} onChange={setNested('shipper', 'name')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Email</label>
+              <input type="email" value={form.shipper.email} onChange={setNested('shipper', 'email')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Phone 1</label>
+              <input value={form.shipper.phone1} onChange={setNested('shipper', 'phone1')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Phone 2</label>
+              <input value={form.shipper.phone2} onChange={setNested('shipper', 'phone2')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Address</label>
+              <input value={form.shipper.address} onChange={setNested('shipper', 'address')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Tax Number</label>
+              <input value={form.shipper.taxNumber} onChange={setNested('shipper', 'taxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+
+          <p className="border-t border-line pt-4 font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">Consignee</p>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>Name</label>
+              <input value={form.consignee.name} onChange={setNested('consignee', 'name')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Email</label>
+              <input type="email" value={form.consignee.email} onChange={setNested('consignee', 'email')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Phone 1</label>
+              <input value={form.consignee.phone1} onChange={setNested('consignee', 'phone1')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Phone 2</label>
+              <input value={form.consignee.phone2} onChange={setNested('consignee', 'phone2')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Address</label>
+              <input value={form.consignee.address} onChange={setNested('consignee', 'address')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Tax Number</label>
+              <input value={form.consignee.taxNumber} onChange={setNested('consignee', 'taxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+        </div>
+
+        {/* Carrier Booking Confirmation — Step 2 */}
+        <div className={`${sectionCls} ${visible(STEP.carrierBooking) ? '' : 'hidden'}`}>
+          <h2 className={sectionTitleCls}>Carrier Booking Confirmation</h2>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            <Select label="Carrier" searchable placeholder="Select carrier" options={carrierOptions} value={form.carrier} onChange={set('carrier')} />
+            <div>
+              <label className={labelCls}>Vessel Name</label>
+              <input value={form.vesselName} onChange={setInput('vesselName')} className={`${inputCls} border-ink/30`} placeholder="e.g. MSC OSCAR" />
+            </div>
+            <div>
+              <label className={labelCls}>Voyage No</label>
+              <input value={form.voyageNo} onChange={setInput('voyageNo')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>B/L No</label>
+              <input value={form.blNo} onChange={setInput('blNo')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <label className={labelCls}>ETD</label>
+              <input type="date" value={form.etd} onChange={setInput('etd')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>ATD</label>
+              <input type="date" value={form.atd} onChange={setInput('atd')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>ETA</label>
+              <input type="date" value={form.eta} onChange={setInput('eta')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>ATA</label>
+              <input type="date" value={form.ata} onChange={setInput('ata')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+            <Select label="Space Confirmation Status" options={SPACE_CONFIRMATION_OPTIONS} value={form.spaceConfirmationStatus} onChange={set('spaceConfirmationStatus')} />
+            <div>
+              <label className={labelCls}>Carrier Booking Ref</label>
+              <input value={form.carrierBookingRef} onChange={setInput('carrierBookingRef')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>VO Contact Person</label>
+              <input value={form.voContactPerson} onChange={setInput('voContactPerson')} className={`${inputCls} border-ink/30`} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+            <div>
+              <label className={labelCls}>SI Cut-off</label>
+              <input type="datetime-local" value={form.siCutoff} onChange={setInput('siCutoff')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>VGM Cut-off</label>
+              <input type="datetime-local" value={form.vgmCutoff} onChange={setInput('vgmCutoff')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>CY Gate-In Cut-off</label>
+              <input type="datetime-local" value={form.cyGateInCutoff} onChange={setInput('cyGateInCutoff')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <Select label="Booking Confirmation Status" options={BOOKING_CONFIRMATION_OPTIONS} value={form.bookingConfirmationStatus} onChange={set('bookingConfirmationStatus')} />
+            <div>
+              <label className={labelCls}>Booking Confirmation File <span className="normal-case text-muted/70">(FM-07-NV, optional)</span></label>
+              <label className={`flex cursor-pointer items-center justify-between border bg-card px-3.5 py-2.5 text-sm text-muted transition-colors hover:border-ink/55 ${errors.bookingConfirmationFile ? 'border-brick' : 'border-ink/30'}`}>
                 <span className="truncate">
-                  {form.shippingDeclaration ? form.shippingDeclaration.name : isEdit && booking.shippingDeclaration?.fileName ? booking.shippingDeclaration.fileName : 'Choose file (PDF, JPG, PNG)…'}
+                  {form.bookingConfirmationFile ? form.bookingConfirmationFile.name : isEdit && booking.bookingConfirmationFile?.fileName ? booking.bookingConfirmationFile.fileName : 'Choose file (PDF, JPG, PNG)…'}
                 </span>
                 <span className="ml-3 shrink-0 font-mono text-[10px] uppercase tracking-wide text-rust">Browse</span>
-                <input type="file" accept="application/pdf,image/*" className="hidden" onChange={handleFileChange('shippingDeclaration')} />
+                <input type="file" accept="application/pdf,image/*" className="hidden" onChange={handleFileChange('bookingConfirmationFile')} />
               </label>
-              {isEdit && booking.shippingDeclaration?.fileName && !form.shippingDeclaration && (
-                <p className="mt-1 text-xs text-muted">Currently attached — choose a new file to replace it.</p>
-              )}
-              {errors.shippingDeclaration && <p className="mt-1 font-mono text-xs text-brick">{errors.shippingDeclaration}</p>}
+              {errors.bookingConfirmationFile && <p className="mt-1 font-mono text-xs text-brick">{errors.bookingConfirmationFile}</p>}
             </div>
           </div>
+        </div>
 
-          {/* 3. Carrier Booking Confirmation */}
-          <div className={sectionCls}>
-            <h2 className={sectionTitleCls}>3. Carrier Booking Confirmation</h2>
-
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              <Select label="Carrier" searchable placeholder="Select carrier" options={carrierOptions} value={form.carrier} onChange={set('carrier')} />
-              <div>
-                <label className={labelCls}>Vessel Name</label>
-                <input value={form.vesselName} onChange={setInput('vesselName')} className={`${inputCls} border-ink/30`} placeholder="e.g. MSC OSCAR" />
-              </div>
-              <div>
-                <label className={labelCls}>Voyage No</label>
-                <input value={form.voyageNo} onChange={setInput('voyageNo')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>B/L No</label>
-                <input value={form.blNo} onChange={setInput('blNo')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <label className={labelCls}>ETD</label>
-                <input type="date" value={form.etd} onChange={setInput('etd')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>ATD</label>
-                <input type="date" value={form.atd} onChange={setInput('atd')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>ETA</label>
-                <input type="date" value={form.eta} onChange={setInput('eta')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>ATA</label>
-                <input type="date" value={form.ata} onChange={setInput('ata')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-              <Select label="Space Confirmation Status" options={SPACE_CONFIRMATION_OPTIONS} value={form.spaceConfirmationStatus} onChange={set('spaceConfirmationStatus')} />
-              <div>
-                <label className={labelCls}>Carrier Booking Ref</label>
-                <input value={form.carrierBookingRef} onChange={setInput('carrierBookingRef')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>VO Contact Person</label>
-                <input value={form.voContactPerson} onChange={setInput('voContactPerson')} className={`${inputCls} border-ink/30`} />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-              <div>
-                <label className={labelCls}>SI Cut-off</label>
-                <input type="datetime-local" value={form.siCutoff} onChange={setInput('siCutoff')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>VGM Cut-off</label>
-                <input type="datetime-local" value={form.vgmCutoff} onChange={setInput('vgmCutoff')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>CY Gate-In Cut-off</label>
-                <input type="datetime-local" value={form.cyGateInCutoff} onChange={setInput('cyGateInCutoff')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <Select label="Booking Confirmation Status" options={BOOKING_CONFIRMATION_OPTIONS} value={form.bookingConfirmationStatus} onChange={set('bookingConfirmationStatus')} />
-              <div>
-                <label className={labelCls}>Booking Confirmation File <span className="normal-case text-muted/70">(FM-07-NV, optional)</span></label>
-                <label className={`flex cursor-pointer items-center justify-between border bg-card px-3.5 py-2.5 text-sm text-muted transition-colors hover:border-ink/55 ${errors.bookingConfirmationFile ? 'border-brick' : 'border-ink/30'}`}>
-                  <span className="truncate">
-                    {form.bookingConfirmationFile ? form.bookingConfirmationFile.name : isEdit && booking.bookingConfirmationFile?.fileName ? booking.bookingConfirmationFile.fileName : 'Choose file (PDF, JPG, PNG)…'}
-                  </span>
-                  <span className="ml-3 shrink-0 font-mono text-[10px] uppercase tracking-wide text-rust">Browse</span>
-                  <input type="file" accept="application/pdf,image/*" className="hidden" onChange={handleFileChange('bookingConfirmationFile')} />
-                </label>
-                {errors.bookingConfirmationFile && <p className="mt-1 font-mono text-xs text-brick">{errors.bookingConfirmationFile}</p>}
-              </div>
-            </div>
-          </div>
-
-          {/* 4. Customs (Nafeza) */}
-          <div className={sectionCls}>
-            <h2 className={sectionTitleCls}>4. Customs (Nafeza)</h2>
+        {/* Commercial — Step 2 */}
+        <div className={`${sectionCls} ${visible(STEP.commercial) ? '' : 'hidden'}`}>
+          <h2 className={sectionTitleCls}>Commercial</h2>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
+            <Select label="NVOCC" searchable placeholder="Select NVOCC" options={nvoccOptions} value={form.nvocc} onChange={set('nvocc')} />
+            <Select label="Currency" searchable options={CURRENCY_OPTIONS} value={form.currency} onChange={set('currency')} />
             <div>
-              <label className="flex items-center gap-2 text-sm text-ink">
-                <input type="checkbox" checked={form.customsSubmitted} onChange={(e) => set('customsSubmitted')(e.target.checked)} className="h-4 w-4" />
-                Shipping permit submitted on Nafeza
-              </label>
+              <label className={labelCls}>Price</label>
+              <input type="number" min="0" value={form.price} onChange={setInput('price')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <div>
-                <label className={labelCls}>Nafeza Reference No</label>
-                <input value={form.customsReferenceNo} onChange={setInput('customsReferenceNo')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              {isEdit && (
-                <div>
-                  <span className={labelCls}>Submitted At</span>
-                  <p className="border border-ink/20 bg-paper/60 px-3.5 py-2.5 text-sm text-ink">{formatDateTime(booking.customsSubmittedAt)}</p>
-                </div>
-              )}
+            <div>
+              <label className={labelCls}>Cost</label>
+              <input type="number" min="0" value={form.cost} onChange={setInput('cost')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>Free Time</label>
+              <input type="date" value={form.freeTime} onChange={setInput('freeTime')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+        </div>
+
+        {/* Agents — Step 2 (part of the operational booking process) */}
+        <div className={`${sectionCls} ${visible(STEP.agents) ? '' : 'hidden'}`}>
+          <h2 className={sectionTitleCls}>Agents</h2>
+
+          <p className="font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">POL Agent</p>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>Agent Name</label>
+              <input value={form.polAgent.name} onChange={setNested('polAgent', 'name')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Email</label>
+              <input type="email" value={form.polAgent.email} onChange={setNested('polAgent', 'email')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Phone</label>
+              <input value={form.polAgent.phone} onChange={setNested('polAgent', 'phone')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Address</label>
+              <input value={form.polAgent.address} onChange={setNested('polAgent', 'address')} className={`${inputCls} border-ink/30`} />
             </div>
           </div>
 
-          {/* 5. Containers */}
-          <div className={sectionCls}>
-            <h2 className={sectionTitleCls}>5. Containers</h2>
-
-            <Select label="Depot" searchable placeholder="Select depot" options={depotOptions} value={form.depot} onChange={set('depot')} />
-            <p className="font-mono text-xs text-muted">Required before this booking can be confirmed.</p>
-
+          <p className="border-t border-line pt-4 font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">POD Agent</p>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
-              <label className={labelCls}>Container Type &amp; Quantity <span className="text-rust">*</span></label>
-              <ContainerSelector containerTypes={containerTypes} stockMap={stockMap} value={form.containers} onChange={set('containers')} />
-              {errors.containers && <p className="mt-1 font-mono text-xs text-brick">{errors.containers}</p>}
+              <label className={labelCls}>Agent Name</label>
+              <input value={form.podAgent.name} onChange={setNested('podAgent', 'name')} className={`${inputCls} border-ink/30`} />
             </div>
-
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <label className={labelCls}>Gate In Date</label>
-                <input type="date" value={form.gateInDate} onChange={setInput('gateInDate')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>Gate Out Date</label>
-                <input type="date" value={form.gateOutDate} onChange={setInput('gateOutDate')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>Container Location</label>
-                <input value={form.containerLocation} onChange={setInput('containerLocation')} className={`${inputCls} border-ink/30`} placeholder="Yard A — Block 3" />
-              </div>
+            <div>
+              <label className={labelCls}>Email</label>
+              <input type="email" value={form.podAgent.email} onChange={setNested('podAgent', 'email')} className={`${inputCls} border-ink/30`} />
             </div>
+            <div>
+              <label className={labelCls}>Phone</label>
+              <input value={form.podAgent.phone} onChange={setNested('podAgent', 'phone')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Address</label>
+              <input value={form.podAgent.address} onChange={setNested('podAgent', 'address')} className={`${inputCls} border-ink/30`} />
+            </div>
+          </div>
+        </div>
 
-            {isEdit && booking.status === 'confirmed' && (
+        {/* Containers — Step 3 (Depot / Container) */}
+        <div className={`${sectionCls} ${visible(STEP.containers) ? '' : 'hidden'}`}>
+          <h2 className={sectionTitleCls}>Containers</h2>
+
+          <Select label="Depot" searchable placeholder="Select depot" options={depotOptions} value={form.depot} onChange={set('depot')} />
+          <p className="font-mono text-xs text-muted">Required before this booking can be confirmed.</p>
+
+          <div>
+            <label className={labelCls}>Container Type &amp; Quantity <span className="text-rust">*</span></label>
+            <ContainerSelector containerTypes={containerTypes} stockMap={stockMap} value={form.containers} onChange={set('containers')} />
+            {errors.containers && <p className="mt-1 font-mono text-xs text-brick">{errors.containers}</p>}
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+              <label className={labelCls}>Gate In Date</label>
+              <input type="date" value={form.gateInDate} onChange={setInput('gateInDate')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>Gate Out Date</label>
+              <input type="date" value={form.gateOutDate} onChange={setInput('gateOutDate')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>Container Location</label>
+              <input value={form.containerLocation} onChange={setInput('containerLocation')} className={`${inputCls} border-ink/30`} placeholder="Yard A — Block 3" />
+            </div>
+          </div>
+
+          {isEdit && booking.status === 'confirmed' && (
+            <div>
+              <label className={labelCls}>Allocated Containers — Fulfillment</label>
+              <AllocatedContainersPanel bookingId={booking._id} canUpdate={canUpdate} />
+            </div>
+          )}
+        </div>
+
+        {/* Customs (Nafeza) — Step 4 (Final Shipping Declaration), booking-owned sub-block */}
+        <div className={`${sectionCls} ${visible(STEP.customsNafeza) ? '' : 'hidden'}`}>
+          <h2 className={sectionTitleCls}>Customs (Nafeza)</h2>
+          <div>
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input type="checkbox" checked={form.customsSubmitted} onChange={(e) => set('customsSubmitted')(e.target.checked)} className="h-4 w-4" />
+              Shipping permit submitted on Nafeza
+            </label>
+          </div>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>Nafeza Reference No</label>
+              <input value={form.customsReferenceNo} onChange={setInput('customsReferenceNo')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            {isEdit && (
               <div>
-                <label className={labelCls}>Allocated Containers — Fulfillment</label>
-                <AllocatedContainersPanel bookingId={booking._id} canUpdate={canUpdate} />
+                <span className={labelCls}>Submitted At</span>
+                <p className="border border-ink/20 bg-paper/60 px-3.5 py-2.5 text-sm text-ink">{formatDateTime(booking.customsSubmittedAt)}</p>
               </div>
             )}
           </div>
+        </div>
 
-          {/* 6. Commercial */}
-          <div className={sectionCls}>
-            <h2 className={sectionTitleCls}>6. Commercial</h2>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
-              <Select label="NVOCC" searchable placeholder="Select NVOCC" options={nvoccOptions} value={form.nvocc} onChange={set('nvocc')} />
-              <Select label="Currency" searchable options={CURRENCY_OPTIONS} value={form.currency} onChange={set('currency')} />
-              <div>
-                <label className={labelCls}>Price</label>
-                <input type="number" min="0" value={form.price} onChange={setInput('price')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>Cost</label>
-                <input type="number" min="0" value={form.cost} onChange={setInput('cost')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-              <div>
-                <label className={labelCls}>Free Time</label>
-                <input type="date" value={form.freeTime} onChange={setInput('freeTime')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-            </div>
+        {/* Status & Notes — Step 5 (BL & Loading List), booking-owned sub-block */}
+        <div className={`${sectionCls} ${visible(STEP.statusNotes) ? '' : 'hidden'}`}>
+          <h2 className={sectionTitleCls}>Status &amp; Notes</h2>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <Select label="Manifest Status" options={MANIFEST_OPTIONS} value={form.manifestStatus} onChange={set('manifestStatus')} />
           </div>
-
-          {/* 7. Parties */}
-          <div className={sectionCls}>
-            <h2 className={sectionTitleCls}>7. Parties</h2>
-
-            <p className="font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">Shipper</p>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <div>
-                <label className={labelCls}>Name</label>
-                <input value={form.shipper.name} onChange={setNested('shipper', 'name')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Email</label>
-                <input type="email" value={form.shipper.email} onChange={setNested('shipper', 'email')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Phone 1</label>
-                <input value={form.shipper.phone1} onChange={setNested('shipper', 'phone1')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Phone 2</label>
-                <input value={form.shipper.phone2} onChange={setNested('shipper', 'phone2')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Address</label>
-                <input value={form.shipper.address} onChange={setNested('shipper', 'address')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Tax Number</label>
-                <input value={form.shipper.taxNumber} onChange={setNested('shipper', 'taxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-            </div>
-
-            <p className="border-t border-line pt-4 font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">Consignee</p>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <div>
-                <label className={labelCls}>Name</label>
-                <input value={form.consignee.name} onChange={setNested('consignee', 'name')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Email</label>
-                <input type="email" value={form.consignee.email} onChange={setNested('consignee', 'email')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Phone 1</label>
-                <input value={form.consignee.phone1} onChange={setNested('consignee', 'phone1')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Phone 2</label>
-                <input value={form.consignee.phone2} onChange={setNested('consignee', 'phone2')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Address</label>
-                <input value={form.consignee.address} onChange={setNested('consignee', 'address')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Tax Number</label>
-                <input value={form.consignee.taxNumber} onChange={setNested('consignee', 'taxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
-              </div>
-            </div>
+          <div>
+            <label className={labelCls}>Notes</label>
+            <textarea rows={2} value={form.notes} onChange={setInput('notes')} className={`${inputCls} border-ink/30`} placeholder="Free text notes..." />
           </div>
+        </div>
+      </fieldset>
 
-          {/* 8. Agents */}
-          <div className={sectionCls}>
-            <h2 className={sectionTitleCls}>8. Agents</h2>
-
-            <p className="font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">POL Agent</p>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <div>
-                <label className={labelCls}>Agent Name</label>
-                <input value={form.polAgent.name} onChange={setNested('polAgent', 'name')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Email</label>
-                <input type="email" value={form.polAgent.email} onChange={setNested('polAgent', 'email')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Phone</label>
-                <input value={form.polAgent.phone} onChange={setNested('polAgent', 'phone')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Address</label>
-                <input value={form.polAgent.address} onChange={setNested('polAgent', 'address')} className={`${inputCls} border-ink/30`} />
-              </div>
-            </div>
-
-            <p className="border-t border-line pt-4 font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">POD Agent</p>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <div>
-                <label className={labelCls}>Agent Name</label>
-                <input value={form.podAgent.name} onChange={setNested('podAgent', 'name')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Email</label>
-                <input type="email" value={form.podAgent.email} onChange={setNested('podAgent', 'email')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Phone</label>
-                <input value={form.podAgent.phone} onChange={setNested('podAgent', 'phone')} className={`${inputCls} border-ink/30`} />
-              </div>
-              <div>
-                <label className={labelCls}>Address</label>
-                <input value={form.podAgent.address} onChange={setNested('podAgent', 'address')} className={`${inputCls} border-ink/30`} />
-              </div>
-            </div>
-          </div>
-
-          {/* 9. Status & Notes */}
-          <div className={sectionCls}>
-            <h2 className={sectionTitleCls}>9. Status &amp; Notes</h2>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <Select label="Manifest Status" options={MANIFEST_OPTIONS} value={form.manifestStatus} onChange={set('manifestStatus')} />
-            </div>
-            <div>
-              <label className={labelCls}>Notes</label>
-              <textarea rows={2} value={form.notes} onChange={setInput('notes')} className={`${inputCls} border-ink/30`} placeholder="Free text notes..." />
-            </div>
-          </div>
-        </fieldset>
-
-        {canUpdate && (
-          <div className="flex flex-col justify-end gap-3 border-t border-line pt-5 sm:flex-row">
-            {isEdit && !isCancelled && (
-              <button
-                type="button"
-                onClick={() => setCancelOpen(true)}
-                className="border border-brick/40 px-5 py-2.5 text-sm font-medium text-brick transition-colors hover:bg-brick/5"
-              >
-                Cancel booking
-              </button>
-            )}
-            {isEdit && booking.status === 'pending' && (
-              <button
-                type="button"
-                onClick={() => setConfirmOpen(true)}
-                disabled={depotMissingForConfirm}
-                title={depotMissingForConfirm ? 'Select a depot in Section 5 first, then save, before confirming' : undefined}
-                className="bg-stamp px-5 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-stamp/90 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Confirm booking
-              </button>
-            )}
-            <button
-              type="submit"
-              disabled={submitting || isCancelled}
-              className="bg-rust px-6 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark disabled:opacity-50"
-            >
-              {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create booking'}
-            </button>
-          </div>
-        )}
-      </form>
-
-      {isEdit && (
-        <>
-          <Modal
-            isOpen={confirmOpen}
-            onClose={() => setConfirmOpen(false)}
-            onConfirm={() => { onConfirm(); setConfirmOpen(false) }}
-            title="Confirm this booking?"
-            message="This will stamp the booking as confirmed and decrement container stock for the confirmed quantities."
-            confirmLabel="Confirm booking"
-            loading={confirming}
-          />
-          <Modal
-            isOpen={cancelOpen}
-            onClose={() => setCancelOpen(false)}
-            onConfirm={() => { onCancel(); setCancelOpen(false) }}
-            title="Cancel this booking?"
-            message="This stamps the booking as cancelled. If it was confirmed, stock is restored."
-            confirmLabel="Cancel booking"
-            danger
-            loading={cancelling}
-          />
-        </>
+      {canUpdate && (
+        <div className="flex justify-end border-t border-line pt-5">
+          <button
+            type="submit"
+            disabled={submitting || isCancelled}
+            className="bg-rust px-6 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark disabled:opacity-50"
+          >
+            {submitting ? 'Saving…' : isEdit ? 'Save Booking details' : 'Create booking'}
+          </button>
+        </div>
       )}
-    </>
+    </form>
   )
 }

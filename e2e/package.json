@@ -6,7 +6,11 @@
   "scripts": {
     "quotation:api": "node quotation/api.e2e.mjs",
     "quotation:ui": "node quotation/ui.e2e.mjs",
-    "quotation": "node quotation/api.e2e.mjs && node quotation/ui.e2e.mjs"
+    "quotation": "node quotation/api.e2e.mjs && node quotation/ui.e2e.mjs",
+    "booking:api": "node booking/api.e2e.mjs",
+    "booking:ui": "node booking/ui.e2e.mjs",
+    "booking": "node booking/api.e2e.mjs && node booking/ui.e2e.mjs",
+    "all": "node quotation/api.e2e.mjs && node quotation/ui.e2e.mjs && node booking/api.e2e.mjs && node booking/ui.e2e.mjs"
   },
   "dependencies": {
     "playwright-core": "^1.49.0"

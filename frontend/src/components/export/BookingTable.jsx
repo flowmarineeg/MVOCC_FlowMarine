@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { FaEye, FaEdit, FaTrash } from 'react-icons/fa'
+import { FaEye, FaTrash } from 'react-icons/fa'
 import Badge from '@/components/ui/Badge'
 import Plate from '@/components/ui/Plate'
 
@@ -59,19 +59,10 @@ export default function BookingTable({ bookings = [], canUpdate = false, canView
                   <Link
                     href={`/export/bookings/${b._id}`}
                     className="flex h-8 w-8 items-center justify-center text-muted transition-colors hover:bg-ink/5 hover:text-ink"
-                    title="View"
+                    title={canUpdate ? 'View / Edit' : 'View'}
                   >
                     <FaEye className="text-xs" />
                   </Link>
-                  {canUpdate && b.status !== 'cancelled' && (
-                    <Link
-                      href={`/export/bookings/${b._id}/edit`}
-                      className="flex h-8 w-8 items-center justify-center text-muted transition-colors hover:bg-ink/5 hover:text-ink"
-                      title="Edit"
-                    >
-                      <FaEdit className="text-xs" />
-                    </Link>
-                  )}
                   {canUpdate && b.status !== 'confirmed' && (
                     <button
                       onClick={() => onDeleteRequest(b)}
