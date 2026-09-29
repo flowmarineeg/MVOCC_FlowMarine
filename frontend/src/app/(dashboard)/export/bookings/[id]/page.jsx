@@ -280,6 +280,7 @@ export default function BookingDetailPage() {
             key={`booking-${bookingGen}`}
             booking={bookingData}
             activeStep={step}
+            onInvalidStep={setStep}
             ports={ports}
             carriers={carriers}
             nvoccs={nvoccs}

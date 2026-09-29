@@ -303,6 +303,7 @@ export default function BookingForm({
   submitting = false,
   canUpdate = true,
   onSubmit,
+  onInvalidStep,
 }) {
   const isEdit = !!booking
   const isCancelled = isEdit && booking.status === 'cancelled'
@@ -349,6 +350,13 @@ export default function BookingForm({
     const validContainers = form.containers.filter((c) => c.containerType && c.quantity >= 1)
     if (validContainers.length === 0) next.containers = 'Add at least one container entry'
     setErrors((prev) => ({ ...prev, ...next }))
+    // Jump to the earliest step holding an error, so a failed submit from a
+    // different step doesn't look like a silent no-op.
+    if (onInvalidStep) {
+      const fieldStep = { pol: 1, pod: 1, commodity: 1, dangerousNumber: 1, clientName: 2, clientPhone: 2, clientEmail: 2, containers: 3 }
+      const steps = Object.keys(next).map((k) => fieldStep[k]).filter(Boolean)
+      if (steps.length) onInvalidStep(Math.min(...steps))
+    }
     return Object.keys(next).length === 0
   }
 

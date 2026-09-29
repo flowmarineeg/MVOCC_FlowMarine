@@ -129,23 +129,57 @@ try {
   const t20 = types.find((t) => t.code === '20DC')
   const nvocc = nvoccs[0], depot = depots[0]
 
-  // ─── 2. Create a new booking through the real create form ─────────────
+  // ─── 2. Create a new booking through the real create form (5-step bar) ─
   await page.goto(`${WEB}/export/bookings/new`)
   await page.getByText('Shipping Declaration').waitFor({ timeout: 90000 })
-  await fieldInput(/^Client Name/).fill(`${RUN} Client`)
-  await fieldInput(/^Client Phone/).fill('+20100000000')
-  await fieldInput(/^Client Email/).fill('e2e@example.com')
+  const createLabels = await page.locator('div.overflow-x-auto.border.border-ink\\/25.bg-card button').allTextContents()
+  check('create page shows the same 5-step bar as the details page', createLabels.length === 5 && createLabels.join('|').includes('Preliminary') && createLabels.join('|').includes('BL & Loading List'), JSON.stringify(createLabels))
+  check('create page starts on step 1 (cargo visible, client identity + containers hidden)',
+    await page.getByText('Shipment & Cargo').isVisible() && !(await page.getByText('Header & Job Info').isVisible()) && !(await page.getByText('Container Type & Quantity').isVisible()))
+
+  // Steps 4/5 on create: booking-owned blocks render, B&L blocks are replaced by a note
+  await gotoStep(3)
+  check('create step 4 shows Customs (Nafeza) and the "unlock once the job is created" note, no B&L form',
+    await page.getByText('Customs (Nafeza)').isVisible() && await page.getByText(/unlock once the job is created/).isVisible() && (await page.getByText('Customs Certificate', { exact: true }).count()) === 0)
+  await gotoStep(4)
+  check('create step 5 shows Status & Notes and the unlock note', await page.getByText('Status & Notes').isVisible() && await page.getByText(/unlock once the job is created/).isVisible())
+
+  // Submitting an empty form from step 5 must not POST, and must jump to the earliest step with an error (step 1)
+  let postFired = false
+  const onReq = (r) => { if (r.method() === 'POST' && /\/export\/bookings$/.test(new URL(r.url()).pathname)) postFired = true }
+  page.on('request', onReq)
+  await page.getByRole('button', { name: 'Create booking' }).click()
+  await page.waitForTimeout(500)
+  page.off('request', onReq)
+  check('empty submit from step 5 sends no request', !postFired)
+  check('...and jumps back to step 1 showing the port error', await vis(page.getByText('Port of loading is required'), 3000))
+  check('...step 1 is now the visible step', await page.getByText('Shipment & Cargo').isVisible() && !(await page.getByText('Status & Notes').isVisible()))
+
+  // Step 1: cargo
   await pick(/^Port of Loading/, ports[0].code)
   await pick(/^Port of Discharge/, ports[1].code)
-  await fieldInput(/^Commodity/).fill(`${RUN} commodity`)
-  await page.locator('button', { hasText: 'Select container type' }).first().click()
-  await page.locator('div.absolute button', { hasText: '20DC' }).first().click()
-  await page.locator('input[placeholder="Qty"]').first().fill('2')
+  await fieldInput(/^Commodity/).fill(RUN + ' commodity')
   // Dangerous goods round-trip, through the actual toggle buttons
   await page.getByRole('button', { name: 'Yes', exact: true }).click()
   await fieldInput(/^Dangerous Goods Number/).fill('UN1234 / Class 3')
   await page.getByRole('button', { name: 'No', exact: true }).click() // toggle back off before submit — number should be dropped server-side
   await fileInputNear(/^Shipping Declaration/).setInputFiles(PNG_PATH)
+
+  // Step 3: containers; client identity (step 2) still empty -> submit must jump to step 2
+  await gotoStep(2)
+  await page.locator('button', { hasText: 'Select container type' }).first().click()
+  await page.locator('div.absolute button', { hasText: '20DC' }).first().click()
+  await page.locator('input[placeholder="Qty"]').first().fill('2')
+  await page.getByRole('button', { name: 'Create booking' }).click()
+  check('client fields missing -> submit jumps to step 2 with the client-name error', await vis(page.getByText('Client name is required'), 3000) && await page.getByText('Header & Job Info').isVisible())
+
+  await fieldInput(/^Client Name/).fill(RUN + ' Client')
+  await fieldInput(/^Client Phone/).fill('+20100000000')
+  await fieldInput(/^Client Email/).fill('e2e@example.com')
+  await gotoStep(0)
+  check('values typed on other steps survive switching steps', (await fieldInput(/^Commodity/).inputValue()) === RUN + ' commodity')
+  await gotoStep(4)
+  await fieldInput(/^Notes$/).fill('E2E create-time note')
 
   await page.getByRole('button', { name: 'Create booking' }).click()
   await page.waitForURL(/\/export\/bookings\/[0-9a-f]{24}$/, { timeout: 30000 }).catch(() => {})
@@ -153,6 +187,7 @@ try {
   check('create redirects to the merged Booking & Job Details page', !!jobId, page.url())
   const created = (await api('GET', `/export/bookings/${jobId}`)).json?.data
   check('created booking has an auto-generated jobNo and our fields', /^OPS Jobs \d{4} FLOW MARINE/.test(created?.jobNo || ''), created?.jobNo)
+  check('fields from steps 1, 2, 3 and 5 all landed in one create submission', created?.clientName === RUN + ' Client' && created?.commodity === RUN + ' commodity' && created?.containers?.[0]?.quantity === 2 && created?.notes === 'E2E create-time note', JSON.stringify([created?.clientName, created?.commodity, created?.containers, created?.notes]))
   check('dangerous-goods number dropped server-side after toggling back off in the same submission', created?.isDangerous === false && !created?.dangerousNumber, JSON.stringify([created?.isDangerous, created?.dangerousNumber]))
   check('shipping declaration file attached', created?.shippingDeclaration?.fileName === 'tiny.png', created?.shippingDeclaration?.fileName)
 

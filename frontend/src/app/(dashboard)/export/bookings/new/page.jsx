@@ -13,6 +13,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
 import BookingForm from '@/components/export/BookingForm'
+import BookingStepBar from '@/components/export/BookingStepBar'
 
 // Builds BookingForm's `prefill` shape from an approved Quotation, for the
 // "Convert to Job & Create Booking" flow — only the fields that overlap
@@ -67,6 +68,7 @@ function NewBookingPageInner() {
   const [depots, setDepots] = useState([])
   const [stockMap, setStockMap] = useState({})
   const [quotation, setQuotation] = useState(null)
+  const [step, setStep] = useState(1)
 
   useEffect(() => {
     Promise.all([
@@ -126,7 +128,16 @@ function NewBookingPageInner() {
       ) : loading ? (
         <PageLoader />
       ) : (
+        <>
+        <BookingStepBar active={step} onChange={setStep} />
+        {(step === 4 || step === 5) && (
+          <p className="border border-dashed border-ink/30 bg-paper/40 p-4 text-sm text-muted">
+            {step === 4 ? 'Customs Certificate' : 'BL & Loading List'} details unlock once the job is created — fill in what you have here, then save.
+          </p>
+        )}
         <BookingForm
+          activeStep={step}
+          onInvalidStep={setStep}
           prefill={quotation ? prefillFromQuotation(quotation) : null}
           quotationId={quotation?._id || null}
           ports={ports}
@@ -138,6 +149,7 @@ function NewBookingPageInner() {
           submitting={submitting}
           onSubmit={handleSubmit}
         />
+        </>
       )}
     </div>
   )
