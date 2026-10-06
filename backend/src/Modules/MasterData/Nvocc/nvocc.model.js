@@ -1,4 +1,5 @@
 import mongoose from 'mongoose'
+import { partyFields } from '../_shared/party.shared.js'
 
 const nvoccSchema = new mongoose.Schema(
   {
@@ -14,24 +15,7 @@ const nvoccSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
-    contractType: {
-      type: String,
-      enum: ['Contract', 'Spot'],
-    },
-    contractValidFrom: {
-      type: Date,
-    },
-    contractValidTo: {
-      type: Date,
-    },
-    localAgentName: {
-      type: String,
-      trim: true,
-    },
-    localAgentContact: {
-      type: String,
-      trim: true,
-    },
+    ...partyFields,
     tradeLane: {
       type: String,
       trim: true,

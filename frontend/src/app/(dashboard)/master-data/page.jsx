@@ -12,6 +12,10 @@ import MasterDataFormModal from '@/components/masterdata/MasterDataFormModal'
 import Modal from '@/components/ui/Modal'
 import { COUNTRY_NAMES } from '@/constants/countries'
 
+const capitalize = (v) => (v ? v.charAt(0).toUpperCase() + v.slice(1) : '')
+
+// `fields` is either an array or a function of the loaded data (used when a
+// field's select options come from another master-data list, e.g. Vessel → VO).
 const ENTITIES = {
   containerTypes: {
     tabLabel: 'Container Types',
@@ -57,14 +61,8 @@ const ENTITIES = {
     tabLabel: 'NVOCC',
     singular: 'NVOCC',
     fields: [
-      { key: 'name', label: 'Name' },
-      { key: 'code', label: 'Code' },
-      { key: 'contractType', label: 'Contract Type', type: 'select', options: ['Contract', 'Spot'], required: false },
-      { key: 'contractValidFrom', label: 'Contract Valid From', type: 'date', required: false },
-      { key: 'contractValidTo', label: 'Contract Valid To', type: 'date', required: false },
-      { key: 'localAgentName', label: 'Local Agent Name', required: false },
-      { key: 'localAgentContact', label: 'Local Agent Contact', required: false },
-      { key: 'tradeLane', label: 'Trade Lane Covered', required: false },
+      ...masterDataApi.partyFormFields({ codeLabel: 'Code' }),
+      { key: 'tradeLane', label: 'Trade Lane Covered', required: false, table: false },
     ],
     get: () => masterDataApi.getNvoccs(false),
     create: masterDataApi.createNvocc,
@@ -72,13 +70,38 @@ const ENTITIES = {
     toggle: masterDataApi.toggleNvocc,
     delete: masterDataApi.deleteNvocc,
   },
+  vesselOperators: {
+    tabLabel: 'VO (Vessel Operators)',
+    singular: 'Vessel Operator',
+    fields: masterDataApi.partyFormFields({ codeLabel: 'VO Code' }),
+    get: () => masterDataApi.getVesselOperators(false),
+    create: masterDataApi.createVesselOperator,
+    update: masterDataApi.updateVesselOperator,
+    toggle: masterDataApi.toggleVesselOperator,
+    delete: masterDataApi.deleteVesselOperator,
+  },
+  vessels: {
+    tabLabel: 'Vessels',
+    singular: 'Vessel',
+    fields: (data) => [
+      {
+        key: 'vesselOperator',
+        label: 'Vessel Operator (VO)',
+        type: 'select',
+        options: data.vesselOperators.map((vo) => ({ value: vo._id, label: `${vo.code} — ${vo.name}` })),
+      },
+      { key: 'name', label: 'Vessel Name' },
+    ],
+    get: () => masterDataApi.getVessels(false),
+    create: masterDataApi.createVessel,
+    update: masterDataApi.updateVessel,
+    toggle: masterDataApi.toggleVessel,
+    delete: masterDataApi.deleteVessel,
+  },
   depots: {
     tabLabel: 'Depots',
     singular: 'Depot',
-    fields: [
-      { key: 'name', label: 'Depot Name' },
-      { key: 'code', label: 'Depot Code' },
-    ],
+    fields: masterDataApi.partyFormFields({ codeLabel: 'Depot Code' }),
     get: () => masterDataApi.getDepots(false),
     create: masterDataApi.createDepot,
     update: masterDataApi.updateDepot,
@@ -95,9 +118,82 @@ const ENTITIES = {
     toggle: masterDataApi.toggleCustomer,
     delete: masterDataApi.deleteCustomer,
   },
+  agents: {
+    tabLabel: 'Agents',
+    singular: 'Agent',
+    fields: [
+      ...masterDataApi.partyFormFields({ codeLabel: 'Agent Code' }),
+      { key: 'country', label: 'Country', type: 'country', required: false },
+    ],
+    get: () => masterDataApi.getAgents(false),
+    create: masterDataApi.createAgent,
+    update: masterDataApi.updateAgent,
+    toggle: masterDataApi.toggleAgent,
+    delete: masterDataApi.deleteAgent,
+  },
+  parties: {
+    tabLabel: 'Parties',
+    singular: 'Party',
+    fields: [
+      {
+        key: 'partyType',
+        label: 'Party Type',
+        type: 'select',
+        options: [
+          { value: 'shipper', label: 'Shipper' },
+          { value: 'consignee', label: 'Consignee' },
+          { value: 'notify', label: 'Notify' },
+        ],
+        format: (item) => capitalize(item.partyType),
+      },
+      ...masterDataApi.partyFormFields({ codeLabel: 'Party Code' }),
+    ],
+    get: () => masterDataApi.getParties(false),
+    create: masterDataApi.createParty,
+    update: masterDataApi.updateParty,
+    toggle: masterDataApi.toggleParty,
+    delete: masterDataApi.deleteParty,
+  },
+  packages: {
+    tabLabel: 'Packages',
+    singular: 'Package',
+    fields: [{ key: 'name', label: 'Package Name' }],
+    get: () => masterDataApi.getPackages(false),
+    create: masterDataApi.createPackage,
+    update: masterDataApi.updatePackage,
+    toggle: masterDataApi.togglePackage,
+    delete: masterDataApi.deletePackage,
+  },
+  units: {
+    tabLabel: 'Units',
+    singular: 'Unit',
+    fields: [
+      {
+        key: 'type',
+        label: 'Unit Type',
+        type: 'select',
+        options: [
+          { value: 'length', label: 'Length' },
+          { value: 'weight', label: 'Weight' },
+        ],
+        format: (item) => capitalize(item.type),
+      },
+      { key: 'name', label: 'Unit Name' },
+      { key: 'symbol', label: 'Symbol' },
+    ],
+    get: () => masterDataApi.getUnits(false),
+    create: masterDataApi.createUnit,
+    update: masterDataApi.updateUnit,
+    toggle: masterDataApi.toggleUnit,
+    delete: masterDataApi.deleteUnit,
+  },
 }
 
-const TABS = Object.keys(ENTITIES).map((key) => ({ key, label: ENTITIES[key].tabLabel }))
+const ENTITY_KEYS = Object.keys(ENTITIES)
+const TABS = ENTITY_KEYS.map((key) => ({ key, label: ENTITIES[key].tabLabel }))
+const EMPTY_DATA = Object.fromEntries(ENTITY_KEYS.map((k) => [k, []]))
+
+const resolveFields = (entity, data) => (typeof entity.fields === 'function' ? entity.fields(data) : entity.fields)
 
 export default function MasterDataPage() {
   const { permissions } = useAuth()
@@ -106,7 +202,7 @@ export default function MasterDataPage() {
   const canUpdate = permissions.includes('masterData:update')
 
   const [tab, setTab] = useState('containerTypes')
-  const [data, setData] = useState({ containerTypes: [], carriers: [], ports: [], nvoccs: [], depots: [], customers: [] })
+  const [data, setData] = useState(EMPTY_DATA)
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -116,23 +212,14 @@ export default function MasterDataPage() {
   const [deleting, setDeleting] = useState(false)
 
   const loadAll = () => {
-    Promise.all([
-      ENTITIES.containerTypes.get(),
-      ENTITIES.carriers.get(),
-      ENTITIES.ports.get(),
-      ENTITIES.nvoccs.get(),
-      ENTITIES.depots.get(),
-      ENTITIES.customers.get(),
-    ])
-      .then(([containerTypes, carriers, ports, nvoccs, depots, customers]) => {
-        setData({ containerTypes, carriers, ports, nvoccs, depots, customers })
-      })
+    Promise.all(ENTITY_KEYS.map((key) => ENTITIES[key].get()))
+      .then((lists) => setData(Object.fromEntries(ENTITY_KEYS.map((key, i) => [key, lists[i]]))))
       .catch((err) => toast(err.message, 'error'))
       .finally(() => setLoading(false))
   }
 
   // A mutation only ever affects the active tab's own list — no need to
-  // re-fetch all four entity types just to refresh one table.
+  // re-fetch every entity type just to refresh one table.
   const reloadTab = (key) => {
     ENTITIES[key].get()
       .then((items) => setData((d) => ({ ...d, [key]: items })))
@@ -201,6 +288,7 @@ export default function MasterDataPage() {
 
   const activeEntity = ENTITIES[tab]
   const activeItems = activeEntity ? data[tab] : []
+  const activeFields = resolveFields(activeEntity, data)
 
   return (
     <div className="space-y-5 p-4 sm:p-6">
@@ -208,7 +296,7 @@ export default function MasterDataPage() {
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Reference Data</p>
           <h1 className="mt-1 font-display text-3xl font-bold uppercase tracking-wide text-ink">Master Data</h1>
-          <p className="mt-1 text-sm text-muted">Ports, carriers, NVOCCs, depots, and container types</p>
+          <p className="mt-1 text-sm text-muted">Ports, NVOCCs, vessel operators, vessels, depots, customers, agents, parties, packages, and units</p>
         </div>
         {canCreate && activeEntity && (
           <button
@@ -244,7 +332,7 @@ export default function MasterDataPage() {
       ) : (
         <MasterDataTable
           items={activeItems}
-          fields={activeEntity.fields}
+          fields={activeFields}
           canUpdate={canUpdate}
           onEdit={openEdit}
           onToggle={handleToggle}
@@ -260,7 +348,7 @@ export default function MasterDataPage() {
           onClose={() => setModalOpen(false)}
           onSave={handleSave}
           item={editingItem}
-          fields={activeEntity.fields}
+          fields={activeFields}
           title={editingItem ? `Edit ${activeEntity.singular}` : `New ${activeEntity.singular}`}
           saving={saving}
         />

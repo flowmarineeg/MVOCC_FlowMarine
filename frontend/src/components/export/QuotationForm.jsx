@@ -4,11 +4,12 @@ import { useState } from 'react'
 import Select from '@/components/ui/Select'
 import ContainerSelector from './ContainerSelector'
 import ProfitabilitySummary from './ProfitabilitySummary'
-import RateTable from './RateTable'
+import RateTable, { DEFAULT_LINE_CURRENCY } from './RateTable'
 import MasterDataFormModal from '@/components/masterdata/MasterDataFormModal'
 import * as masterDataApi from '@/services/masterData'
 import * as quotationApi from '@/services/quotation'
 import { computeProfitability, getContainerSize, getQtyBySize } from '@/utils/quotationCalc'
+import { mirrorBuyingToSelling, newUid } from '@/utils/quotationSync'
 import { CONTAINER_SIZES, ORIGIN_LINES, DESTINATION_LINES } from '@/constants/quotationRates'
 
 // `d` is either a Date instance (e.g. `new Date()` for "default to today")
@@ -25,18 +26,25 @@ const formatDateTime = (d) => (d ? new Date(d).toLocaleString() : '-')
 // A rate table's form state: one { rate20, rate40, qty20, qty40 } per fixed
 // line (kept as strings so an empty input stays empty) plus free-form lines.
 const RATE_FIELDS = ['rate20', 'rate40', 'qty20', 'qty40']
-const emptyLine = () => Object.fromEntries(RATE_FIELDS.map((f) => [f, '']))
+const emptyLine = () => ({ ...Object.fromEntries(RATE_FIELDS.map((f) => [f, ''])), currency: DEFAULT_LINE_CURRENCY })
 
 const emptyTable = (lines) => ({
   ...Object.fromEntries(lines.map(({ key }) => [key, emptyLine()])),
   custom: [],
+  hidden: [],
 })
 
-const lineFromApi = (line) => Object.fromEntries(RATE_FIELDS.map((f) => [f, line?.[f] ?? '']))
+// Every row has its own currency. A line saved before per-row currencies
+// existed has none and inherits the quotation's old table currency.
+const lineFromApi = (line, fallbackCurrency) => ({
+  ...Object.fromEntries(RATE_FIELDS.map((f) => [f, line?.[f] ?? ''])),
+  currency: line?.currency ?? fallbackCurrency ?? DEFAULT_LINE_CURRENCY,
+})
 
-const tableFromApi = (table, lines) => ({
-  ...Object.fromEntries(lines.map(({ key }) => [key, lineFromApi(table?.[key])])),
-  custom: (table?.custom || []).map((l) => ({ label: l.label, ...lineFromApi(l) })),
+const tableFromApi = (table, lines, fallbackCurrency) => ({
+  ...Object.fromEntries(lines.map(({ key }) => [key, lineFromApi(table?.[key], fallbackCurrency)])),
+  custom: (table?.custom || []).map((l) => ({ uid: l.uid || newUid(), label: l.label, ...lineFromApi(l, fallbackCurrency) })),
+  hidden: table?.hidden || [],
 })
 
 const lineHasData = (line) => RATE_FIELDS.some((f) => line?.[f] !== '' && line?.[f] !== undefined)
@@ -53,6 +61,7 @@ const linePayload = (line, sizes) => {
       if (line[f] !== '' && line[f] !== undefined) out[f] = Number(line[f])
     })
   })
+  if (Object.keys(out).length > 0) out.currency = line.currency ?? ''
   return out
 }
 
@@ -64,7 +73,8 @@ const tablePayload = (table, lines, sizes) => {
   })
   out.custom = (table.custom || [])
     .filter((l) => l.label && l.label.trim())
-    .map((l) => ({ label: l.label.trim(), ...linePayload(l, sizes) }))
+    .map((l) => ({ uid: l.uid, label: l.label.trim(), currency: l.currency ?? '', ...linePayload(l, sizes) }))
+  out.hidden = table.hidden || []
   return out
 }
 
@@ -86,33 +96,24 @@ function emptyForm(currentUser) {
     grossWeight: '',
     cbm: '',
     isDangerous: false,
-    unClass: '',
     unNumber: '',
-    por: '',
     pol: '',
     pod: '',
-    fpd: '',
     incoterms: '',
     targetEtd: '',
+    targetRate: '',
+    cargoReadinessDate: '',
     specialNotes: '',
     nvocc: '',
-    buyingCurrency: 'USD',
     rateValidFrom: '',
     rateValidTo: '',
     buyingOrigin: emptyTable(ORIGIN_LINES),
-    buyingDestinationCurrency: 'USD',
-    buyingDestinationRate: 1,
     buyingDestination: emptyTable(DESTINATION_LINES),
     freeTimeBuyingDays: '',
     rateSourceReference: '',
-    sellingCurrency: 'USD',
-    exchangeRate: 1,
     sellingOrigin: emptyTable(ORIGIN_LINES),
-    sellingDestinationCurrency: 'USD',
-    sellingDestinationRate: 1,
     sellingDestination: emptyTable(DESTINATION_LINES),
     paymentTerms: '',
-    validUntil: '',
   }
 }
 
@@ -138,33 +139,24 @@ function buildInitialForm(quotation, currentUser) {
     grossWeight: quotation.grossWeight ?? '',
     cbm: quotation.cbm ?? '',
     isDangerous: !!quotation.isDangerous,
-    unClass: quotation.unClass || '',
     unNumber: quotation.unNumber || '',
-    por: quotation.por?._id || quotation.por || '',
     pol: quotation.pol?._id || quotation.pol || '',
     pod: quotation.pod?._id || quotation.pod || '',
-    fpd: quotation.fpd?._id || quotation.fpd || '',
     incoterms: quotation.incoterms || '',
     targetEtd: toDateInput(quotation.targetEtd),
+    targetRate: quotation.targetRate ?? '',
+    cargoReadinessDate: toDateInput(quotation.cargoReadinessDate),
     specialNotes: quotation.specialNotes || '',
     nvocc: quotation.nvocc?._id || quotation.nvocc || '',
-    buyingCurrency: quotation.buyingCurrency || 'USD',
     rateValidFrom: toDateInput(quotation.rateValidFrom),
     rateValidTo: toDateInput(quotation.rateValidTo),
-    buyingOrigin: tableFromApi(quotation.buyingOrigin, ORIGIN_LINES),
-    buyingDestinationCurrency: quotation.buyingDestinationCurrency || quotation.buyingCurrency || 'USD',
-    buyingDestinationRate: quotation.buyingDestinationRate ?? 1,
-    buyingDestination: tableFromApi(quotation.buyingDestination, DESTINATION_LINES),
+    buyingOrigin: tableFromApi(quotation.buyingOrigin, ORIGIN_LINES, quotation.buyingCurrency),
+    buyingDestination: tableFromApi(quotation.buyingDestination, DESTINATION_LINES, quotation.buyingDestinationCurrency || quotation.buyingCurrency),
     freeTimeBuyingDays: quotation.freeTimeBuyingDays ?? '',
     rateSourceReference: quotation.rateSourceReference || '',
-    sellingCurrency: quotation.sellingCurrency || 'USD',
-    exchangeRate: quotation.exchangeRate ?? 1,
-    sellingOrigin: tableFromApi(quotation.sellingOrigin, ORIGIN_LINES),
-    sellingDestinationCurrency: quotation.sellingDestinationCurrency || quotation.sellingCurrency || 'USD',
-    sellingDestinationRate: quotation.sellingDestinationRate ?? 1,
-    sellingDestination: tableFromApi(quotation.sellingDestination, DESTINATION_LINES),
+    sellingOrigin: tableFromApi(quotation.sellingOrigin, ORIGIN_LINES, quotation.sellingCurrency),
+    sellingDestination: tableFromApi(quotation.sellingDestination, DESTINATION_LINES, quotation.sellingDestinationCurrency || quotation.sellingCurrency),
     paymentTerms: quotation.paymentTerms || '',
-    validUntil: toDateInput(quotation.validUntil),
   }
 }
 
@@ -185,6 +177,7 @@ export default function QuotationForm({
   containerTypes = [],
   nvoccs = [],
   currentUser = null,
+  teamMembers = [],
   submitting = false,
   canOverrideLock = false,
   onSubmit,
@@ -206,6 +199,49 @@ export default function QuotationForm({
   const portOptions = ports.map((p) => ({ value: p._id, label: `${p.code} — ${p.name}` }))
   const customerOptions = customers.map((c) => ({ value: c._id, label: c.name }))
   const nvoccOptions = nvoccs.map((n) => ({ value: n._id, label: `${n.code} — ${n.name}` }))
+  const selectedCustomer = customers.find((c) => c._id === form.customer) || null
+
+  // Sales rep: the logged-in user by default, any team member selectable. The
+  // stored value stays a plain string (name, else email); a legacy free-text
+  // value on an old quotation is kept selectable instead of being blanked.
+  const salesRepOptions = (() => {
+    const seen = new Set()
+    const out = []
+    const add = (value, label) => {
+      if (!value || seen.has(value)) return
+      seen.add(value)
+      out.push({ value, label: label || value })
+    }
+    const labelFor = (m) => (m?.name && m?.email ? `${m.name} (${m.email})` : undefined)
+    add(currentUser?.name || currentUser?.email, labelFor(currentUser))
+    teamMembers.forEach((m) => add(m.name || m.email, labelFor(m)))
+    add(form.salesRep)
+    return out
+  })()
+
+  // Contact person: a dropdown of the selected client's contact rows (name +
+  // phone). The stored value stays the contact's name.
+  const customerContacts = selectedCustomer?.contacts || []
+  const contactOptions = customerContacts.map((c) => ({
+    value: c._id,
+    label: c.phone ? `${c.name} — ${c.phone}` : c.name,
+  }))
+  const matchedContact =
+    customerContacts.find((c) => c.name === form.contactPerson && (!form.contactPhone || !c.phone || c.phone === form.contactPhone)) ||
+    customerContacts.find((c) => c.name === form.contactPerson)
+  // An old quotation's free-text contact that isn't one of the client's rows.
+  if (form.contactPerson && !matchedContact) contactOptions.unshift({ value: '__current', label: form.contactPerson })
+  const contactValue = matchedContact?._id || (form.contactPerson ? '__current' : '')
+  const handleSelectContact = (id) => {
+    if (id === '__current') return
+    const c = customerContacts.find((x) => x._id === id)
+    setForm((f) => ({
+      ...f,
+      contactPerson: c?.name || '',
+      contactPhone: c?.phone || selectedCustomer?.phone || '',
+      contactEmail: c?.email || selectedCustomer?.email || '',
+    }))
+  }
   const selectedNvocc = nvoccs.find((n) => n._id === form.nvocc) || null
 
   // The rate tables' 20ft / 40ft columns follow the containers picked in
@@ -220,31 +256,18 @@ export default function QuotationForm({
 
   const totals = computeProfitability({
     qtyBySize,
-    buying: {
-      origin: form.buyingOrigin,
-      destination: form.buyingDestination,
-      currency: form.buyingCurrency,
-      destinationCurrency: form.buyingDestinationCurrency,
-      destinationRate: form.buyingDestinationRate,
-    },
-    selling: {
-      origin: form.sellingOrigin,
-      destination: form.sellingDestination,
-      currency: form.sellingCurrency,
-      destinationCurrency: form.sellingDestinationCurrency,
-      destinationRate: form.sellingDestinationRate,
-    },
-    exchangeRate: form.exchangeRate,
+    buying: { origin: form.buyingOrigin, destination: form.buyingDestination },
+    selling: { origin: form.sellingOrigin, destination: form.sellingDestination },
   })
 
-  // Changing a side's Origin (base) currency drags its Destination currency
-  // along while the two are still the same, so switching the whole side to
-  // e.g. EGP doesn't suddenly demand a conversion rate for the other table.
-  const handleBaseCurrencyChange = (side) => (currency) =>
+  // Buying -> Selling only: any change to a Buying table (a value, a currency,
+  // a label, a new row, a restored row) is mirrored onto the matching Selling
+  // table. Editing a Selling table never touches Buying.
+  const handleBuyingTable = (kind, lines) => (next) =>
     setForm((f) => ({
       ...f,
-      [`${side}Currency`]: currency,
-      [`${side}DestinationCurrency`]: f[`${side}DestinationCurrency`] === f[`${side}Currency`] ? currency : f[`${side}DestinationCurrency`],
+      [`buying${kind}`]: next,
+      [`selling${kind}`]: mirrorBuyingToSelling(f[`buying${kind}`], next, f[`selling${kind}`], lines),
     }))
 
   const handleSelectCustomer = (id) => {
@@ -253,6 +276,7 @@ export default function QuotationForm({
       ...f,
       customer: id,
       clientName: c?.name || '',
+      contactPerson: '',
       contactPhone: c?.phone || '',
       contactEmail: c?.email || '',
     }))
@@ -266,6 +290,7 @@ export default function QuotationForm({
         ...f,
         customer: created._id,
         clientName: created.name,
+        contactPerson: '',
         contactPhone: created.phone || '',
         contactEmail: created.email || '',
       }))
@@ -288,11 +313,8 @@ export default function QuotationForm({
       if (!suggestion) return
       setForm((f) => ({
         ...f,
-        buyingCurrency: suggestion.buyingCurrency || f.buyingCurrency,
-        buyingOrigin: tableFromApi(suggestion.buyingOrigin, ORIGIN_LINES),
-        buyingDestinationCurrency: suggestion.buyingDestinationCurrency || suggestion.buyingCurrency || f.buyingDestinationCurrency,
-        buyingDestinationRate: suggestion.buyingDestinationRate ?? 1,
-        buyingDestination: tableFromApi(suggestion.buyingDestination, DESTINATION_LINES),
+        buyingOrigin: tableFromApi(suggestion.buyingOrigin, ORIGIN_LINES, suggestion.buyingCurrency),
+        buyingDestination: tableFromApi(suggestion.buyingDestination, DESTINATION_LINES, suggestion.buyingDestinationCurrency || suggestion.buyingCurrency),
         freeTimeBuyingDays: suggestion.freeTimeBuyingDays ?? '',
         rateSourceReference: suggestion.rateSourceReference || '',
       }))
@@ -304,24 +326,14 @@ export default function QuotationForm({
 
   const validate = () => {
     const next = {}
-    if (!form.quotationNo.trim()) next.quotationNo = 'Quotation number is required'
     if (!form.customer) next.customer = form.customerType === 'new' ? 'Create the new client first' : 'Select a client'
     if (!form.salesRep.trim()) next.salesRep = 'Sales representative is required'
     if (!form.commodity.trim()) next.commodity = 'Commodity is required'
     if (!form.pol) next.pol = 'Port of loading is required'
     if (!form.pod) next.pod = 'Port of discharge is required'
-    if (form.isDangerous && !form.unClass.trim()) next.unClass = 'UN Class is required'
     if (form.isDangerous && !form.unNumber.trim()) next.unNumber = 'UN Number is required'
     const validContainers = form.containers.filter((c) => c.containerType && c.quantity >= 1)
     if (validContainers.length === 0) next.containers = 'Add at least one container entry'
-    // A Destination table in a different currency than its Origin table needs
-    // a conversion rate, or its total can't be added into the side's total.
-    ;['buying', 'selling'].forEach((side) => {
-      const differs = form[`${side}DestinationCurrency`] !== form[`${side}Currency`]
-      if (differs && !(Number(form[`${side}DestinationRate`]) > 0)) {
-        next[`${side}DestinationRate`] = 'Enter the exchange rate into the origin currency'
-      }
-    })
     setErrors(next)
     return Object.keys(next).length === 0
   }
@@ -333,7 +345,6 @@ export default function QuotationForm({
     const containers = form.containers.filter((c) => c.containerType && c.quantity >= 1)
 
     const payload = {
-      quotationNo: form.quotationNo.trim(),
       customerType: form.customerType,
       customer: form.customer,
       clientName: form.clientName.trim(),
@@ -349,33 +360,25 @@ export default function QuotationForm({
       grossWeight: form.grossWeight === '' ? undefined : Number(form.grossWeight),
       cbm: form.cbm === '' ? undefined : Number(form.cbm),
       isDangerous: form.isDangerous,
-      unClass: form.isDangerous ? form.unClass.trim() : undefined,
       unNumber: form.isDangerous ? form.unNumber.trim() : undefined,
-      por: form.por || undefined,
       pol: form.pol,
       pod: form.pod,
-      fpd: form.fpd || undefined,
       incoterms: form.incoterms || undefined,
       targetEtd: form.targetEtd || undefined,
+      // null (not undefined) so clearing the input on edit really clears it
+      targetRate: form.targetRate === '' ? null : Number(form.targetRate),
+      cargoReadinessDate: form.cargoReadinessDate || null,
       specialNotes: form.specialNotes.trim(),
       nvocc: form.nvocc || undefined,
-      buyingCurrency: form.buyingCurrency,
       rateValidFrom: form.rateValidFrom || undefined,
       rateValidTo: form.rateValidTo || undefined,
       buyingOrigin: tablePayload(form.buyingOrigin, ORIGIN_LINES, sizes),
-      buyingDestinationCurrency: form.buyingDestinationCurrency,
-      buyingDestinationRate: form.buyingDestinationRate === '' ? 1 : Number(form.buyingDestinationRate),
       buyingDestination: tablePayload(form.buyingDestination, DESTINATION_LINES, sizes),
       freeTimeBuyingDays: form.freeTimeBuyingDays === '' ? undefined : Number(form.freeTimeBuyingDays),
       rateSourceReference: form.rateSourceReference.trim(),
-      sellingCurrency: form.sellingCurrency,
-      exchangeRate: form.exchangeRate === '' ? 1 : Number(form.exchangeRate),
       sellingOrigin: tablePayload(form.sellingOrigin, ORIGIN_LINES, sizes),
-      sellingDestinationCurrency: form.sellingDestinationCurrency,
-      sellingDestinationRate: form.sellingDestinationRate === '' ? 1 : Number(form.sellingDestinationRate),
       sellingDestination: tablePayload(form.sellingDestination, DESTINATION_LINES, sizes),
       paymentTerms: form.paymentTerms || undefined,
-      validUntil: form.validUntil || undefined,
     }
 
     onSubmit(payload)
@@ -420,23 +423,31 @@ export default function QuotationForm({
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
-              <label className={labelCls}>
-                Quotation No {isEdit ? <span className="normal-case text-muted/70">(cannot be changed)</span> : <span className="text-rust">*</span>}
-              </label>
+              <label className={labelCls}>Quotation No <span className="normal-case text-muted/70">(auto-generated)</span></label>
               <input
                 value={form.quotationNo}
-                onChange={setInput('quotationNo')}
-                disabled={isEdit}
-                className={`${inputCls} font-mono ${errors.quotationNo ? 'border-brick' : 'border-ink/30'} ${isEdit ? 'cursor-not-allowed bg-paper text-muted' : ''}`}
-                placeholder="QT-2026-0001"
+                disabled
+                placeholder="Assigned on save (FQ260001)"
+                className={`${inputCls} cursor-not-allowed border-ink/30 bg-paper font-mono text-muted`}
               />
-              {errors.quotationNo && <p className="mt-1 font-mono text-xs text-brick">{errors.quotationNo}</p>}
             </div>
             <div>
               <label className={labelCls}>Inquiry Date</label>
               <input type="date" value={form.inquiryDate} onChange={setInput('inquiryDate')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
           </div>
+
+          <Select
+            clearable
+            label="Sales Representative"
+            required
+            searchable
+            placeholder="Select sales representative"
+            options={salesRepOptions}
+            value={form.salesRep}
+            onChange={set('salesRep')}
+            error={errors.salesRep}
+          />
 
           <div>
             <label className={labelCls}>
@@ -447,7 +458,7 @@ export default function QuotationForm({
                 <button
                   key={t}
                   type="button"
-                  onClick={() => setForm((f) => ({ ...f, customerType: t, customer: '', clientName: '' }))}
+                  onClick={() => setForm((f) => ({ ...f, customerType: t, customer: '', clientName: '', contactPerson: '' }))}
                   className={`flex-1 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${
                     form.customerType === t ? 'bg-ink text-paper' : 'bg-card text-muted hover:text-ink'
                   } ${t === 'new' ? 'border-l border-ink/30' : ''}`}
@@ -461,6 +472,7 @@ export default function QuotationForm({
           {form.customerType === 'existing' ? (
             <div>
               <Select
+            clearable
                 label="Client Name / Company"
                 required
                 searchable
@@ -481,7 +493,7 @@ export default function QuotationForm({
                   <span className="text-ink">{form.clientName} <span className="text-muted">(new client)</span></span>
                   <button
                     type="button"
-                    onClick={() => setForm((f) => ({ ...f, customer: '', clientName: '' }))}
+                    onClick={() => setForm((f) => ({ ...f, customer: '', clientName: '', contactPerson: '' }))}
                     className="font-mono text-[10px] uppercase tracking-wide text-rust hover:text-rust-dark"
                   >
                     Change
@@ -501,10 +513,16 @@ export default function QuotationForm({
           )}
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-            <div>
-              <label className={labelCls}>Contact Person</label>
-              <input value={form.contactPerson} onChange={setInput('contactPerson')} className={`${inputCls} border-ink/30`} />
-            </div>
+            <Select
+            clearable
+              label="Contact Person"
+              searchable
+              disabled={!selectedCustomer}
+              placeholder={!selectedCustomer ? 'Select a client first' : contactOptions.length ? 'Select contact' : 'No contacts on this client'}
+              options={contactOptions}
+              value={contactValue}
+              onChange={handleSelectContact}
+            />
             <div>
               <label className={labelCls}>Contact Phone</label>
               <input value={form.contactPhone} onChange={setInput('contactPhone')} className={`${inputCls} border-ink/30`} />
@@ -515,16 +533,41 @@ export default function QuotationForm({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
               <label className={labelCls}>Client Reference No</label>
               <input value={form.clientReferenceNo} onChange={setInput('clientReferenceNo')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
+          </div>
+        </div>
+
+        {/* 2. Ports */}
+        <div className={sectionCls}>
+          <h2 className={sectionTitleCls}>2. Ports</h2>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <Select clearable label="POL" required placeholder="Port of Loading" searchable options={portOptions} value={form.pol} onChange={set('pol')} error={errors.pol} />
+            <Select clearable label="POD" required placeholder="Port of Discharge" searchable options={portOptions} value={form.pod} onChange={set('pod')} error={errors.pod} />
+          </div>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <Select clearable label="Incoterms" placeholder="Select incoterms" options={INCOTERMS.map((v) => ({ value: v, label: v }))} value={form.incoterms} onChange={set('incoterms')} />
             <div>
-              <label className={labelCls}>Sales Representative <span className="text-rust">*</span></label>
-              <input value={form.salesRep} onChange={setInput('salesRep')} className={`${inputCls} ${errors.salesRep ? 'border-brick' : 'border-ink/30'}`} placeholder="Sales rep name" />
-              {errors.salesRep && <p className="mt-1 font-mono text-xs text-brick">{errors.salesRep}</p>}
+              <label className={labelCls}>Target / Required ETD</label>
+              <input type="date" value={form.targetEtd} onChange={setInput('targetEtd')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
+          </div>
+        </div>
+
+        {/* 3. Containers & Cargo */}
+        <div className={sectionCls}>
+          <h2 className={sectionTitleCls}>3. Containers & Cargo</h2>
+          <div>
+            <label className={labelCls}>Container Type & Quantity <span className="text-rust">*</span></label>
+            <ContainerSelector clearable containerTypes={containerTypes} showStock={false} value={form.containers} onChange={set('containers')} />
+            {errors.containers && <p className="mt-1 font-mono text-xs text-brick">{errors.containers}</p>}
+          </div>
+
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className={labelCls}>Commodity <span className="text-rust">*</span></label>
               <input
@@ -535,9 +578,6 @@ export default function QuotationForm({
               />
               {errors.commodity && <p className="mt-1 font-mono text-xs text-brick">{errors.commodity}</p>}
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
             <div>
               <label className={labelCls}>HS Code (preliminary)</label>
               <input value={form.hsCode} onChange={setInput('hsCode')} className={`${inputCls} border-ink/30 font-mono`} />
@@ -553,12 +593,6 @@ export default function QuotationForm({
           </div>
 
           <div>
-            <label className={labelCls}>Container Type & Quantity <span className="text-rust">*</span></label>
-            <ContainerSelector containerTypes={containerTypes} showStock={false} value={form.containers} onChange={set('containers')} />
-            {errors.containers && <p className="mt-1 font-mono text-xs text-brick">{errors.containers}</p>}
-          </div>
-
-          <div>
             <label className={labelCls}>Dangerous Goods</label>
             <div className="flex border border-ink/30">
               <button type="button" onClick={() => set('isDangerous')(false)} className={`flex-1 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${!form.isDangerous ? 'bg-ink text-paper' : 'bg-card text-muted hover:text-ink'}`}>No</button>
@@ -568,11 +602,6 @@ export default function QuotationForm({
           {form.isDangerous && (
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <div>
-                <label className={labelCls}>UN Class <span className="text-rust">*</span></label>
-                <input value={form.unClass} onChange={setInput('unClass')} className={`${inputCls} font-mono ${errors.unClass ? 'border-brick' : 'border-ink/30'}`} />
-                {errors.unClass && <p className="mt-1 font-mono text-xs text-brick">{errors.unClass}</p>}
-              </div>
-              <div>
                 <label className={labelCls}>UN Number <span className="text-rust">*</span></label>
                 <input value={form.unNumber} onChange={setInput('unNumber')} className={`${inputCls} font-mono ${errors.unNumber ? 'border-brick' : 'border-ink/30'}`} />
                 {errors.unNumber && <p className="mt-1 font-mono text-xs text-brick">{errors.unNumber}</p>}
@@ -580,31 +609,31 @@ export default function QuotationForm({
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            <Select label="POR" placeholder="Place of Receipt" searchable options={portOptions} value={form.por} onChange={set('por')} />
-            <Select label="POL" required placeholder="Port of Loading" searchable options={portOptions} value={form.pol} onChange={set('pol')} error={errors.pol} />
-            <Select label="POD" required placeholder="Port of Discharge" searchable options={portOptions} value={form.pod} onChange={set('pod')} error={errors.pod} />
-            <Select label="FPD" placeholder="Final Place of Delivery" searchable options={portOptions} value={form.fpd} onChange={set('fpd')} />
-          </div>
-
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <Select label="Incoterms" placeholder="Select incoterms" options={INCOTERMS.map((v) => ({ value: v, label: v }))} value={form.incoterms} onChange={set('incoterms')} />
-            <div>
-              <label className={labelCls}>Target / Required ETD</label>
-              <input type="date" value={form.targetEtd} onChange={setInput('targetEtd')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-          </div>
-
           <div>
             <label className={labelCls}>Special Notes <span className="normal-case text-muted/70">(reefer temp, open top, flat rack, etc.)</span></label>
             <textarea value={form.specialNotes} onChange={setInput('specialNotes')} rows={2} className={`${inputCls} border-ink/30`} />
           </div>
         </div>
 
-        {/* 2. NVOCC */}
+        {/* 4. Rate Request */}
         <div className={sectionCls}>
-          <h2 className={sectionTitleCls}>2. NVOCC (Master Data)</h2>
-          <Select label="Select NVOCC" placeholder="Choose an NVOCC" searchable options={nvoccOptions} value={form.nvocc} onChange={handleNvoccChange} />
+          <h2 className={sectionTitleCls}>4. Rate Request</h2>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>Target Rate</label>
+              <input type="number" min="0" step="any" value={form.targetRate} onChange={setInput('targetRate')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>Cargo Readiness Date</label>
+              <input type="date" value={form.cargoReadinessDate} onChange={setInput('cargoReadinessDate')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+        </div>
+
+        {/* 5. NVOCC */}
+        <div className={sectionCls}>
+          <h2 className={sectionTitleCls}>5. NVOCC (Master Data)</h2>
+          <Select clearable label="Select NVOCC" placeholder="Choose an NVOCC" searchable options={nvoccOptions} value={form.nvocc} onChange={handleNvoccChange} />
           {rateNote && <p className="font-mono text-xs text-signal">{rateNote}</p>}
           {selectedNvocc && (
             <div className="grid grid-cols-1 gap-x-6 gap-y-3 border border-ink/20 bg-paper/60 p-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -633,20 +662,33 @@ export default function QuotationForm({
                 <p className="text-sm text-ink">{selectedNvocc.tradeLane || '-'}</p>
               </div>
               <div>
-                <span className={labelCls}>Local Agent Name</span>
-                <p className="text-sm text-ink">{selectedNvocc.localAgentName || '-'}</p>
+                <span className={labelCls}>Address</span>
+                <p className="text-sm text-ink">{selectedNvocc.address || '-'}</p>
               </div>
-              <div>
-                <span className={labelCls}>Local Agent Contact</span>
-                <p className="text-sm text-ink">{selectedNvocc.localAgentContact || '-'}</p>
+              <div className="sm:col-span-2 lg:col-span-3">
+                <span className={labelCls}>Contacts</span>
+                {selectedNvocc.contacts?.length ? (
+                  <ul className="space-y-0.5 text-sm text-ink">
+                    {selectedNvocc.contacts.map((c) => (
+                      <li key={c._id}>
+                        {c.name}
+                        {c.title ? ` (${c.title})` : ''}
+                        {c.email ? ` · ${c.email}` : ''}
+                        {c.phone ? ` · ${c.phone}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-ink">-</p>
+                )}
               </div>
             </div>
           )}
         </div>
 
-        {/* 3. Buying */}
+        {/* 6. Buying */}
         <div className={sectionCls}>
-          <h2 className={sectionTitleCls}>3. Buying Rate</h2>
+          <h2 className={sectionTitleCls}>6. Buying Rate</h2>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
               <label className={labelCls}>Rate Valid From</label>
@@ -668,26 +710,18 @@ export default function QuotationForm({
             title="Origin Charges — Buying Rate"
             lines={ORIGIN_LINES}
             value={form.buyingOrigin}
-            onChange={set('buyingOrigin')}
+            onChange={handleBuyingTable('Origin', ORIGIN_LINES)}
             sizes={sizes}
             qtyBySize={qtyBySize}
-            currency={form.buyingCurrency}
-            onCurrencyChange={handleBaseCurrencyChange('buying')}
           />
 
           <RateTable
             title="Destination Charges — Buying Rate"
             lines={DESTINATION_LINES}
             value={form.buyingDestination}
-            onChange={set('buyingDestination')}
+            onChange={handleBuyingTable('Destination', DESTINATION_LINES)}
             sizes={sizes}
             qtyBySize={qtyBySize}
-            currency={form.buyingDestinationCurrency}
-            onCurrencyChange={set('buyingDestinationCurrency')}
-            baseCurrency={form.buyingCurrency}
-            conversionRate={form.buyingDestinationRate}
-            onConversionRateChange={set('buyingDestinationRate')}
-            conversionError={errors.buyingDestinationRate}
           />
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
@@ -702,14 +736,9 @@ export default function QuotationForm({
           </div>
         </div>
 
-        {/* 4. Selling */}
+        {/* 7. Selling */}
         <div className={sectionCls}>
-          <h2 className={sectionTitleCls}>4. Selling Price to Client</h2>
-          <div>
-            <label className={labelCls}>Exchange Rate <span className="normal-case text-muted/70">(buying → selling currency, used for profit)</span></label>
-            <input type="number" min="0" step="0.0001" value={form.exchangeRate} onChange={setInput('exchangeRate')} className={`${inputCls} border-ink/30 font-mono sm:w-64`} />
-          </div>
-
+          <h2 className={sectionTitleCls}>7. Selling Price to Client</h2>
           <RateTable
             title="Origin Charges — Selling Rate"
             lines={ORIGIN_LINES}
@@ -717,8 +746,6 @@ export default function QuotationForm({
             onChange={set('sellingOrigin')}
             sizes={sizes}
             qtyBySize={qtyBySize}
-            currency={form.sellingCurrency}
-            onCurrencyChange={handleBaseCurrencyChange('selling')}
           />
 
           <RateTable
@@ -728,28 +755,17 @@ export default function QuotationForm({
             onChange={set('sellingDestination')}
             sizes={sizes}
             qtyBySize={qtyBySize}
-            currency={form.sellingDestinationCurrency}
-            onCurrencyChange={set('sellingDestinationCurrency')}
-            baseCurrency={form.sellingCurrency}
-            conversionRate={form.sellingDestinationRate}
-            onConversionRateChange={set('sellingDestinationRate')}
-            conversionError={errors.sellingDestinationRate}
           />
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <Select label="Payment Terms" placeholder="Select payment terms" options={PAYMENT_TERMS.map((v) => ({ value: v, label: v }))} value={form.paymentTerms} onChange={set('paymentTerms')} />
-          </div>
-
-          <div>
-            <label className={labelCls}>Valid Until</label>
-            <input type="date" value={form.validUntil} onChange={setInput('validUntil')} className={`${inputCls} border-ink/30 font-mono sm:w-64`} />
+            <Select clearable label="Payment Terms" placeholder="Select payment terms" options={PAYMENT_TERMS.map((v) => ({ value: v, label: v }))} value={form.paymentTerms} onChange={set('paymentTerms')} />
           </div>
         </div>
 
-        {/* 5. Profitability */}
+        {/* 8. Profitability */}
         <div className={sectionCls}>
-          <h2 className={sectionTitleCls}>5. Profitability</h2>
-          <ProfitabilitySummary totals={totals} buyingCurrency={form.buyingCurrency} sellingCurrency={form.sellingCurrency} />
+          <h2 className={sectionTitleCls}>8. Profitability</h2>
+          <ProfitabilitySummary totals={totals} />
         </div>
       </fieldset>
 

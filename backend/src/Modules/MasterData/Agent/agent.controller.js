@@ -3,8 +3,7 @@ import * as service from './agent.service.js'
 
 export const getAll = async (req, res, next) => {
   try {
-    const { type, active } = req.query
-    const data = await service.getAllAgents({ type, activeOnly: active === 'true' })
+    const data = await service.getAllAgents({ activeOnly: req.query.active === 'true', query: req.query })
     res.json({ success: true, data })
   } catch (err) { next(err) }
 }
@@ -31,5 +30,12 @@ export const toggle = async (req, res, next) => {
   try {
     const data = await service.toggleActive(req.params.id)
     res.json({ success: true, data })
+  } catch (err) { next(err) }
+}
+
+export const remove = async (req, res, next) => {
+  try {
+    await service.deleteAgent(req.params.id)
+    res.json({ success: true, message: 'Agent deleted' })
   } catch (err) { next(err) }
 }

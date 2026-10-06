@@ -1,4 +1,5 @@
 import mongoose from 'mongoose'
+import { contactSchema } from '../_shared/party.shared.js'
 
 const customerSchema = new mongoose.Schema(
   {
@@ -11,6 +12,14 @@ const customerSchema = new mongoose.Schema(
       type: Date,
     },
     address: {
+      type: String,
+      trim: true,
+    },
+    country: {
+      type: String,
+      trim: true,
+    },
+    governorate: {
       type: String,
       trim: true,
     },
@@ -31,6 +40,7 @@ const customerSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    contacts: { type: [contactSchema], default: [] },
     isActive: {
       type: Boolean,
       default: true,

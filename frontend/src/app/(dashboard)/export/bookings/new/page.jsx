@@ -30,12 +30,14 @@ function prefillFromQuotation(quotation) {
     pod: quotation.pod?._id || quotation.pod || '',
     commodity: quotation.commodity || '',
     isDangerous: !!quotation.isDangerous,
-    dangerousNumber: quotation.isDangerous ? `${quotation.unClass || ''} ${quotation.unNumber || ''}`.trim() : '',
+    dangerousNumber: quotation.isDangerous ? quotation.unNumber || '' : '',
     containers: (quotation.containers || []).map((c) => ({
       containerType: c.containerType?._id || c.containerType,
       quantity: c.quantity,
     })),
     nvocc: quotation.nvocc?._id || quotation.nvocc || '',
+    // price/cost are the primary currency's totals, so carry that currency too
+    currency: quotation.totalsCurrency || 'USD',
     price: quotation.totalSellingPrice || '',
     cost: quotation.totalBuyingCost || '',
   }

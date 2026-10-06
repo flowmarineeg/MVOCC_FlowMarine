@@ -14,8 +14,6 @@ export const ORIGIN_LINES = [
 
 export const DESTINATION_LINES = [
   { key: 'adminFee', label: 'Admin Fee' },
-  { key: 'cic', label: 'CIC' },
-  { key: 'cmc', label: 'CMC' },
   { key: 'dthc', label: 'DTHC' },
   { key: 'lolo', label: 'LOLO' },
   { key: 'importServiceFee', label: 'Import Service Fee' },

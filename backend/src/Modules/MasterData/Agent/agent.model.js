@@ -1,4 +1,5 @@
 import mongoose from 'mongoose'
+import { partyFields } from '../_shared/party.shared.js'
 
 const agentSchema = new mongoose.Schema(
   {
@@ -7,20 +8,20 @@ const agentSchema = new mongoose.Schema(
       required: [true, 'Agent name is required'],
       trim: true,
     },
-    type: {
+    // Not `required` at schema level: agents seeded before the master-data
+    // update have no code. sparse keeps those out of the unique index.
+    code: {
       type: String,
-      enum: ['POL', 'POD', 'BOTH'],
-      required: [true, 'Agent type is required'],
-    },
-    email: {
-      type: String,
-      trim: true,
-      lowercase: true,
-    },
-    phone: {
-      type: String,
+      unique: true,
+      sparse: true,
+      uppercase: true,
       trim: true,
     },
+    country: {
+      type: String,
+      trim: true,
+    },
+    ...partyFields,
     isActive: {
       type: Boolean,
       default: true,

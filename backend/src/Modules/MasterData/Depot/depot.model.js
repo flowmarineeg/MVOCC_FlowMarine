@@ -1,4 +1,5 @@
 import mongoose from 'mongoose'
+import { partyFields } from '../_shared/party.shared.js'
 
 const depotSchema = new mongoose.Schema(
   {
@@ -14,6 +15,7 @@ const depotSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
+    ...partyFields,
     isActive: {
       type: Boolean,
       default: true,

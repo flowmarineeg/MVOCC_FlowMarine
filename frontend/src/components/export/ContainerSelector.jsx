@@ -3,7 +3,7 @@
 import { FaPlus, FaTrash, FaExclamationTriangle } from 'react-icons/fa'
 import Select from '@/components/ui/Select'
 
-export default function ContainerSelector({ containerTypes = [], stockMap = {}, showStock = true, value = [], onChange }) {
+export default function ContainerSelector({ containerTypes = [], stockMap = {}, showStock = true, value = [], onChange, clearable = false }) {
   const rows = value.length ? value : [{ containerType: '', quantity: 1 }]
 
   const typeOptions = containerTypes.map((ct) => ({ value: ct._id, label: `${ct.code} — ${ct.label}` }))
@@ -53,6 +53,7 @@ export default function ContainerSelector({ containerTypes = [], stockMap = {}, 
               <Select
                 placeholder="Select container type"
                 options={typeOptions}
+                clearable={clearable}
                 value={row.containerType}
                 onChange={(v) => updateRow(index, { containerType: v })}
               />

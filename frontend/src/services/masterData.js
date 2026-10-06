@@ -35,8 +35,47 @@ export const updatePort = (id, data) => api.put(`/master/ports/${id}`, data).the
 export const togglePort = (id) => api.patch(`/master/ports/${id}/toggle`).then((r) => r.data.data)
 export const deletePort = (id) => api.delete(`/master/ports/${id}`).then((r) => r.data)
 
-export const getAgents = (type = null, activeOnly = true) =>
-  api.get('/master/agents', { params: { ...(type && { type }), active: activeOnly } }).then((r) => r.data.data)
+export const getAgents = (activeOnly = true) =>
+  api.get('/master/agents', { params: { active: activeOnly } }).then((r) => r.data.data)
+export const createAgent = (data) => api.post('/master/agents', data).then((r) => r.data.data)
+export const updateAgent = (id, data) => api.put(`/master/agents/${id}`, data).then((r) => r.data.data)
+export const toggleAgent = (id) => api.patch(`/master/agents/${id}/toggle`).then((r) => r.data.data)
+export const deleteAgent = (id) => api.delete(`/master/agents/${id}`).then((r) => r.data)
+
+export const getVesselOperators = (activeOnly = true) =>
+  api.get('/master/vessel-operators', { params: { active: activeOnly } }).then((r) => r.data.data)
+export const createVesselOperator = (data) => api.post('/master/vessel-operators', data).then((r) => r.data.data)
+export const updateVesselOperator = (id, data) => api.put(`/master/vessel-operators/${id}`, data).then((r) => r.data.data)
+export const toggleVesselOperator = (id) => api.patch(`/master/vessel-operators/${id}/toggle`).then((r) => r.data.data)
+export const deleteVesselOperator = (id) => api.delete(`/master/vessel-operators/${id}`).then((r) => r.data)
+
+export const getVessels = (activeOnly = true) =>
+  api.get('/master/vessels', { params: { active: activeOnly } }).then((r) => r.data.data)
+export const createVessel = (data) => api.post('/master/vessels', data).then((r) => r.data.data)
+export const updateVessel = (id, data) => api.put(`/master/vessels/${id}`, data).then((r) => r.data.data)
+export const toggleVessel = (id) => api.patch(`/master/vessels/${id}/toggle`).then((r) => r.data.data)
+export const deleteVessel = (id) => api.delete(`/master/vessels/${id}`).then((r) => r.data)
+
+export const getPackages = (activeOnly = true) =>
+  api.get('/master/packages', { params: { active: activeOnly } }).then((r) => r.data.data)
+export const createPackage = (data) => api.post('/master/packages', data).then((r) => r.data.data)
+export const updatePackage = (id, data) => api.put(`/master/packages/${id}`, data).then((r) => r.data.data)
+export const togglePackage = (id) => api.patch(`/master/packages/${id}/toggle`).then((r) => r.data.data)
+export const deletePackage = (id) => api.delete(`/master/packages/${id}`).then((r) => r.data)
+
+export const getUnits = (activeOnly = true) =>
+  api.get('/master/units', { params: { active: activeOnly } }).then((r) => r.data.data)
+export const createUnit = (data) => api.post('/master/units', data).then((r) => r.data.data)
+export const updateUnit = (id, data) => api.put(`/master/units/${id}`, data).then((r) => r.data.data)
+export const toggleUnit = (id) => api.patch(`/master/units/${id}/toggle`).then((r) => r.data.data)
+export const deleteUnit = (id) => api.delete(`/master/units/${id}`).then((r) => r.data)
+
+export const getParties = (activeOnly = true) =>
+  api.get('/master/parties', { params: { active: activeOnly } }).then((r) => r.data.data)
+export const createParty = (data) => api.post('/master/parties', data).then((r) => r.data.data)
+export const updateParty = (id, data) => api.put(`/master/parties/${id}`, data).then((r) => r.data.data)
+export const toggleParty = (id) => api.patch(`/master/parties/${id}/toggle`).then((r) => r.data.data)
+export const deleteParty = (id) => api.delete(`/master/parties/${id}`).then((r) => r.data)
 
 export const getCustomers = (activeOnly = true) =>
   api.get('/master/customers', { params: { active: activeOnly } }).then((r) => r.data.data)
@@ -50,9 +89,26 @@ export const deleteCustomer = (id) => api.delete(`/master/customers/${id}`).then
 export const CUSTOMER_FORM_FIELDS = [
   { key: 'date', label: 'Date', type: 'date', required: false },
   { key: 'name', label: 'Name' },
-  { key: 'address', label: 'Address', required: false },
+  { key: 'address', label: 'Address', required: false, table: false },
+  { key: 'country', label: 'Country', type: 'country', required: false },
+  { key: 'governorate', label: 'Governorate', type: 'governorate', countryKey: 'country', required: false },
   { key: 'phone', label: 'Phone', required: false },
   { key: 'email', label: 'Email', type: 'email', required: false },
   { key: 'taxNumber', label: 'Tax Number', required: false },
   { key: 'taxRegister', label: 'Tax Register', required: false },
+  { key: 'contacts', label: 'Contacts', type: 'contacts' },
+]
+
+// Shared by NVOCC, VO, Depot, Agent and Parties: identity + tax/registration +
+// contract validity + contact rows. Mirrors backend _shared/party.shared.js.
+export const partyFormFields = ({ codeLabel = 'Code' } = {}) => [
+  { key: 'name', label: 'Name' },
+  { key: 'code', label: codeLabel },
+  { key: 'address', label: 'Address', required: false, table: false },
+  { key: 'taxNumber', label: 'Tax Number', required: false },
+  { key: 'registrationNumber', label: 'Registration Number', required: false, table: false },
+  { key: 'contractType', label: 'Contract Type', type: 'select', options: ['Contract', 'Spot'], required: false },
+  { key: 'contractValidFrom', label: 'Valid From', type: 'date', required: false },
+  { key: 'contractValidTo', label: 'Valid To', type: 'date', required: false },
+  { key: 'contacts', label: 'Contacts', type: 'contacts' },
 ]

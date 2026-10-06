@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { FaArrowLeft } from 'react-icons/fa'
 import * as quotationApi from '@/services/quotation'
 import * as masterDataApi from '@/services/masterData'
+import * as teamApi from '@/services/team'
 import { PageLoader } from '@/components/ui/Spinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { useToast } from '@/components/ui/Toast'
@@ -24,6 +25,7 @@ export default function NewQuotationPage() {
   const [ports, setPorts] = useState([])
   const [containerTypes, setContainerTypes] = useState([])
   const [nvoccs, setNvoccs] = useState([])
+  const [teamMembers, setTeamMembers] = useState([])
 
   useEffect(() => {
     Promise.all([
@@ -31,12 +33,16 @@ export default function NewQuotationPage() {
       masterDataApi.getPorts(),
       masterDataApi.getContainerTypes(),
       masterDataApi.getNvoccs(),
+      permissions.includes('team:read')
+        ? teamApi.getMembers({ status: 'active', limit: 100 }).then((r) => r.members).catch(() => [])
+        : Promise.resolve([]),
     ])
-      .then(([customersRes, portsRes, typesRes, nvoccsRes]) => {
+      .then(([customersRes, portsRes, typesRes, nvoccsRes, membersRes]) => {
         setCustomers(customersRes)
         setPorts(portsRes)
         setContainerTypes(typesRes)
         setNvoccs(nvoccsRes)
+        setTeamMembers(membersRes)
       })
       .catch((err) => toast(err.message, 'error'))
       .finally(() => setLoading(false))
@@ -78,6 +84,7 @@ export default function NewQuotationPage() {
           containerTypes={containerTypes}
           nvoccs={nvoccs}
           currentUser={user}
+          teamMembers={teamMembers}
           submitting={submitting}
           onSubmit={handleSubmit}
           onCustomerCreated={(c) => setCustomers((prev) => [...prev, c])}

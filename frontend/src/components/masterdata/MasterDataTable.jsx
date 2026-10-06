@@ -4,7 +4,19 @@ import { motion } from 'framer-motion'
 import { FaEdit, FaToggleOn, FaToggleOff, FaTrash } from 'react-icons/fa'
 import Badge from '@/components/ui/Badge'
 
-export default function MasterDataTable({ items = [], fields, canUpdate = false, onEdit, onToggle, onDeleteRequest, busyId }) {
+// Contacts render as a count and ref selects as the populated name, so the table
+// stays readable however many inputs the form has. `table: false` hides a column.
+const cellValue = (f, item) => {
+  if (f.format) return f.format(item)
+  const v = item[f.key]
+  if (f.type === 'date') return v ? new Date(v).toLocaleDateString() : ''
+  if (f.type === 'contacts') return v?.length ? `${v.length} contact${v.length > 1 ? 's' : ''}` : ''
+  if (v && typeof v === 'object') return v.name || v.code || ''
+  return v
+}
+
+export default function MasterDataTable({ items = [], fields: allFields, canUpdate = false, onEdit, onToggle, onDeleteRequest, busyId }) {
+  const fields = allFields.filter((f) => f.table !== false)
   return (
     <div className="overflow-x-auto border border-ink/25 bg-card">
       <table className="w-full text-sm">
@@ -28,7 +40,7 @@ export default function MasterDataTable({ items = [], fields, canUpdate = false,
             >
               {fields.map((f) => (
                 <td key={f.key} className="px-4 py-3 text-ink">
-                  {f.type === 'date' && item[f.key] ? new Date(item[f.key]).toLocaleDateString() : item[f.key]}
+                  {cellValue(f, item)}
                 </td>
               ))}
               <td className="px-4 py-3"><Badge value={item.isActive ? 'active' : 'inactive'} /></td>

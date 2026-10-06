@@ -1,6 +1,7 @@
 import mongoose from 'mongoose'
 import Quotation, { ORIGIN_LINE_KEYS, DESTINATION_LINE_KEYS } from './quotation.model.js'
 import ContainerType from '../../MasterData/ContainerType/containerType.model.js'
+import JobCounter from '../Booking/jobCounter.model.js'
 
 // MVP scope cut — no settings/admin-configurable UI exists yet in this
 // codebase, so the minimum acceptable margin is a plain constant here,
@@ -10,11 +11,9 @@ const MIN_MARGIN_PERCENT = 10
 const POPULATE_FIELDS = [
   { path: 'customer', select: 'name email phone' },
   { path: 'containers.containerType', select: 'code label' },
-  { path: 'por', select: 'name code country' },
   { path: 'pol', select: 'name code country' },
   { path: 'pod', select: 'name code country' },
-  { path: 'fpd', select: 'name code country' },
-  { path: 'nvocc', select: 'name code contractType contractValidFrom contractValidTo tradeLane localAgentName localAgentContact' },
+  { path: 'nvocc', select: 'name code contractType contractValidFrom contractValidTo tradeLane address contacts' },
   { path: 'approvedBy', select: 'name email' },
   { path: 'linkedBooking', select: 'jobNo status' },
   { path: 'updatedBy', select: 'name email' },
@@ -71,81 +70,87 @@ const lineTotal = (line, qtyBySize) => {
   }, 0)
 }
 
-const tableTotal = (table, keys, qtyBySize) => {
-  if (!table) return 0
-  const fixed = keys.reduce((sum, key) => sum + lineTotal(table[key], qtyBySize), 0)
-  const custom = (table.custom || []).reduce((sum, line) => sum + lineTotal(line, qtyBySize), 0)
-  return fixed + custom
-}
-
-// Destination has its own currency; convert it into the side's base currency
-// (the Origin table's) only when the two actually differ.
-const sideTotal = (origin, destination, { currency, destinationCurrency, destinationRate }, qtyBySize) => {
-  const rate = destinationCurrency && destinationCurrency !== currency ? Number(destinationRate) || 1 : 1
-  return tableTotal(origin, ORIGIN_LINE_KEYS, qtyBySize) + tableTotal(destination, DESTINATION_LINE_KEYS, qtyBySize) * rate
+// Adds every visible line of one table into `acc` (currency -> amount). A line
+// without its own currency (saved before per-row currencies) falls back to the
+// legacy table currency.
+const addTableTotals = (acc, table, keys, qtyBySize, fallbackCurrency) => {
+  if (!table) return
+  const hidden = new Set(table.hidden || [])
+  const add = (line) => {
+    const total = lineTotal(line, qtyBySize)
+    if (!total) return
+    const currency = String(line.currency ?? fallbackCurrency ?? '').trim().toUpperCase()
+    acc.set(currency, (acc.get(currency) || 0) + total)
+  }
+  keys.filter((key) => !hidden.has(key)).forEach((key) => add(table[key]))
+  ;(table.custom || []).forEach(add)
 }
 
 // Server-authoritative profitability calc — recomputed on every create/update
 // regardless of what the client sends, same principle as Booking's
-// clearDangerousNumberIfNotDangerous().
+// clearDangerousNumberIfNotDangerous(). Per currency, never converted.
 const applyProfitability = async (quotation) => {
   const qtyBySize = await getQtyBySize(quotation.containers)
 
-  const totalBuyingCost = sideTotal(
-    quotation.buyingOrigin,
-    quotation.buyingDestination,
-    {
-      currency: quotation.buyingCurrency,
-      destinationCurrency: quotation.buyingDestinationCurrency,
-      destinationRate: quotation.buyingDestinationRate,
-    },
-    qtyBySize
-  )
-  const totalSellingPrice = sideTotal(
-    quotation.sellingOrigin,
-    quotation.sellingDestination,
-    {
-      currency: quotation.sellingCurrency,
-      destinationCurrency: quotation.sellingDestinationCurrency,
-      destinationRate: quotation.sellingDestinationRate,
-    },
-    qtyBySize
-  )
+  const buying = new Map()
+  const selling = new Map()
+  addTableTotals(buying, quotation.buyingOrigin, ORIGIN_LINE_KEYS, qtyBySize, quotation.buyingCurrency)
+  addTableTotals(buying, quotation.buyingDestination, DESTINATION_LINE_KEYS, qtyBySize, quotation.buyingDestinationCurrency)
+  addTableTotals(selling, quotation.sellingOrigin, ORIGIN_LINE_KEYS, qtyBySize, quotation.sellingCurrency)
+  addTableTotals(selling, quotation.sellingDestination, DESTINATION_LINE_KEYS, qtyBySize, quotation.sellingDestinationCurrency)
 
-  const exchangeRate = Number(quotation.exchangeRate) || 1
-  const netProfit = totalSellingPrice - totalBuyingCost * exchangeRate
-  const profitMarginPercent = totalSellingPrice > 0 ? (netProfit / totalSellingPrice) * 100 : 0
+  const rows = [...new Set([...buying.keys(), ...selling.keys()])]
+    .map((currency) => {
+      const buy = buying.get(currency) || 0
+      const sell = selling.get(currency) || 0
+      const netProfit = sell - buy
+      const marginPercent = sell > 0 ? (netProfit / sell) * 100 : 0
+      return { currency, buying: buy, selling: sell, netProfit, marginPercent, belowMinMargin: marginPercent < MIN_MARGIN_PERCENT }
+    })
+    .sort((x, y) => y.selling - x.selling || y.buying - x.buying || x.currency.localeCompare(y.currency))
 
-  quotation.totalBuyingCost = totalBuyingCost
-  quotation.totalSellingPrice = totalSellingPrice
-  quotation.netProfit = netProfit
-  quotation.profitMarginPercent = profitMarginPercent
-  quotation.belowMinMargin = profitMarginPercent < MIN_MARGIN_PERCENT
+  const primary = rows[0]
+  quotation.totalsByCurrency = rows
+  quotation.totalsCurrency = primary?.currency ?? ''
+  quotation.totalBuyingCost = primary?.buying ?? 0
+  quotation.totalSellingPrice = primary?.selling ?? 0
+  quotation.netProfit = primary?.netProfit ?? 0
+  quotation.profitMarginPercent = primary?.marginPercent ?? 0
+  // An unpriced draft (no rows) reads as below-margin, as before: it can't be
+  // waved through to 'approved' without real numbers.
+  quotation.belowMinMargin = rows.length === 0 ? true : rows.some((r) => r.belowMinMargin)
 }
 
 const EDITABLE_FIELDS = [
   'customerType', 'customer', 'clientName', 'contactPerson', 'contactPhone', 'contactEmail',
   'clientReferenceNo', 'inquiryDate', 'salesRep', 'commodity', 'hsCode', 'containers',
-  'grossWeight', 'cbm', 'isDangerous', 'unClass', 'unNumber', 'por', 'pol', 'pod', 'fpd',
-  'incoterms', 'targetEtd', 'specialNotes', 'nvocc',
-  'buyingCurrency', 'rateValidFrom', 'rateValidTo', 'buyingOrigin',
-  'buyingDestinationCurrency', 'buyingDestinationRate', 'buyingDestination',
+  'grossWeight', 'cbm', 'isDangerous', 'unNumber', 'pol', 'pod',
+  'incoterms', 'targetEtd', 'targetRate', 'cargoReadinessDate', 'specialNotes', 'nvocc',
+  'rateValidFrom', 'rateValidTo', 'buyingOrigin', 'buyingDestination',
   'freeTimeBuyingDays', 'rateSourceReference',
-  'sellingCurrency', 'exchangeRate', 'sellingOrigin',
-  'sellingDestinationCurrency', 'sellingDestinationRate', 'sellingDestination',
-  'paymentTerms', 'validUntil',
+  'sellingOrigin', 'sellingDestination',
+  'paymentTerms',
 ]
 
 const clearDangerousFieldsIfNotDangerous = (quotation) => {
   if (!quotation.isDangerous) {
-    quotation.unClass = undefined
     quotation.unNumber = undefined
   }
 }
 
 // ─── Create ───────────────────────────────────────────────────────────────
+// Atomic per-year sequence, same technique as Booking's getNextJobNo():
+// findOneAndUpdate($inc, upsert) so concurrent creates never collide.
+// Format: FQ + last two digits of the year + 4-digit sequence (FQ260001).
+const getNextQuotationNo = async () => {
+  const year = new Date().getFullYear()
+  const counter = await JobCounter.findOneAndUpdate({ _id: `quotation-${year}` }, { $inc: { seq: 1 } }, { upsert: true, new: true })
+  return `FQ${String(year).slice(-2)}${String(counter.seq).padStart(4, '0')}`
+}
+
 export const createQuotation = async (data, currentUser) => {
-  const payload = { ...data }
+  // quotationNo is never accepted from the client.
+  const payload = { ...data, quotationNo: await getNextQuotationNo() }
   if (!payload.salesRep) payload.salesRep = currentUser?.name || currentUser?.email
   payload.updatedBy = currentUser?._id || currentUser?.id
   const quotation = new Quotation(payload)
@@ -261,7 +266,7 @@ export const suggestRateForNvocc = async (nvoccId, excludeId) => {
 
   const last = await Quotation.findOne(filter)
     .sort({ createdAt: -1 })
-    .select('buyingCurrency buyingOrigin buyingDestinationCurrency buyingDestinationRate buyingDestination freeTimeBuyingDays rateSourceReference quotationNo createdAt')
+    .select('buyingCurrency buyingOrigin buyingDestinationCurrency buyingDestination freeTimeBuyingDays rateSourceReference quotationNo createdAt')
 
   return last || null
 }

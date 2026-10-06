@@ -1,6 +1,7 @@
 // Mirrors quotation.service.js's applyProfitability() for live preview while
 // the user is still typing — the server recomputes this authoritatively on
-// every save regardless of what's shown here.
+// every save regardless of what's shown here. Profit is computed PER CURRENCY:
+// every row carries its own currency and nothing is converted between them.
 import { CONTAINER_SIZES, ORIGIN_LINES, DESTINATION_LINES } from '@/constants/quotationRates'
 
 const MIN_MARGIN_PERCENT = 10
@@ -43,33 +44,43 @@ export function lineTotal(line = {}, qtyBySize) {
   return CONTAINER_SIZES.reduce((sum, size) => sum + lineSizeTotal(line, size, qtyBySize), 0)
 }
 
-export function tableTotal(table = {}, lines, qtyBySize) {
-  const fixed = lines.reduce((sum, { key }) => sum + lineTotal(table[key], qtyBySize), 0)
-  const custom = (table.custom || []).reduce((sum, line) => sum + lineTotal(line, qtyBySize), 0)
-  return fixed + custom
+export const lineCurrency = (line) => String(line?.currency ?? '').trim().toUpperCase()
+
+// currency -> amount for one table, skipping removed (hidden) standard lines.
+export function tableTotalsByCurrency(table = {}, lines, qtyBySize, acc = new Map()) {
+  const hidden = new Set(table.hidden || [])
+  const add = (line) => {
+    const total = lineTotal(line, qtyBySize)
+    if (!total) return
+    const cur = lineCurrency(line)
+    acc.set(cur, (acc.get(cur) || 0) + total)
+  }
+  lines.filter(({ key }) => !hidden.has(key)).forEach(({ key }) => add(table[key]))
+  ;(table.custom || []).forEach(add)
+  return acc
 }
 
-// Destination has its own currency; it's converted into the side's base
-// (Origin) currency only when the two differ.
-export function sideTotal({ origin, destination, currency, destinationCurrency, destinationRate }, qtyBySize) {
-  const rate = destinationCurrency && destinationCurrency !== currency ? Number(destinationRate) || 1 : 1
-  return tableTotal(origin, ORIGIN_LINES, qtyBySize) + tableTotal(destination, DESTINATION_LINES, qtyBySize) * rate
-}
+export function computeProfitability({ qtyBySize, buying, selling }) {
+  const buy = new Map()
+  const sell = new Map()
+  tableTotalsByCurrency(buying.origin, ORIGIN_LINES, qtyBySize, buy)
+  tableTotalsByCurrency(buying.destination, DESTINATION_LINES, qtyBySize, buy)
+  tableTotalsByCurrency(selling.origin, ORIGIN_LINES, qtyBySize, sell)
+  tableTotalsByCurrency(selling.destination, DESTINATION_LINES, qtyBySize, sell)
 
-export function computeProfitability({ qtyBySize, buying, selling, exchangeRate = 1 }) {
-  const totalBuyingCost = sideTotal(buying, qtyBySize)
-  const totalSellingPrice = sideTotal(selling, qtyBySize)
-
-  const rate = Number(exchangeRate) || 1
-  const netProfit = totalSellingPrice - totalBuyingCost * rate
-  const profitMarginPercent = totalSellingPrice > 0 ? (netProfit / totalSellingPrice) * 100 : 0
+  const rows = [...new Set([...buy.keys(), ...sell.keys()])]
+    .map((currency) => {
+      const b = buy.get(currency) || 0
+      const s = sell.get(currency) || 0
+      const netProfit = s - b
+      const marginPercent = s > 0 ? (netProfit / s) * 100 : 0
+      return { currency, buying: b, selling: s, netProfit, marginPercent, belowMinMargin: marginPercent < MIN_MARGIN_PERCENT }
+    })
+    .sort((x, y) => y.selling - x.selling || y.buying - x.buying || x.currency.localeCompare(y.currency))
 
   return {
-    totalBuyingCost,
-    totalSellingPrice,
-    netProfit,
-    profitMarginPercent,
-    belowMinMargin: profitMarginPercent < MIN_MARGIN_PERCENT,
+    rows,
+    belowMinMargin: rows.length === 0 ? true : rows.some((r) => r.belowMinMargin),
   }
 }
 

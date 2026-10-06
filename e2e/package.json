@@ -10,7 +10,10 @@
     "booking:api": "node booking/api.e2e.mjs",
     "booking:ui": "node booking/ui.e2e.mjs",
     "booking": "node booking/api.e2e.mjs && node booking/ui.e2e.mjs",
-    "all": "node quotation/api.e2e.mjs && node quotation/ui.e2e.mjs && node booking/api.e2e.mjs && node booking/ui.e2e.mjs"
+    "masterdata": "node masterdata/api.e2e.mjs && node masterdata/ui.e2e.mjs",
+    "masterdata:api": "node masterdata/api.e2e.mjs",
+    "masterdata:ui": "node masterdata/ui.e2e.mjs",
+    "all": "node masterdata/api.e2e.mjs && node quotation/api.e2e.mjs && node quotation/ui.e2e.mjs && node booking/api.e2e.mjs && node booking/ui.e2e.mjs"
   },
   "dependencies": {
     "playwright-core": "^1.49.0"

@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { FaArrowLeft, FaTimes, FaExclamationTriangle } from 'react-icons/fa'
 import * as quotationApi from '@/services/quotation'
 import * as masterDataApi from '@/services/masterData'
+import * as teamApi from '@/services/team'
 import { PageLoader } from '@/components/ui/Spinner'
 import Badge from '@/components/ui/Badge'
 import Plate from '@/components/ui/Plate'
@@ -100,6 +101,7 @@ export default function QuotationDetailPage() {
   const [ports, setPorts] = useState([])
   const [containerTypes, setContainerTypes] = useState([])
   const [nvoccs, setNvoccs] = useState([])
+  const [teamMembers, setTeamMembers] = useState([])
 
   const load = () => {
     quotationApi.getQuotationById(id).then(setQuotation).catch((err) => toast(err.message, 'error'))
@@ -112,13 +114,17 @@ export default function QuotationDetailPage() {
       masterDataApi.getPorts(),
       masterDataApi.getContainerTypes(),
       masterDataApi.getNvoccs(),
+      permissions.includes('team:read')
+        ? teamApi.getMembers({ status: 'active', limit: 100 }).then((r) => r.members).catch(() => [])
+        : Promise.resolve([]),
     ])
-      .then(([q, customersRes, portsRes, typesRes, nvoccsRes]) => {
+      .then(([q, customersRes, portsRes, typesRes, nvoccsRes, membersRes]) => {
         setQuotation(q)
         setCustomers(customersRes)
         setPorts(portsRes)
         setContainerTypes(typesRes)
         setNvoccs(nvoccsRes)
+        setTeamMembers(membersRes)
       })
       .catch((err) => toast(err.message, 'error'))
       .finally(() => setLoading(false))
@@ -225,6 +231,7 @@ export default function QuotationDetailPage() {
         containerTypes={containerTypes}
         nvoccs={nvoccs}
         currentUser={user}
+        teamMembers={teamMembers}
         submitting={saving}
         canOverrideLock={canApprove}
         onSubmit={handleSave}

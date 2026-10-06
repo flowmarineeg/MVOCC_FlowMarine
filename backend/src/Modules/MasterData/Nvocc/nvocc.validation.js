@@ -1,22 +1,16 @@
 import { body } from 'express-validator'
+import { partyRules } from '../_shared/party.shared.js'
 
-const optionalContractFields = [
-  body('contractType').optional({ checkFalsy: true }).isIn(['Contract', 'Spot']).withMessage('Contract type must be Contract or Spot'),
-  body('contractValidFrom').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid contract validity from date'),
-  body('contractValidTo').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid contract validity to date'),
-  body('localAgentName').optional().trim(),
-  body('localAgentContact').optional().trim(),
-  body('tradeLane').optional().trim(),
-]
+const optionalFields = [...partyRules, body('tradeLane').optional().trim()]
 
 export const createRules = [
   body('name').trim().notEmpty().withMessage('NVOCC name is required'),
   body('code').trim().notEmpty().withMessage('NVOCC code is required'),
-  ...optionalContractFields,
+  ...optionalFields,
 ]
 
 export const updateRules = [
   body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
   body('code').optional().trim().notEmpty().withMessage('Code cannot be empty'),
-  ...optionalContractFields,
+  ...optionalFields,
 ]

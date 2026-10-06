@@ -24,30 +24,51 @@ const containerEntrySchema = new mongoose.Schema(
 // (e.g. BL / Telex / Documentation are per B/L or per shipment).
 const amount = { type: Number, min: [0, 'Must be a positive number'] }
 
-const rateLineFields = { rate20: amount, rate40: amount, qty20: amount, qty40: amount }
+// Every line carries its OWN currency (blank = "no currency" group). Lines saved
+// before per-row currencies existed have none; the service then falls back to
+// the legacy side/table currency fields below.
+const rateLineFields = { rate20: amount, rate40: amount, qty20: amount, qty40: amount, currency: { type: String, trim: true, uppercase: true } }
 const rateLineSchema = new mongoose.Schema(rateLineFields, { _id: false })
+// uid is a client-generated id that links a custom row in a Buying table to its
+// mirrored row in the Selling table (buying -> selling sync); never shown.
 const customLineSchema = new mongoose.Schema(
-  { label: { type: String, trim: true, required: true }, ...rateLineFields },
+  { label: { type: String, trim: true, required: true }, uid: { type: String, trim: true }, ...rateLineFields },
   { _id: false }
 )
 
 export const ORIGIN_LINE_KEYS = ['oceanFreight', 'dgSurcharge', 'thc', 'bl', 'telex', 'documentation']
-export const DESTINATION_LINE_KEYS = ['adminFee', 'cic', 'cmc', 'dthc', 'lolo', 'importServiceFee', 'deliveryOrder']
+export const DESTINATION_LINE_KEYS = ['adminFee', 'dthc', 'lolo', 'importServiceFee', 'deliveryOrder']
 
 const buildTableSchema = (keys) =>
   new mongoose.Schema(
     {
       ...Object.fromEntries(keys.map((key) => [key, { type: rateLineSchema, default: undefined }])),
       custom: { type: [customLineSchema], default: [] },
+      // Standard lines the user removed from this quotation (kept so a removed
+      // row doesn't come back on reload; its values are cleared when removed).
+      hidden: { type: [String], default: [] },
     },
     { _id: false }
   )
+
+const totalsRowSchema = new mongoose.Schema(
+  {
+    currency: { type: String, default: '' },
+    buying: { type: Number, default: 0 },
+    selling: { type: Number, default: 0 },
+    netProfit: { type: Number, default: 0 },
+    marginPercent: { type: Number, default: 0 },
+    belowMinMargin: { type: Boolean, default: false },
+  },
+  { _id: false }
+)
 
 const originTableSchema = buildTableSchema(ORIGIN_LINE_KEYS)
 const destinationTableSchema = buildTableSchema(DESTINATION_LINE_KEYS)
 
 const quotationSchema = new mongoose.Schema(
   {
+    // Server-generated: FQ + 2-digit year + 4-digit yearly sequence (FQ260001).
     quotationNo: {
       type: String,
       required: [true, 'Quotation number is required'],
@@ -101,16 +122,6 @@ const quotationSchema = new mongoose.Schema(
     grossWeight: { type: Number, min: [0, 'Gross weight must be a positive number'] },
     cbm: { type: Number, min: [0, 'CBM must be a positive number'] },
     isDangerous: { type: Boolean, default: false },
-    unClass: {
-      type: String,
-      trim: true,
-      validate: {
-        validator: function (v) {
-          return !this.isDangerous || !!(v && v.trim())
-        },
-        message: 'UN Class is required when cargo is marked dangerous',
-      },
-    },
     unNumber: {
       type: String,
       trim: true,
@@ -121,40 +132,37 @@ const quotationSchema = new mongoose.Schema(
         message: 'UN Number is required when cargo is marked dangerous',
       },
     },
-    por: { type: mongoose.Schema.Types.ObjectId, ref: 'Port' },
     pol: { type: mongoose.Schema.Types.ObjectId, ref: 'Port', required: [true, 'Port of Loading is required'] },
     pod: { type: mongoose.Schema.Types.ObjectId, ref: 'Port', required: [true, 'Port of Discharge is required'] },
-    fpd: { type: mongoose.Schema.Types.ObjectId, ref: 'Port' },
     incoterms: {
       type: String,
       enum: ['EXW', 'FCA', 'FOB', 'CPT', 'CIP', 'CFR', 'CIF', 'DAP', 'DPU', 'DDP'],
     },
     targetEtd: { type: Date },
+    targetRate: { type: Number, min: [0, 'Target rate must be a positive number'] },
+    cargoReadinessDate: { type: Date },
     specialNotes: { type: String, trim: true },
 
     // ─── 2) NVOCC ──────────────────────────────────────────────────────
     nvocc: { type: mongoose.Schema.Types.ObjectId, ref: 'Nvocc' },
 
     // ─── 3) Buying ─────────────────────────────────────────────────────
-    // buyingCurrency is the Origin table's currency and the base currency all
-    // buying totals are expressed in. The Destination table has its own
-    // currency; when it differs, buyingDestinationRate converts it to base.
+    // buyingCurrency / buyingDestinationCurrency (and the selling pair below) are
+    // DEPRECATED: currency is per row now. They are no longer editable and only
+    // serve as the fallback currency for lines saved before that change.
     buyingCurrency: { type: String, trim: true, default: 'USD' },
     rateValidFrom: { type: Date },
     rateValidTo: { type: Date },
     buyingOrigin: { type: originTableSchema, default: () => ({}) },
     buyingDestinationCurrency: { type: String, trim: true, default: 'USD' },
-    buyingDestinationRate: { type: Number, min: [0, 'Exchange rate must be a positive number'], default: 1 },
     buyingDestination: { type: destinationTableSchema, default: () => ({}) },
     freeTimeBuyingDays: { type: Number, min: [0, 'Must be a positive number'] },
     rateSourceReference: { type: String, trim: true },
 
     // ─── 4) Selling ────────────────────────────────────────────────────
     sellingCurrency: { type: String, trim: true, default: 'USD' },
-    exchangeRate: { type: Number, min: [0, 'Exchange rate must be a positive number'], default: 1 },
     sellingOrigin: { type: originTableSchema, default: () => ({}) },
     sellingDestinationCurrency: { type: String, trim: true, default: 'USD' },
-    sellingDestinationRate: { type: Number, min: [0, 'Exchange rate must be a positive number'], default: 1 },
     sellingDestination: { type: destinationTableSchema, default: () => ({}) },
     paymentTerms: {
       type: String,
@@ -162,6 +170,12 @@ const quotationSchema = new mongoose.Schema(
     },
 
     // ─── 5) Profitability (server-computed — see quotation.service.js) ──
+    // Profit is computed PER CURRENCY (no conversion between currencies).
+    // totalsByCurrency holds the full breakdown; the four scalar totals below
+    // are the PRIMARY currency's (largest selling total) so lists and the
+    // convert-to-job prefill still have a single price/cost/margin to read.
+    totalsCurrency: { type: String, default: '' },
+    totalsByCurrency: { type: [totalsRowSchema], default: [] },
     totalBuyingCost: { type: Number, default: 0 },
     totalSellingPrice: { type: Number, default: 0 },
     netProfit: { type: Number, default: 0 },
@@ -176,7 +190,6 @@ const quotationSchema = new mongoose.Schema(
     },
     rejectionReason: { type: String, trim: true },
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    validUntil: { type: Date },
 
     // ─── Linkage (set once, by the convert-to-booking flow) ─────────────
     linkedBooking: { type: mongoose.Schema.Types.ObjectId, ref: 'Booking', default: null },

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { FaChevronDown, FaCheck, FaSearch } from 'react-icons/fa'
+import { FaChevronDown, FaCheck, FaSearch, FaTimes } from 'react-icons/fa'
 
 export default function Select({
   label,
@@ -13,6 +13,7 @@ export default function Select({
   error,
   disabled = false,
   required = false,
+  clearable = false, // shows an ✕ that sets the value back to '' (unselected)
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -39,19 +40,36 @@ export default function Select({
           {required && <span className="ml-0.5 text-rust">*</span>}
         </label>
       )}
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
-        className={`flex w-full items-center justify-between gap-2 border bg-card px-3.5 py-2.5 text-left text-sm transition-colors focus:outline-none focus:ring-1 focus:ring-rust disabled:cursor-not-allowed disabled:bg-paper disabled:text-muted/60 ${
-          error ? 'border-brick' : 'border-ink/30 hover:border-ink/55'
-        }`}
-      >
-        <span className={selected ? 'text-ink' : 'text-muted'}>
-          {selected ? selected.label : placeholder}
-        </span>
-        <FaChevronDown className={`text-[10px] text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
+      <div className="relative">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpen((o) => !o)}
+          className={`flex w-full items-center justify-between gap-2 border bg-card py-2.5 pl-3.5 text-left text-sm transition-colors focus:outline-none focus:ring-1 focus:ring-rust disabled:cursor-not-allowed disabled:bg-paper disabled:text-muted/60 ${
+            clearable && selected && !disabled ? 'pr-14' : 'pr-3.5'
+          } ${error ? 'border-brick' : 'border-ink/30 hover:border-ink/55'}`}
+        >
+          <span className={selected ? 'text-ink' : 'text-muted'}>
+            {selected ? selected.label : placeholder}
+          </span>
+          <FaChevronDown className={`text-[10px] text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {clearable && selected && !disabled && (
+          <button
+            type="button"
+            aria-label="Clear selection"
+            title="Clear selection"
+            onClick={() => {
+              onChange('')
+              setOpen(false)
+              setQuery('')
+            }}
+            className="absolute right-8 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center text-muted transition-colors hover:text-brick"
+          >
+            <FaTimes className="text-[10px]" />
+          </button>
+        )}
+      </div>
 
       {open && (
         <div className="absolute z-20 mt-1 w-full border border-ink/30 bg-card shadow-[3px_3px_0_0_var(--color-ink)]">

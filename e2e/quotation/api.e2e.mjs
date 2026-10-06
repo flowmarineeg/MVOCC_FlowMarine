@@ -14,7 +14,7 @@ const API = process.env.API || 'http://localhost:5000/api'
 const RUN = `E2E-${Date.now().toString(36).toUpperCase()}`
 let cookie = ''
 const results = []
-const created = { quotationIds: [], bookingIds: [], jobNos: [] }
+const created = { quotationIds: [], quotationNos: [], bookingIds: [], jobNos: [] }
 
 const check = (name, cond, detail = '') => {
   results.push({ name, pass: !!cond, detail: cond ? '' : String(detail) })
@@ -62,12 +62,12 @@ try {
   const nvocc = nvoccs[0]
 
   const base = (n, extra = {}) => ({
-    quotationNo: `${RUN}-${n}`, customerType: 'new', clientName: `E2E Client ${n}`, contactPhone: '+20100000000', contactEmail: 'e2e@example.com',
+    customerType: 'new', clientName: `${RUN} Client ${n}`, contactPhone: '+20100000000', contactEmail: 'e2e@example.com',
     salesRep: 'E2E Tester', commodity: 'E2E commodity', pol: pol._id, pod: pod._id, nvocc: nvocc._id, ...extra,
   })
   const mk = async (n, extra) => {
     const res = await call('POST', '/export/quotations', base(n, extra))
-    if (res.status === 201) created.quotationIds.push(res.json.data._id)
+    if (res.status === 201) { created.quotationIds.push(res.json.data._id); created.quotationNos.push(res.json.data.quotationNo) }
     return res
   }
 
@@ -80,7 +80,6 @@ try {
   //  net 600, margin 600/1220 = 49.18 %
   const q1Body = {
     containers: [{ containerType: t20._id, quantity: 2 }, { containerType: t40._id, quantity: 1 }],
-    buyingCurrency: 'USD', sellingCurrency: 'USD', exchangeRate: 1,
     buyingOrigin: { oceanFreight: line(100, 200), thc: line(10, 20), bl: { rate20: 50, qty20: 1 }, custom: [{ label: 'Seal', rate20: 5 }] },
     buyingDestination: { dthc: line(30, 60) },
     sellingOrigin: { oceanFreight: line(200, 400), thc: line(20, 40), bl: { rate20: 100, qty20: 1 } },
@@ -94,6 +93,9 @@ try {
   check('server total selling = 1220', near(q1?.totalSellingPrice, 1220), q1?.totalSellingPrice)
   check('net profit = 600 / margin = 49.18%', near(q1?.netProfit, 600) && near(q1?.profitMarginPercent, 49.18), `${q1?.netProfit} ${q1?.profitMarginPercent}`)
   check('belowMinMargin=false (client "true" ignored)', q1?.belowMinMargin === false, q1?.belowMinMargin)
+  check('lines without a currency default to USD -> one USD profit row (1220 / 620 / 600)',
+    q1?.totalsCurrency === 'USD' && q1?.totalsByCurrency?.length === 1 && q1.totalsByCurrency[0].currency === 'USD' &&
+    near(q1.totalsByCurrency[0].selling, 1220) && near(q1.totalsByCurrency[0].buying, 620) && near(q1.totalsByCurrency[0].netProfit, 600), JSON.stringify(q1?.totalsByCurrency))
 
   r = await call('GET', `/export/quotations/${q1._id}`)
   const g = r.json?.data
@@ -111,27 +113,42 @@ try {
   const q2 = r.json?.data
   check('20ft-only quote: 40ft rate not counted (buy 300 / sell 600)', r.status === 201 && near(q2?.totalBuyingCost, 300) && near(q2?.totalSellingPrice, 600), `${r.status} ${q2?.totalBuyingCost}/${q2?.totalSellingPrice} ${msg(r)}`)
 
-  // ─── 3. Destination in another currency ──────────────────────────────
+  // ─── 3. Per-row currency: totals are grouped per currency, never converted ──
+  //  buying : OF 100*2 = 200 USD (origin) + DTHC 100*2 = 200 EUR (destination row in EUR)
+  //  selling: OF 300*2 = 600 USD
+  //  USD: 600 - 200 = +400 (66.67 %)   EUR: 0 - 200 = -200 (0 %, below margin)
   r = await mk('3', {
     containers: [{ containerType: t20._id, quantity: 2 }],
-    buyingCurrency: 'USD', buyingOrigin: { oceanFreight: line(100) },
-    buyingDestinationCurrency: 'EUR', buyingDestinationRate: 1.1, buyingDestination: { dthc: line(100) },
-    sellingCurrency: 'USD', sellingOrigin: { oceanFreight: line(300) },
+    buyingOrigin: { oceanFreight: { ...line(100), currency: 'USD' } },
+    buyingDestination: { dthc: { ...line(100), currency: 'EUR' } },
+    sellingOrigin: { oceanFreight: { ...line(300), currency: 'USD' } },
   })
   const q3 = r.json?.data
-  check('EUR destination converted at 1.1 (buy 200 + 220 = 420)', r.status === 201 && near(q3?.totalBuyingCost, 420), `${r.status} ${q3?.totalBuyingCost} ${msg(r)}`)
-  check('selling 600, net 600-420=180', near(q3?.totalSellingPrice, 600) && near(q3?.netProfit, 180), `${q3?.totalSellingPrice} ${q3?.netProfit}`)
+  const usd = q3?.totalsByCurrency?.find((x) => x.currency === 'USD')
+  const eur = q3?.totalsByCurrency?.find((x) => x.currency === 'EUR')
+  check('mixed currencies -> one profit row per currency', r.status === 201 && q3?.totalsByCurrency?.length === 2 && !!usd && !!eur, `${r.status} ${JSON.stringify(q3?.totalsByCurrency)} ${msg(r)}`)
+  check('USD row: buy 200 / sell 600 / net 400 / 66.67 %', near(usd?.buying, 200) && near(usd?.selling, 600) && near(usd?.netProfit, 400) && near(usd?.marginPercent, 66.67), JSON.stringify(usd))
+  check('EUR row: buy 200 / sell 0 / net -200, no conversion into USD', near(eur?.buying, 200) && near(eur?.selling, 0) && near(eur?.netProfit, -200), JSON.stringify(eur))
+  check('primary currency = USD (largest selling): scalars are USD buy 200 / sell 600 / net 400', q3?.totalsCurrency === 'USD' && near(q3?.totalBuyingCost, 200) && near(q3?.totalSellingPrice, 600) && near(q3?.netProfit, 400), `${q3?.totalsCurrency} ${q3?.totalBuyingCost}/${q3?.totalSellingPrice}/${q3?.netProfit}`)
+  check('any currency under the minimum margin raises belowMinMargin', q3?.belowMinMargin === true, q3?.belowMinMargin)
+  check('the row currency is stored on the line', q3?.buyingDestination?.dthc?.currency === 'EUR', JSON.stringify(q3?.buyingDestination))
 
-  r = await call('POST', '/export/quotations', base('3b', {
-    containers: [{ containerType: t20._id, quantity: 1 }],
-    buyingCurrency: 'USD', buyingDestinationCurrency: 'EUR', buyingDestination: { dthc: line(100) },
-  }))
-  check('differing destination currency without a rate -> 400 with clear message', r.status === 400 && /exchange rate/i.test(msg(r)), `${r.status} ${msg(r)}`)
-  r = await call('POST', '/export/quotations', base('3c', {
-    containers: [{ containerType: t20._id, quantity: 1 }],
-    sellingCurrency: 'USD', sellingDestinationCurrency: 'EGP', sellingDestinationRate: 0,
-  }))
-  check('selling destination currency differs + rate 0 -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+  // an unselected (blank) currency is its own group, not silently USD
+  r = await mk('3z', { nvocc: undefined, containers: [{ containerType: t20._id, quantity: 1 }], buyingOrigin: { oceanFreight: { ...line(10), currency: '' } } })
+  check('blank row currency -> its own "no currency" group', r.status === 201 && r.json.data.totalsByCurrency?.length === 1 && r.json.data.totalsByCurrency[0].currency === '' && near(r.json.data.totalsByCurrency[0].buying, 10), msg(r))
+
+  // custom row: uid + currency round-trip
+  r = await mk('3c', { nvocc: undefined, containers: [{ containerType: t20._id, quantity: 2 }], buyingOrigin: { custom: [{ uid: 'abc123', label: 'Seal', rate20: 5, currency: 'EGP' }] } })
+  check('custom row keeps its uid + currency; totals land in EGP', r.status === 201 && r.json.data.buyingOrigin.custom[0].uid === 'abc123' && r.json.data.buyingOrigin.custom[0].currency === 'EGP' && near(r.json.data.totalsByCurrency?.[0]?.buying, 10) && r.json.data.totalsByCurrency?.[0]?.currency === 'EGP', msg(r))
+
+  // removed (hidden) standard rows: validated, persisted, and excluded from totals
+  r = await call('POST', '/export/quotations', base('3h', { containers: [{ containerType: t20._id, quantity: 1 }], buyingOrigin: { hidden: ['notARealLine'] } }))
+  check('hiding an unknown standard line -> 400', r.status === 400 && /Unknown charge line/i.test(msg(r)), `${r.status} ${msg(r)}`)
+  r = await mk('3i', { nvocc: undefined, containers: [{ containerType: t20._id, quantity: 1 }], sellingOrigin: { oceanFreight: line(100), thc: line(40), hidden: ['thc'] } })
+  check('a removed standard row is persisted and its stale values are not counted (sell 100, not 140)',
+    r.status === 201 && r.json.data.sellingOrigin.hidden.includes('thc') && near(r.json.data.totalSellingPrice, 100), `${r.status} ${r.json?.data?.totalSellingPrice} ${msg(r)}`)
+  r = await mk('3j', { nvocc: undefined, containers: [{ containerType: t20._id, quantity: 1 }], sellingDestination: { cic: line(50), cmc: line(50), dthc: line(10) } })
+  check('CIC / CMC rows no longer exist (ignored, not counted: sell 10)', r.status === 201 && r.json.data.sellingDestination.cic === undefined && near(r.json.data.totalSellingPrice, 10), `${r.status} ${r.json?.data?.totalSellingPrice} ${msg(r)}`)
 
   // ─── 4. Below minimum margin ─────────────────────────────────────────
   r = await mk('4', {
@@ -147,7 +164,7 @@ try {
     check(`validation: ${name} -> 400`, res.status === 400 && (!re || re.test(msg(res))), `${res.status} ${msg(res)}`)
   }
   await bad('negative rate', { buyingOrigin: { thc: { rate20: -5 } } }, /positive/i)
-  await bad('negative qty override', { sellingDestination: { cic: { qty20: -1 } } }, /positive/i)
+  await bad('negative qty override', { sellingDestination: { dthc: { qty20: -1 } } }, /positive/i)
   await bad('non-numeric rate', { buyingOrigin: { bl: { rate20: 'abc' } } }, /positive/i)
   await bad('custom line without label', { buyingOrigin: { custom: [{ label: '', rate20: 5 }] } }, /label/i)
   await bad('table is not an object', { buyingOrigin: 'oops' }, /object/i)
@@ -155,8 +172,26 @@ try {
   await bad('duplicate container type', { containers: [{ containerType: t20._id, quantity: 1 }, { containerType: t20._id, quantity: 2 }] }, /once/i)
   await bad('nonexistent container type', { containers: [{ containerType: new mongoose.Types.ObjectId().toString(), quantity: 1 }] }, /do not exist/i)
   await bad('missing commodity', { commodity: '' }, /commodity/i)
-  r = await call('POST', '/export/quotations', { ...base('dupno'), containers: [{ containerType: t20._id, quantity: 1 }], quotationNo: q1.quotationNo })
-  check('duplicate quotationNo rejected (409/400)', [400, 409].includes(r.status), `${r.status} ${msg(r)}`)
+  // ─── auto quotation number, new fields, removed fields ──────────────
+  const yy = String(new Date().getFullYear()).slice(-2)
+  const seqOf = (no) => Number(/(\d{4})$/.exec(no || '')?.[1])
+  check('quotationNo auto-generated as FQ + YY + 4 digits (FQ26xxxx)', new RegExp(`^FQ${yy}\\d{4}$`).test(q1.quotationNo || ''), q1.quotationNo)
+  check('quotation numbers increase in creation order', seqOf(q2.quotationNo) > seqOf(q1.quotationNo) && seqOf(q4.quotationNo) > seqOf(q3.quotationNo), `${q1.quotationNo} ${q2.quotationNo} ${q3.quotationNo} ${q4.quotationNo}`)
+  r = await mk('hack', { nvocc: undefined, quotationNo: 'HACK-1', containers: [{ containerType: t20._id, quantity: 1 }] })
+  check('a client-supplied quotationNo is ignored', r.status === 201 && /^FQ\d{6}$/.test(r.json.data.quotationNo), msg(r))
+  r = await mk('newfields', { nvocc: undefined, containers: [{ containerType: t20._id, quantity: 1 }], targetRate: 1250.5, cargoReadinessDate: '2026-11-01' })
+  const qNew = r.json?.data
+  check('targetRate + cargoReadinessDate saved', r.status === 201 && qNew?.targetRate === 1250.5 && String(qNew?.cargoReadinessDate).startsWith('2026-11-01'), msg(r))
+  r = await call('PUT', `/export/quotations/${qNew._id}`, { targetRate: null, cargoReadinessDate: null })
+  check('targetRate + cargoReadinessDate can be cleared on edit', r.status === 200 && !r.json.data.targetRate && !r.json.data.cargoReadinessDate, msg(r))
+  r = await call('POST', '/export/quotations', { ...base('badtr'), containers: [{ containerType: t20._id, quantity: 1 }], targetRate: -5 })
+  check('negative targetRate -> 400', r.status === 400, r.status)
+  r = await mk('dg', { nvocc: undefined, containers: [{ containerType: t20._id, quantity: 1 }], isDangerous: true, unNumber: 'UN1203' })
+  check('dangerous goods needs only a UN Number (no UN Class) -> 201', r.status === 201 && r.json.data.unNumber === 'UN1203', msg(r))
+  r = await call('POST', '/export/quotations', { ...base('dg2'), containers: [{ containerType: t20._id, quantity: 1 }], isDangerous: true })
+  check('dangerous goods without a UN Number -> 400', r.status === 400 && /UN Number/i.test(msg(r)), msg(r))
+  r = await mk('removed', { nvocc: undefined, containers: [{ containerType: t20._id, quantity: 1 }], unClass: '3', por: pol._id, fpd: pod._id })
+  check('removed fields (unClass / por / fpd) are no longer stored', r.status === 201 && r.json.data.unClass === undefined && r.json.data.por === undefined && r.json.data.fpd === undefined, msg(r))
 
   // ─── 6. Update recomputes totals ─────────────────────────────────────
   r = await call('PUT', `/export/quotations/${q1._id}`, { sellingOrigin: { ...q1Body.sellingOrigin, oceanFreight: line(250, 400) } })
@@ -165,8 +200,6 @@ try {
   check('dropping the 40HC container drops all 40ft pricing (buy 200+20+50+10+60 = 340)',
     r.status === 200 && near(r.json.data.totalBuyingCost, 340), `${r.status} buy=${r.json?.data?.totalBuyingCost} sell=${r.json?.data?.totalSellingPrice}`)
   check('  ...selling = 250*2+40+100+100+40 = 780', near(r.json?.data?.totalSellingPrice, 780), r.json?.data?.totalSellingPrice)
-  r = await call('PUT', `/export/quotations/${q1._id}`, { buyingCurrency: 'USD', buyingDestinationCurrency: 'GBP' })
-  check('update: switching destination currency without a rate -> 400', r.status === 400, `${r.status} ${msg(r)}`)
   // restore 40HC so later steps use the original shape
   r = await call('PUT', `/export/quotations/${q1._id}`, { containers: [{ containerType: t20._id, quantity: 2 }, { containerType: t40._id, quantity: 1 }] })
   check('restoring the 40HC container re-includes the 40ft prices', r.status === 200 && near(r.json.data.totalBuyingCost, 620), `${r.json?.data?.totalBuyingCost}`)
@@ -174,14 +207,14 @@ try {
   // ─── 7. suggest-rate ─────────────────────────────────────────────────
   r = await call('GET', `/export/quotations/suggest-rate?nvocc=${nvocc._id}&excludeId=${q4._id}`)
   check('suggest-rate returns the most recent OTHER quotation (E2E-3) with new-shape tables',
-    r.status === 200 && r.json?.data?.quotationNo === q3.quotationNo && r.json.data.buyingOrigin?.oceanFreight?.rate20 === 100 && r.json.data.buyingDestinationCurrency === 'EUR',
+    r.status === 200 && r.json?.data?.quotationNo === q3.quotationNo && r.json.data.buyingOrigin?.oceanFreight?.rate20 === 100 && r.json.data.buyingDestination?.dthc?.currency === 'EUR',
     `${r.status} ${r.json?.data?.quotationNo}`)
   r = await call('GET', '/export/quotations/suggest-rate?nvocc=not-an-id')
   check('suggest-rate with invalid id -> null, no crash', r.status === 200 && r.json?.data === null, `${r.status}`)
 
   // ─── 8. List / filters ───────────────────────────────────────────────
   r = await call('GET', `/export/quotations?search=${RUN}&limit=50`)
-  check('search by quotationNo prefix finds all created quotes', r.status === 200 && r.json.quotations.length >= 4 && r.json.quotations.every((q) => q.quotationNo.startsWith(RUN)), `${r.status} n=${r.json?.quotations?.length}`)
+  check('search by client name finds all created quotes', r.status === 200 && r.json.quotations.length >= 4 && r.json.quotations.every((q) => q.clientName.startsWith(RUN)), `${r.status} n=${r.json?.quotations?.length}`)
   r = await call('GET', `/export/quotations?search=${RUN}&status=draft`)
   check('status=draft filter', r.status === 200 && r.json.quotations.every((q) => q.status === 'draft'), r.status)
   r = await call('GET', '/export/quotations?status[$ne]=cancelled')
@@ -245,7 +278,7 @@ try {
 
   // ─── 11. Audit trail ─────────────────────────────────────────────────
   r = await call('GET', `/audit-logs?resource=Quotation&limit=50`)
-  const mine = (r.json?.logs || []).filter((l) => String(l.resourceId || '').startsWith(RUN))
+  const mine = (r.json?.logs || []).filter((l) => created.quotationNos.includes(String(l.resourceId || '')))
   check('audit log records status changes for E2E quotations', r.status === 200 && mine.some((l) => l.action === 'SENT') && mine.some((l) => l.action === 'APPROVED') && mine.some((l) => l.action === 'REJECTED'), `${r.status} n=${mine.length}`)
 } catch (err) {
   check('test run completed without an unexpected error', false, err.stack || err.message)
@@ -254,7 +287,15 @@ try {
   try {
     await mongoose.connect(process.env.MONGO_URI)
     const dbh = mongoose.connection.db
-    const delQ = await dbh.collection('quotations').deleteMany({ quotationNo: { $regex: `^${RUN}` } })
+    const delQ = await dbh.collection('quotations').deleteMany({ clientName: { $regex: `^${RUN}` } })
+    // Give the consumed quotation numbers back ONLY while ours are still the tail.
+    const qYear = new Date().getFullYear()
+    for (const no of [...created.quotationNos].reverse()) {
+      const seq = Number(/(\d{4})$/.exec(no)?.[1])
+      const res = await dbh.collection('jobcounters').updateOne({ _id: `quotation-${qYear}`, seq }, { $inc: { seq: -1 } })
+      if (!res.modifiedCount) break
+    }
+
     const ids = created.bookingIds.map((i) => new mongoose.Types.ObjectId(i))
     const delB = ids.length ? await dbh.collection('bookings').deleteMany({ _id: { $in: ids } }) : { deletedCount: 0 }
     // Give the consumed job number back ONLY if ours is still the latest one —

@@ -35,32 +35,20 @@ const rateTableRules = (prefix, lineKeys) => [
       body(`${prefix}.${key}.${field}`).optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage(`${key} ${field} must be a positive number`)
     )
   ),
+  ...lineKeys.map((key) => body(`${prefix}.${key}.currency`).optional().trim()),
+  body(`${prefix}.hidden`).optional().isArray().withMessage(`${prefix}.hidden must be a list`),
+  body(`${prefix}.hidden.*`).isIn(lineKeys).withMessage('Unknown charge line'),
   body(`${prefix}.custom`).optional().isArray(),
+  body(`${prefix}.custom.*.currency`).optional().trim(),
+  body(`${prefix}.custom.*.uid`).optional().trim(),
   body(`${prefix}.custom.*.label`).optional().trim().notEmpty().withMessage('Custom charge label is required'),
   ...RATE_LINE_FIELDS.map((field) =>
     body(`${prefix}.custom.*.${field}`).optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage(`Custom charge ${field} must be a positive number`)
   ),
 ]
 
-// The Destination table has its own currency; when it differs from the
-// Origin table's, a conversion rate into the Origin currency is required.
-const destinationRateRule = (side) =>
-  body(`${side}DestinationRate`).custom((value, { req }) => {
-    const base = req.body[`${side}Currency`]
-    const destination = req.body[`${side}DestinationCurrency`]
-    if (base && destination && base !== destination && !(Number(value) > 0)) {
-      throw new Error(`Exchange rate is required when the ${side} destination currency differs from the origin currency`)
-    }
-    return true
-  })
-
 const dangerousGoodsRules = [
   body('isDangerous').optional().isBoolean().withMessage('isDangerous must be true or false').toBoolean(),
-  body('unClass').custom((value, { req }) => {
-    const isDangerous = req.body.isDangerous === true || req.body.isDangerous === 'true'
-    if (isDangerous && !(value && value.trim())) throw new Error('UN Class is required when cargo is marked dangerous')
-    return true
-  }),
   body('unNumber').custom((value, { req }) => {
     const isDangerous = req.body.isDangerous === true || req.body.isDangerous === 'true'
     if (isDangerous && !(value && value.trim())) throw new Error('UN Number is required when cargo is marked dangerous')
@@ -79,35 +67,26 @@ const sharedOptionalRules = [
   body('hsCode').optional().trim(),
   body('grossWeight').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Gross weight must be a positive number'),
   body('cbm').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('CBM must be a positive number'),
-  body('por').optional({ checkFalsy: true }).isMongoId().withMessage('Valid POR ID required'),
-  body('fpd').optional({ checkFalsy: true }).isMongoId().withMessage('Valid FPD ID required'),
   body('incoterms').optional({ checkFalsy: true }).isIn(['EXW', 'FCA', 'FOB', 'CPT', 'CIP', 'CFR', 'CIF', 'DAP', 'DPU', 'DDP']).withMessage('Invalid incoterms'),
   body('targetEtd').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid target ETD'),
+  body('targetRate').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Target rate must be a positive number'),
+  body('cargoReadinessDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid cargo readiness date'),
   body('specialNotes').optional().trim(),
   body('nvocc').optional({ checkFalsy: true }).isMongoId().withMessage('Valid NVOCC ID required'),
 
-  body('buyingCurrency').optional().trim(),
   body('rateValidFrom').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid rate validity from date'),
   body('rateValidTo').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid rate validity to date'),
-  body('buyingDestinationCurrency').optional().trim(),
   ...rateTableRules('buyingOrigin', ORIGIN_LINE_KEYS),
   ...rateTableRules('buyingDestination', DESTINATION_LINE_KEYS),
-  destinationRateRule('buying'),
   body('freeTimeBuyingDays').optional({ checkFalsy: true }).isFloat({ min: 0 }),
   body('rateSourceReference').optional().trim(),
 
-  body('sellingCurrency').optional().trim(),
-  body('exchangeRate').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Exchange rate must be a positive number'),
-  body('sellingDestinationCurrency').optional().trim(),
   ...rateTableRules('sellingOrigin', ORIGIN_LINE_KEYS),
   ...rateTableRules('sellingDestination', DESTINATION_LINE_KEYS),
-  destinationRateRule('selling'),
   body('paymentTerms').optional({ checkFalsy: true }).isIn(['Freight Prepaid', 'Freight Collect']).withMessage('Invalid payment terms'),
-  body('validUntil').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid valid-until date'),
 ]
 
 export const createQuotationRules = [
-  body('quotationNo').trim().notEmpty().withMessage('Quotation number is required'),
   body('customerType').isIn(['new', 'existing']).withMessage('Client type must be new or existing'),
   body('clientName').trim().notEmpty().withMessage('Client name is required'),
   body('commodity').trim().notEmpty().withMessage('Commodity is required'),
