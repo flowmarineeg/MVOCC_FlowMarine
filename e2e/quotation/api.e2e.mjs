@@ -62,8 +62,11 @@ try {
   const [pol, pod] = ports
   const nvocc = nvoccs[0]
 
+  // A real client + contact person + payment terms so quotations built here are READY (send / approve / convert are gated on that)
+  const custRes = await call('POST', '/master/customers', { name: `${RUN} Client`, phone: '+20100000000', email: 'e2e@example.com' })
+  const clientId = custRes.json?.data?._id
   const base = (n, extra = {}) => ({
-    customerType: 'new', clientName: `${RUN} Client ${n}`, contactPhone: '+20100000000', contactEmail: 'e2e@example.com',
+    customerType: 'existing', customer: clientId, clientName: `${RUN} Client`, contactPerson: 'E2E Contact', paymentTerms: 'Freight Prepaid', contactPhone: '+20100000000', contactEmail: 'e2e@example.com',
     salesRep: 'E2E Tester', commodity: 'E2E commodity', pol: pol._id, pod: pod._id, nvocc: nvocc._id, ...extra,
   })
   const mk = async (n, extra) => {
@@ -277,6 +280,54 @@ try {
   check('second convert -> 409', r.status === 409, `${r.status} ${msg(r)}`)
   check('second convert left no orphan booking', mid === after && mid === before + 1, `before=${before} mid=${mid} after=${after}`)
 
+  // ─── 9b. Readiness: required data before send / approve / convert ───
+  r = await mk('incomplete', { containers: [{ containerType: t20._id, quantity: 1 }], customer: undefined, contactPerson: '', contactEmail: '', paymentTerms: undefined, nvocc: undefined })
+  const incId = r.json?.data?._id
+  check('an incomplete DRAFT can still be saved, and reports what is missing',
+    r.status === 201 && Array.isArray(r.json.data.readinessIssues) && r.json.data.readinessIssues.length >= 5, msg(r))
+  const missing = (r.json?.data?.readinessIssues || []).join(' | ')
+  check('readiness lists client, contact email, carrier, pricing and payment terms',
+    /select the client/.test(missing) && /contact email/.test(missing) && /select the carrier/.test(missing) && /price at least one buying/.test(missing) && /payment terms/.test(missing), missing)
+  r = await call('PUT', `/export/quotations/${incId}/status`, { status: 'sent' })
+  check('SEND is blocked while incomplete (400, message names the missing items)', r.status === 400 && /not ready to be sent/.test(msg(r)) && /contact email/.test(msg(r)), `${r.status} ${msg(r)}`)
+  r = await call('GET', `/export/quotations/${incId}`)
+  check('...and the quotation stayed a draft', r.json.data.status === 'draft')
+
+  // fill it in with TWO separate partial saves (sections 1-4 data, then sections 5-8 data)
+  r = await call('PUT', `/export/quotations/${incId}`, { customer: clientId, contactEmail: 'e2e@example.com', inquiryDate: '2026-10-01' })
+  check('partial save of the request part only touches its own fields', r.status === 200 && r.json.data.contactEmail === 'e2e@example.com' && !r.json.data.nvocc && r.json.data.readinessIssues.some((i) => /carrier/i.test(i)), msg(r))
+  r = await call('PUT', `/export/quotations/${incId}`, { nvocc: nvocc._id, paymentTerms: 'Freight Collect', buyingOrigin: { oceanFreight: line(100, 200) }, sellingOrigin: { oceanFreight: line(150, 300) } })
+  check('partial save of the pricing part leaves the request part untouched, and clears the issues',
+    r.status === 200 && r.json.data.contactEmail === 'e2e@example.com' && r.json.data.clientName && r.json.data.readinessIssues.length === 0, `${msg(r)} ${JSON.stringify(r.json?.data?.readinessIssues)}`)
+  r = await call('PUT', `/export/quotations/${incId}`, { rateValidFrom: '2026-12-01', rateValidTo: '2026-11-01' })
+  check('rate valid-to before valid-from -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+  r = await call('PUT', `/export/quotations/${incId}/status`, { status: 'sent' })
+  check('SEND succeeds once complete', r.status === 200 && r.json.data.status === 'sent', msg(r))
+
+  // approving re-checks readiness (an override-holder can still edit a sent quotation)
+  r = await call('PUT', `/export/quotations/${incId}`, { contactPhone: '' })
+  r = await call('PUT', `/export/quotations/${incId}/status`, { status: 'approved' })
+  check('APPROVE is blocked when required data was removed after sending', r.status === 400 && /not ready to be approved/.test(msg(r)) && /contact phone/.test(msg(r)), `${r.status} ${msg(r)}`)
+  await call('PUT', `/export/quotations/${incId}`, { contactPhone: '+20100000000' })
+  r = await call('PUT', `/export/quotations/${incId}/status`, { status: 'approved' })
+  check('APPROVE succeeds again once fixed', r.status === 200 && r.json.data.status === 'approved', msg(r))
+
+  // convert gate: break an approved quotation, then try to file the booking job
+  await call('PUT', `/export/quotations/${incId}`, { contactEmail: '' })
+  const convForm = new FormData()
+  convForm.set('quotation', incId); convForm.set('clientName', 'E2E Client'); convForm.set('clientPhone', '+20100000000'); convForm.set('clientEmail', 'e2e@example.com')
+  convForm.set('containers', JSON.stringify([{ containerType: t20._id, quantity: 1 }]))
+  convForm.set('pol', pol._id); convForm.set('pod', pod._id); convForm.set('commodity', 'E2E commodity')
+  const bookingsBefore = (await call('GET', '/export/bookings?limit=1')).json?.total
+  r = await call('POST', '/export/bookings', convForm, { form: true })
+  check('CONVERT to a booking job is blocked while the quotation is incomplete (400, no booking created)',
+    r.status === 400 && /not ready to be converted/.test(msg(r)) && (await call('GET', '/export/bookings?limit=1')).json?.total === bookingsBefore, `${r.status} ${msg(r)}`)
+
+  // dangerous goods need UN number + MSDS before send
+  r = await mk('dg-ready', { isDangerous: true, unNumber: 'UN1203', containers: [{ containerType: t20._id, quantity: 1 }], buyingOrigin: { oceanFreight: line(1) }, sellingOrigin: { oceanFreight: line(2) } })
+  r = await call('PUT', `/export/quotations/${r.json.data._id}/status`, { status: 'sent' })
+  check('dangerous goods without an MSDS file cannot be sent', r.status === 400 && /MSDS/.test(msg(r)), `${r.status} ${msg(r)}`)
+
   // ─── 10a. per-container weights ────────────────────────────────────
   r = await mk('weights', { containers: [{ containerType: t20._id, quantity: 2, grossWeight: 2400, netWeight: 2000 }, { containerType: t40._id, quantity: 1 }] })
   check('container rows store gross + net weight (optional per row)', r.status === 201 && r.json.data.containers[0].grossWeight === 2400 && r.json.data.containers[0].netWeight === 2000 && r.json.data.containers[1].grossWeight === undefined, msg(r))
@@ -350,6 +401,7 @@ try {
     const dbh = mongoose.connection.db
     const leftovers = await dbh.collection('quotations').find({ clientName: { $regex: `^${RUN}` }, 'msdsFiles.0': { $exists: true } }).project({ msdsFiles: 1 }).toArray()
     for (const q of leftovers) for (const f of q.msdsFiles) await unlink(BACKEND + 'uploads/msds/' + f.filePath).catch(() => {})
+    await dbh.collection('customers').deleteMany({ name: { $regex: `^${RUN}` } })
     const delQ = await dbh.collection('quotations').deleteMany({ clientName: { $regex: `^${RUN}` } })
     // Give the consumed quotation numbers back ONLY while ours are still the tail.
     const qYear = new Date().getFullYear()

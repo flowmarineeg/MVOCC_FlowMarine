@@ -10,7 +10,7 @@ router.use(authenticate)
 
 // Object-valued fields arrive JSON-stringified over multipart (FormData has
 // no native nested-object encoding) — parsed back before validation runs.
-const JSON_FIELDS = ['containers', 'shipper', 'consignee', 'polAgent', 'podAgent']
+const JSON_FIELDS = ['containers', 'containerAssignments', 'shipper', 'consignee', 'notify', 'polAgent', 'podAgent']
 
 // Special routes BEFORE /:id to avoid conflicts
 router.get('/preview', authorize('booking:export'), ctrl.getPreview)
@@ -34,6 +34,7 @@ router.post(
 )
 router.get('/', authorize('booking:read'), ctrl.getBookings)
 router.get('/:id/attachment', authorize('booking:read'), ctrl.getAttachment)
+router.get('/:id/msds/:fileId', authorize('booking:read'), ctrl.getQuotationMsds)
 router.get('/:id/confirmation-file', authorize('booking:read'), ctrl.getConfirmationFile)
 router.get('/:id/bl/customs-certificate-file', authorize('bl:read'), ctrl.getCustomsCertificateFile)
 router.get('/:id/bl', authorize('bl:read'), ctrl.getBlById)

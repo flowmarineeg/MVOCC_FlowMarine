@@ -3,7 +3,8 @@ import path from 'path'
 import mongoose from 'mongoose'
 import Booking from './booking.model.js'
 import JobCounter from './jobCounter.model.js'
-import { checkStock, decrementStock, incrementStock } from '../../MasterData/Container/container.service.js'
+import { checkStock, decrementStock, incrementStock, applySeals } from '../../MasterData/Container/container.service.js'
+import { getMsdsFile } from '../Quotation/quotation.service.js'
 import ExcelJS from 'exceljs'
 
 const POPULATE_FIELDS = [
@@ -14,7 +15,8 @@ const POPULATE_FIELDS = [
   { path: 'nvocc', select: 'name code' },
   { path: 'depot', select: 'name code' },
   { path: 'jobOpenedBy', select: 'name email' },
-  { path: 'quotation', select: 'quotationNo' },
+  // what the Job form shows read-only from its quotation (DG attachments, free time, container lines)
+  { path: 'quotation', select: 'quotationNo freeTimeBuyingDays isDangerous unNumber msdsFiles._id msdsFiles.fileName' },
 ]
 
 const BOOKING_STATUSES = ['pending', 'confirmed', 'cancelled']
@@ -38,12 +40,34 @@ const buildBookingFilter = ({ status, pol, pod, search, searchFields = ['jobNo',
   return filter
 }
 
-// Dropping the dangerous-goods number whenever the flag is off is enforced
-// here rather than trusted from the client, since the frontend only sends
-// dangerousNumber while the toggle is on — leaving it simply absent (not
-// explicitly cleared) would let a stale value from a prior edit survive.
-const clearDangerousNumberIfNotDangerous = (booking) => {
-  if (!booking.isDangerous) booking.dangerousNumber = undefined
+// Dropping the class / UN numbers whenever the flag is off is enforced here
+// rather than trusted from the client, since the frontend only sends them
+// while the toggle is on — leaving them simply absent (not explicitly
+// cleared) would let a stale value from a prior edit survive.
+const clearDangerousFieldsIfNotDangerous = (booking) => {
+  if (!booking.isDangerous) {
+    booking.dangerousClass = undefined
+    booking.unNumber = undefined
+  }
+}
+
+// The seal entries must belong to a container type on the booking and not
+// outnumber its quantity. (Which physical units get which seal is decided at
+// confirm — oldest free stock first.)
+const assertAssignments = async (booking) => {
+  const picks = booking.containerAssignments || []
+  const wanted = new Map(booking.containers.map((c) => [String(c.containerType), c.quantity]))
+  const perType = new Map()
+  for (const p of picks) {
+    const key = String(p.containerType)
+    if (!wanted.has(key)) {
+      throw Object.assign(new Error('A seal entry belongs to a container type that is not on this booking'), { statusCode: 400 })
+    }
+    perType.set(key, (perType.get(key) || 0) + 1)
+    if (perType.get(key) > wanted.get(key)) {
+      throw Object.assign(new Error('More seal entries than the quantity requested for that container type'), { statusCode: 400 })
+    }
+  }
 }
 
 // customsSubmittedAt is server-set the instant customsSubmitted flips
@@ -73,18 +97,22 @@ const getNextJobNo = async () => {
 const EDITABLE_FIELDS = [
   'clientName', 'clientPhone', 'clientEmail', 'pol', 'pod', 'containers', 'blNo',
   'commodity', 'ucrNumber', 'exportTaxNumber', 'importTaxNumber', 'importCountry',
-  'packagesCount', 'vgm', 'grossWeight', 'cbm', 'hsCode', 'packageType',
-  'isDangerous', 'dangerousNumber', 'shippingDeclaration',
+  'packagesCount', 'grossWeight', 'netWeight', 'hsCode', 'packageType',
+  'isDangerous', 'dangerousClass', 'unNumber', 'shippingDeclaration',
   'jobStatus', 'customsSubmitted', 'customsReferenceNo',
   'carrier', 'vesselName', 'voyageNo', 'etd', 'atd', 'eta', 'ata',
   'spaceConfirmationStatus', 'carrierBookingRef', 'voContactPerson',
   'siCutoff', 'vgmCutoff', 'cyGateInCutoff',
   'bookingConfirmationStatus', 'bookingConfirmationFile',
-  'depot', 'gateInDate', 'gateOutDate', 'containerLocation',
+  'depot', 'gateInDate', 'gateOutDate', 'containerLocation', 'containerAssignments',
   'nvocc', 'currency', 'price', 'cost', 'freeTime',
-  'shipper', 'consignee', 'polAgent', 'podAgent',
+  'shipper', 'consignee', 'notify', 'notifySameAsConsignee', 'shipperParty', 'consigneeParty', 'notifyParty',
+  'polAgent', 'podAgent', 'podAgentRef',
   'manifestStatus', 'notes',
 ]
+
+// Master-data picks that the form clears by sending an empty string.
+const PICK_REF_FIELDS = ['shipperParty', 'consigneeParty', 'notifyParty', 'podAgentRef']
 
 // ─── Create Booking (single-page create) ──────────────────────────────────────
 export const createBooking = async (data, currentUser) => {
@@ -96,14 +124,16 @@ export const createBooking = async (data, currentUser) => {
     }
   }
 
+  PICK_REF_FIELDS.forEach((f) => { if (data[f] === '') delete data[f] })
   const jobNo = await getNextJobNo()
   const booking = new Booking({
     ...data,
     jobNo,
     jobOpenedBy: currentUser?._id || currentUser?.id,
   })
-  clearDangerousNumberIfNotDangerous(booking)
+  clearDangerousFieldsIfNotDangerous(booking)
   stampCustomsSubmittedAt(booking, false)
+  await assertAssignments(booking)
   await booking.save()
   await booking.populate(POPULATE_FIELDS)
   return { booking, stockWarnings }
@@ -129,10 +159,14 @@ export const updateBooking = async (id, data) => {
 
   const wasCustomsSubmitted = booking.customsSubmitted
   for (const field of EDITABLE_FIELDS) {
-    if (data[field] !== undefined) booking[field] = data[field]
+    // once confirmed the units are reserved; the per-unit panel edits them from then on
+    if (field === 'containerAssignments' && booking.status === 'confirmed') continue
+    if (data[field] === '' && PICK_REF_FIELDS.includes(field)) booking[field] = null // cleared pick
+    else if (data[field] !== undefined) booking[field] = data[field]
   }
-  clearDangerousNumberIfNotDangerous(booking)
+  clearDangerousFieldsIfNotDangerous(booking)
   stampCustomsSubmittedAt(booking, wasCustomsSubmitted)
+  await assertAssignments(booking)
 
   await booking.save()
   await booking.populate(POPULATE_FIELDS)
@@ -215,13 +249,21 @@ export const confirmBooking = async (id) => {
   booking.status = 'confirmed'
   await booking.save()
 
-  // Decrement stock for each container type, scoped to this booking's
-  // NVOCC + depot so allocation never draws down a different NVOCC's or
-  // depot's physical containers — and stamps each allocated unit with this
-  // booking's id so cancelBooking() can later release exactly these units.
+  // Allocate each container line from the depot's oldest free units (FIFO),
+  // scoped to this booking's NVOCC + depot so allocation never draws down a
+  // different NVOCC's or depot's physical containers; every unit is stamped
+  // with this booking's id so cancelBooking() releases exactly these units.
+  // The seal numbers typed on the Depot step are applied in slot order to the
+  // units allocated for that container type.
+  const sealsByType = {}
+  for (const p of booking.containerAssignments || []) {
+    const key = String(p.containerType)
+    ;(sealsByType[key] = sealsByType[key] || []).push(p.sealNumber || '')
+  }
   for (const entry of booking.containers) {
     try {
-      await decrementStock(entry.containerType, entry.quantity, booking.nvocc, booking.depot, booking._id)
+      const ids = await decrementStock(entry.containerType, entry.quantity, booking.nvocc, booking.depot, booking._id)
+      await applySeals(ids, sealsByType[String(entry.containerType)])
     } catch (_) {
       // log but don't fail — stock may not be tracked for all types
     }
@@ -451,4 +493,15 @@ export const generateExcel = async ({ status, pol, pod, search } = {}) => {
   })
 
   return workbook
+}
+
+// ─── DG attachments live on the linked quotation ─────────────────────────────
+// The Job form shows the MSDS files already attached to its quotation; this
+// streams one of them for anyone who can read the booking (not just people
+// holding quotation:read).
+export const getQuotationMsdsFile = async (bookingId, fileId) => {
+  const booking = await Booking.findById(bookingId).select('quotation')
+  if (!booking) throw Object.assign(new Error('Booking not found'), { statusCode: 404 })
+  if (!booking.quotation) throw Object.assign(new Error('This booking has no quotation'), { statusCode: 404 })
+  return getMsdsFile(booking.quotation, fileId)
 }

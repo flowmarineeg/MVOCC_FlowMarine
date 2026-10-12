@@ -287,6 +287,55 @@ export const getMsdsFile = async (id, fileId) => {
   return { path: msdsDiskPath(file), fileName: file.fileName }
 }
 
+// ─── Readiness: required data before send / approve / convert ──────────────
+// Saving a draft only needs the basics (the create/update validation). Before a
+// quotation can be SENT to the client, APPROVED, or CONVERTED into a booking job
+// it must be complete — enforced here on the server (the page also shows the
+// list so people see what's missing). Returns a list of human-readable issues.
+const idOf = (v) => String(v?._id || v || '')
+
+export const getReadinessIssues = (q) => {
+  const issues = []
+  const has = (v) => !!(v && String(v).trim())
+  const S1 = '1. Client Request Data'
+  const S2 = '2. Ports'
+  const S3 = '3. Containers & Cargo'
+
+  if (!q.customer || !has(q.clientName)) issues.push(`${S1}: select the client`)
+  if (!has(q.contactPhone)) issues.push(`${S1}: contact phone`)
+  if (!has(q.contactEmail)) issues.push(`${S1}: contact email`)
+  if (!has(q.salesRep)) issues.push(`${S1}: sales representative`)
+  if (!q.inquiryDate) issues.push(`${S1}: inquiry date`)
+
+  if (!q.pol) issues.push(`${S2}: port of loading (POL)`)
+  if (!q.pod) issues.push(`${S2}: port of discharge (POD)`)
+  if (q.pol && q.pod && idOf(q.pol) === idOf(q.pod)) issues.push(`${S2}: POL and POD must be different ports`)
+
+  if (!has(q.commodity)) issues.push(`${S3}: commodity`)
+  const containers = q.containers || []
+  if (containers.length === 0 || containers.some((c) => !c.containerType || !(c.quantity >= 1))) {
+    issues.push(`${S3}: at least one container with a type and quantity`)
+  }
+  if (q.isDangerous) {
+    if (!has(q.unNumber)) issues.push(`${S3}: UN number (dangerous goods)`)
+    if ((q.msdsFiles || []).length === 0) issues.push(`${S3}: attach at least one MSDS file (dangerous goods)`)
+  }
+
+  if (!q.nvocc) issues.push('5. Carrier: select the carrier')
+  const rows = q.totalsByCurrency || []
+  if (!rows.some((r) => r.buying > 0)) issues.push('6. Buying Rate: price at least one buying charge')
+  if (!rows.some((r) => r.selling > 0)) issues.push('7. Selling Price to Client: price at least one selling charge')
+  if (!q.paymentTerms) issues.push('7. Selling Price to Client: payment terms')
+  return issues
+}
+
+const assertReady = (quotation, action) => {
+  const issues = getReadinessIssues(quotation)
+  if (issues.length > 0) {
+    throw Object.assign(new Error(`This quotation is not ready to be ${action}. Complete: ${issues.join('; ')}`), { statusCode: 400, issues })
+  }
+}
+
 // ─── Status transitions ─────────────────────────────────────────────────────
 const ALLOWED_TRANSITIONS = {
   draft: ['sent'],
@@ -308,6 +357,9 @@ export const updateStatus = async (id, { status, rejectionReason }, { canApprove
   if (status === 'rejected' && !(rejectionReason && rejectionReason.trim())) {
     throw Object.assign(new Error('Rejection reason is required'), { statusCode: 400 })
   }
+
+  if (status === 'sent') assertReady(quotation, 'sent to the client')
+  if (status === 'approved') assertReady(quotation, 'approved')
 
   if (status === 'approved' && quotation.belowMinMargin && !canApprove) {
     throw Object.assign(
@@ -360,6 +412,7 @@ export const assertConvertible = async (quotationId) => {
   if (quotation.linkedBooking) {
     throw Object.assign(new Error('This quotation has already been converted to a booking'), { statusCode: 409 })
   }
+  assertReady(quotation, 'converted to a booking job')
   return quotation
 }
 

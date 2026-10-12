@@ -131,23 +131,29 @@ export default function QuotationDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
-  const handleSave = async (data, msdsFiles = []) => {
+  // Sections 1–4 ("main") and 5–8 ("pricing") are saved by separate buttons —
+  // same document, each call only carries its own part's fields. The form keeps
+  // its own state, so saving one part never discards unsaved edits in the other.
+  // Returns the saved quotation (so the form can refresh its MSDS list).
+  const handleSavePart = async (part, data, msdsFiles = []) => {
     setSaving(true)
     try {
-      await quotationApi.updateQuotation(id, data)
+      let updated = await quotationApi.updateQuotation(id, data)
       if (msdsFiles.length > 0) {
         try {
-          await quotationApi.uploadMsds(id, msdsFiles)
+          updated = await quotationApi.uploadMsds(id, msdsFiles)
         } catch (err) {
-          toast(`Quotation saved, but the MSDS upload failed: ${err.message}`, 'error')
-          load()
-          return
+          toast(`Saved, but the MSDS upload failed: ${err.message}`, 'error')
+          setQuotation(updated)
+          return updated
         }
       }
-      toast('Quotation updated', 'success')
-      load()
+      setQuotation(updated)
+      toast(part === 'main' ? 'Sections 1–4 saved' : 'Sections 5–8 saved', 'success')
+      return updated
     } catch (err) {
       toast(err.message, 'error')
+      return undefined
     } finally {
       setSaving(false)
     }
@@ -175,6 +181,11 @@ export default function QuotationDetailPage() {
   if (!quotation) return null
 
   const nextActions = NEXT_STATUS[quotation.status] || []
+  // What is still missing before this quotation can be sent / approved / converted
+  // (computed by the server from the SAVED data).
+  const issues = quotation.readinessIssues || []
+  const needsReadiness = ['draft', 'sent', 'negotiation'].includes(quotation.status) || (quotation.status === 'approved' && !quotation.linkedBooking)
+  const notReadyTitle = `Not ready — complete the items listed below and save first`
 
   return (
     <div className="space-y-5 p-4 sm:p-6">
@@ -192,13 +203,14 @@ export default function QuotationDetailPage() {
         {canUpdate && (
           <div className="flex flex-wrap items-center justify-end gap-2">
             {nextActions.map((a) => {
-              const disabled = statusBusy || (a.status === 'approved' && quotation.belowMinMargin && !canApprove)
+              const notReady = issues.length > 0 && (a.status === 'sent' || a.status === 'approved')
+              const disabled = statusBusy || notReady || (a.status === 'approved' && quotation.belowMinMargin && !canApprove)
               return (
                 <button
                   key={a.status}
                   onClick={() => (a.status === 'rejected' ? setRejectOpen(true) : changeStatus(a.status))}
                   disabled={disabled}
-                  title={disabled ? 'Below minimum margin — requires quotation:approve permission' : undefined}
+                  title={notReady ? notReadyTitle : disabled ? 'Below minimum margin — requires quotation:approve permission' : undefined}
                   className={`px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${toneCls[a.tone]}`}
                 >
                   {a.label}
@@ -216,7 +228,9 @@ export default function QuotationDetailPage() {
               ) : (
                 <button
                   onClick={handleConvert}
-                  className="bg-stamp px-4 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-stamp/90"
+                  disabled={issues.length > 0}
+                  title={issues.length > 0 ? notReadyTitle : undefined}
+                  className="bg-stamp px-4 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-stamp/90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Convert to Job & Create Booking
                 </button>
@@ -233,9 +247,19 @@ export default function QuotationDetailPage() {
         </div>
       )}
 
+      {needsReadiness && issues.length > 0 && (
+        <div data-testid="readiness" className="border border-signal/40 bg-signal/10 px-4 py-3 text-sm text-signal">
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.1em]">
+            Complete before this quotation can be sent, approved or converted to a job
+          </p>
+          <ul className="mt-1.5 list-disc space-y-0.5 pl-5">
+            {issues.map((i) => <li key={i}>{i}</li>)}
+          </ul>
+          <p className="mt-1.5 text-xs opacity-80">Based on what is saved — save sections 1–4 and 5–8 after filling them in.</p>
+        </div>
+      )}
+
       <QuotationForm
-        // remounts when the saved MSDS list changes so the file list shows the new state
-        key={(quotation.msdsFiles || []).map((f) => f._id).join(',')}
         quotation={quotation}
         customers={customers}
         ports={ports}
@@ -245,7 +269,7 @@ export default function QuotationDetailPage() {
         teamMembers={teamMembers}
         submitting={saving}
         canOverrideLock={canApprove}
-        onSubmit={handleSave}
+        onSavePart={handleSavePart}
         onCustomerCreated={(c) => setCustomers((prev) => [...prev, c])}
       />
 

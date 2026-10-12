@@ -285,11 +285,12 @@ export const decrementStock = async (containerTypeId, qty, nvoccId, depotId, boo
     .limit(qty)
     .select('_id')
     .lean()
-  if (docs.length === 0) return
+  if (docs.length === 0) return []
   await Container.updateMany(
     { _id: { $in: docs.map((d) => d._id) } },
     { status: 'allocated', booking: bookingId, containerStatus: 'Empty Assigned' }
   )
+  return docs.map((d) => d._id) // oldest first
 }
 
 // Releases exactly the units this booking holds for this container type —
@@ -316,4 +317,11 @@ export const incrementStock = async (containerTypeId, qty, nvoccId, bookingId) =
       vasUploadStatus: null,
     }
   )
+}
+
+// Writes seal numbers (in order) onto the units a booking just allocated.
+export const applySeals = async (unitIds = [], seals = []) => {
+  for (let i = 0; i < unitIds.length; i++) {
+    if (seals[i]) await Container.updateOne({ _id: unitIds[i] }, { sealNumber: seals[i] })
+  }
 }

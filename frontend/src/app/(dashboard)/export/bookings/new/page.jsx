@@ -18,9 +18,16 @@ import BookingStepBar from '@/components/export/BookingStepBar'
 // Builds BookingForm's `prefill` shape from an approved Quotation, for the
 // "Convert to Job & Create Booking" flow — only the fields that overlap
 // between the two documents are carried over (see Sprint 005 plan, Explicit
-// Decisions 5 & 6: VGM is deliberately NOT auto-filled). NVOCC/pricing are
+// Decisions 5 & 6). NVOCC/pricing are
 // now part of this same one-page submission instead of a second chained
 // Step 2 call, since the Job form no longer has separate steps.
+function sumWeights(containers = []) {
+  const total = (key) => containers.reduce((sum, c) => sum + (Number(c[key]) || 0), 0)
+  const gross = total('grossWeight')
+  const net = total('netWeight')
+  return { ...(gross > 0 && { grossWeight: gross }), ...(net > 0 && { netWeight: net }) }
+}
+
 function prefillFromQuotation(quotation) {
   return {
     clientName: quotation.clientName || '',
@@ -29,8 +36,11 @@ function prefillFromQuotation(quotation) {
     pol: quotation.pol?._id || quotation.pol || '',
     pod: quotation.pod?._id || quotation.pod || '',
     commodity: quotation.commodity || '',
+    hsCode: quotation.hsCode || '',
     isDangerous: !!quotation.isDangerous,
-    dangerousNumber: quotation.isDangerous ? quotation.unNumber || '' : '',
+    unNumber: quotation.isDangerous ? quotation.unNumber || '' : '',
+    // the quotation holds estimated weights per container line; the job's totals start as their sum
+    ...sumWeights(quotation.containers),
     containers: (quotation.containers || []).map((c) => ({
       containerType: c.containerType?._id || c.containerType,
       quantity: c.quantity,
@@ -66,6 +76,7 @@ function NewBookingPageInner() {
   const [ports, setPorts] = useState([])
   const [containerTypes, setContainerTypes] = useState([])
   const [carriers, setCarriers] = useState([])
+  const [lookups, setLookups] = useState({ vessels: [], parties: [], agents: [], packages: [] })
   const [nvoccs, setNvoccs] = useState([])
   const [depots, setDepots] = useState([])
   const [stockMap, setStockMap] = useState({})
@@ -81,8 +92,10 @@ function NewBookingPageInner() {
       masterDataApi.getDepots(),
       stockApi.getStockMapByType(),
       fromQuotationId ? quotationApi.getQuotationById(fromQuotationId) : Promise.resolve(null),
+      Promise.all([masterDataApi.getVessels(), masterDataApi.getParties(), masterDataApi.getAgents(), masterDataApi.getPackages()]),
     ])
-      .then(([portsRes, typesRes, carriersRes, nvoccsRes, depotsRes, map, quotationRes]) => {
+      .then(([portsRes, typesRes, carriersRes, nvoccsRes, depotsRes, map, quotationRes, [vessels, parties, agents, packages]]) => {
+        setLookups({ vessels, parties, agents, packages })
         setPorts(portsRes)
         setContainerTypes(typesRes)
         setCarriers(carriersRes)
@@ -142,6 +155,11 @@ function NewBookingPageInner() {
           onInvalidStep={setStep}
           prefill={quotation ? prefillFromQuotation(quotation) : null}
           quotationId={quotation?._id || null}
+          quotation={quotation}
+          vessels={lookups.vessels}
+          parties={lookups.parties}
+          agents={lookups.agents}
+          packages={lookups.packages}
           ports={ports}
           containerTypes={containerTypes}
           carriers={carriers}

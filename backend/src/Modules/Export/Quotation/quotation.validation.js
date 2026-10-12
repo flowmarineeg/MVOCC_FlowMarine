@@ -80,7 +80,14 @@ const sharedOptionalRules = [
   body('nvocc').optional({ checkFalsy: true }).isMongoId().withMessage('Valid NVOCC ID required'),
 
   body('rateValidFrom').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid rate validity from date'),
-  body('rateValidTo').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid rate validity to date'),
+  body('rateValidTo')
+    .optional({ checkFalsy: true })
+    .isISO8601().withMessage('Invalid rate validity to date')
+    .custom((to, { req }) => {
+      const from = req.body.rateValidFrom
+      if (from && new Date(to) < new Date(from)) throw new Error('Rate valid-to must not be before valid-from')
+      return true
+    }),
   ...rateTableRules('buyingOrigin', ORIGIN_LINE_KEYS),
   ...rateTableRules('buyingDestination', DESTINATION_LINE_KEYS),
   body('freeTimeBuyingDays').optional({ checkFalsy: true }).isFloat({ min: 0 }),

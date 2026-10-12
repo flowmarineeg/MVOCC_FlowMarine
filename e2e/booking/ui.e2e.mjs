@@ -6,6 +6,7 @@
 // done.
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { unlink } from 'node:fs/promises'
 import { chromium } from 'playwright-core'
 
 const BACKEND = fileURLToPath(new URL('../../backend/', import.meta.url))
@@ -110,7 +111,7 @@ const saveBooking = () => saveAndWait('Save Booking details', isBookingSaveUrl)
 const saveBl = () => saveAndWait('Save B&L details', isBlSaveUrl)
 
 let jobId = null
-const seedIds = { bookingIds: [], containerIds: [], roleIds: [], userIds: [] }
+const seedIds = { bookingIds: [], containerIds: [], roleIds: [], userIds: [], partyIds: [], agentIds: [], quotationIds: [], customerIds: [], voIds: [], vesselIds: [], quotationNos: [] }
 let db
 try {
   // ─── 1. Login ────────────────────────────────────────────────────────
@@ -129,13 +130,37 @@ try {
   const t20 = types.find((t) => t.code === '20DC')
   const nvocc = nvoccs[0], depot = depots[0]
 
+  // Parties / POD agent the Job form picks from (Parties master data)
+  const mkParty = async (partyType, name, country, taxNumber) => {
+    const res = await api('POST', '/master/parties', { partyType, name: `${RUN} ${name}`, country, taxNumber, address: `${name} street`, contacts: [{ name: `${name} contact`, email: `${name.toLowerCase().replace(/\W/g, '')}@example.com`, phone: '+2010000' + name.length }] })
+    if (res.json?.data?._id) seedIds.partyIds.push(res.json.data._id)
+    return res.json?.data
+  }
+  const shipperParty = await mkParty('shipper', 'Shipper Co', 'Egypt', 'TAX-EXP-1')
+  const consigneeParty = await mkParty('consignee', 'Consignee Co', 'Germany', 'TAX-IMP-1')
+  const notifyParty = await mkParty('notify', 'Notify Co', 'France', 'TAX-NTF-1')
+  const agentRes = await api('POST', '/master/agents', { name: `${RUN} POD Agent`, country: 'Germany', address: 'Agent road', contacts: [{ name: 'Agent Contact', email: 'agent@example.com', phone: '+4900' }] })
+  if (agentRes.json?.data?._id) seedIds.agentIds.push(agentRes.json.data._id)
+  check('seeded shipper / consignee / notify parties and a POD agent', !!(shipperParty && consigneeParty && notifyParty && agentRes.json?.data), JSON.stringify(agentRes.json))
+
   // ─── 2. Create a new booking through the real create form (5-step bar) ─
   await page.goto(`${WEB}/export/bookings/new`)
   await page.getByText('Shipping Declaration').waitFor({ timeout: 90000 })
   const createLabels = await page.locator('div.overflow-x-auto.border.border-ink\\/25.bg-card button').allTextContents()
   check('create page shows the same 5-step bar as the details page', createLabels.length === 5 && createLabels.join('|').includes('Preliminary') && createLabels.join('|').includes('BL & Loading List'), JSON.stringify(createLabels))
-  check('create page starts on step 1 (cargo visible, client identity + containers hidden)',
-    await page.getByText('Shipment & Cargo').isVisible() && !(await page.getByText('Header & Job Info').isVisible()) && !(await page.getByText('Container Type & Quantity').isVisible()))
+  check('create page starts on step 1 (cargo visible, client identity hidden)',
+    await page.getByText('Shipment & Cargo').isVisible() && !(await page.getByText('Header & Job Info').isVisible()))
+
+  // Step 1 field order and the removed fields
+  const step1Labels = (await page.locator('label').allTextContents()).map((t) => t.replace(/\s*\*$/, '').trim())
+  const idx = (re) => step1Labels.findIndex((t) => re.test(t))
+  const order = [/^Shipping Declaration/, /^Port of Loading/, /^Port of Discharge/, /^Container Type/, /^Commodity/, /^HS Code/, /^UCR Number/, /^No\. of Packages/, /^Package Type/, /^Gross Weight/, /^Net Weight/].map(idx)
+  check('Shipment & Cargo order: declaration, POL, POD, containers, commodity, HS code, UCR, packages, package type, gross, net', order.every((v, i) => v > -1 && (i === 0 || v > order[i - 1])), JSON.stringify(order))
+  check('VGM, CBM, the old DG number and Container Location inputs are gone', !step1Labels.some((t) => /^VGM \(kg\)|^CBM|^Dangerous Goods Number|^Container Location|^B\/L No/.test(t)), step1Labels.join('|'))
+  const partyOrder = [/^POD Agent \(/, /^Shipper \(/, /^Consignee \(/, /^Notify \(/].map(idx)
+  check('Parties order: POD agent first, then shipper, consignee, notify', partyOrder.every((v, i) => v > -1 && (i === 0 || v > partyOrder[i - 1])), JSON.stringify(partyOrder))
+  check('Consignee Contact preview and the POL/POD Agents section are gone', !(await page.getByText('Consignee Contact').count()) && !(await page.getByText('POL Agent').count()))
+  check('Package Type is a master-data dropdown (not free text)', (await fieldInput(/^Package Type/).count()) === 0 && (await page.locator('label', { hasText: /^Package Type/ }).locator('xpath=..').locator('button').count()) > 0)
 
   // Steps 4/5 on create: booking-owned blocks render, B&L blocks are replaced by a note
   await gotoStep(3)
@@ -161,12 +186,13 @@ try {
   await fieldInput(/^Commodity/).fill(RUN + ' commodity')
   // Dangerous goods round-trip, through the actual toggle buttons
   await page.getByRole('button', { name: 'Yes', exact: true }).click()
-  await fieldInput(/^Dangerous Goods Number/).fill('UN1234 / Class 3')
-  await page.getByRole('button', { name: 'No', exact: true }).click() // toggle back off before submit — number should be dropped server-side
+  await fieldInput(/^Class Number/).fill('3')
+  await fieldInput(/^UN Number/).fill('UN1234')
+  check('Dangerous Goods shows Class Number + UN Number inputs', (await fieldInput(/^Class Number/).inputValue()) === '3')
+  await page.getByRole('button', { name: 'No', exact: true }).click() // toggle back off before submit — both numbers should be dropped server-side
   await fileInputNear(/^Shipping Declaration/).setInputFiles(PNG_PATH)
 
-  // Step 3: containers; client identity (step 2) still empty -> submit must jump to step 2
-  await gotoStep(2)
+  // Containers are on step 1 for a job without a quotation; client identity (step 2) still empty -> submit must jump to step 2
   await page.locator('button', { hasText: 'Select container type' }).first().click()
   await page.locator('div.absolute button', { hasText: '20DC' }).first().click()
   await page.locator('input[placeholder="Qty"]').first().fill('2')
@@ -188,7 +214,7 @@ try {
   const created = (await api('GET', `/export/bookings/${jobId}`)).json?.data
   check('created booking has an auto-generated jobNo and our fields', /^OPS Jobs \d{4} FLOW MARINE/.test(created?.jobNo || ''), created?.jobNo)
   check('fields from steps 1, 2, 3 and 5 all landed in one create submission', created?.clientName === RUN + ' Client' && created?.commodity === RUN + ' commodity' && created?.containers?.[0]?.quantity === 2 && created?.notes === 'E2E create-time note', JSON.stringify([created?.clientName, created?.commodity, created?.containers, created?.notes]))
-  check('dangerous-goods number dropped server-side after toggling back off in the same submission', created?.isDangerous === false && !created?.dangerousNumber, JSON.stringify([created?.isDangerous, created?.dangerousNumber]))
+  check('class + UN number dropped server-side after toggling back off in the same submission', created?.isDangerous === false && !created?.dangerousClass && !created?.unNumber, JSON.stringify([created?.isDangerous, created?.dangerousClass, created?.unNumber]))
   check('shipping declaration file attached', created?.shippingDeclaration?.fileName === 'tiny.png', created?.shippingDeclaration?.fileName)
 
   // ─── 3. Step bar + Step 1 edits persist ────────────────────────────────
@@ -197,27 +223,36 @@ try {
   check('step bar shows the 5 fixed steps in order', stepLabels.length === 5 && stepLabels.join('|').includes('Preliminary') && stepLabels.join('|').includes('BL & Loading List'), JSON.stringify(stepLabels))
 
   await fieldInput(/^HS Code/).fill('0207.14')
-  await fieldInput(/^Name/, 0).fill('Shipper Co') // Shipper block, first "Name" field on step 1
+  await pick(/^POD Agent \(/, `${RUN} POD Agent`)
+  await pick(/^Shipper \(/, `${RUN} Shipper Co`)
+  await pick(/^Consignee \(/, `${RUN} Consignee Co`)
+  check('picking parties fills Exporter Tax No. (shipper) and Importer Tax No. + Country (consignee), read-only',
+    (await page.getByText('TAX-EXP-1').count()) > 0 && (await page.getByText('TAX-IMP-1').count()) > 0 && (await fieldInput(/^Importer Country/).count()) === 0)
+  await page.getByText('Notify is the same as the Consignee').click()
   await saveBooking()
   let afterSave = (await api('GET', `/export/bookings/${jobId}`)).json?.data
-  check('Step-1 edits (HS Code, Shipper name) persisted', afterSave?.hsCode === '0207.14' && afterSave?.shipper?.name === 'Shipper Co', JSON.stringify([afterSave?.hsCode, afterSave?.shipper?.name]))
+  check('Step-1 edits (HS Code, parties, POD agent) persisted', afterSave?.hsCode === '0207.14' && afterSave?.shipper?.name === `${RUN} Shipper Co` && afterSave?.consignee?.name === `${RUN} Consignee Co` && afterSave?.podAgentRef === agentRes.json.data._id && afterSave?.podAgent?.name === `${RUN} POD Agent`, JSON.stringify([afterSave?.hsCode, afterSave?.shipper?.name, afterSave?.podAgent?.name]))
+  check('exporter = shipper, importer = consignee: tax numbers + country derived from the picked parties', afterSave?.exportTaxNumber === 'TAX-EXP-1' && afterSave?.importTaxNumber === 'TAX-IMP-1' && afterSave?.importCountry === 'Germany', JSON.stringify([afterSave?.exportTaxNumber, afterSave?.importTaxNumber, afterSave?.importCountry]))
+  check('"Notify same as Consignee" copies the consignee into notify', afterSave?.notifySameAsConsignee === true && afterSave?.notify?.name === `${RUN} Consignee Co`, JSON.stringify([afterSave?.notifySameAsConsignee, afterSave?.notify?.name]))
+  await page.getByText('Notify is the same as the Consignee').click() // untick -> pick a different notify party
+  await pick(/^Notify \(/, `${RUN} Notify Co`)
+  await saveBooking()
+  afterSave = (await api('GET', `/export/bookings/${jobId}`)).json?.data
+  check('a different notify party can be picked once the checkbox is cleared', afterSave?.notifySameAsConsignee === false && afterSave?.notify?.name === `${RUN} Notify Co` && afterSave?.consignee?.name === `${RUN} Consignee Co`, JSON.stringify([afterSave?.notifySameAsConsignee, afterSave?.notify?.name]))
 
   // ─── 4. Step 2: Booking — job identity, carrier, commercial, agents ───
   await gotoStep(1)
-  check('step 2 shows Header/Client, Carrier Booking Confirmation, Commercial, Agents', await page.getByText('Carrier Booking Confirmation').isVisible() && await page.getByText('Commercial').isVisible() && await page.getByText('Agents').isVisible())
+  check('step 2 shows Header/Client, Carrier Booking Confirmation and Commercial, and no Agents section', await page.getByText('Carrier Booking Confirmation').isVisible() && await page.getByText('Commercial').isVisible() && (await page.getByRole('heading', { name: 'Agents' }).count()) === 0)
+  check('ETD label shows the POL and ETA label shows the POD', (await page.locator('label', { hasText: /^ETD/ }).first().textContent()).includes(ports[0].code) && (await page.locator('label', { hasText: /^ETA/ }).first().textContent()).includes(ports[1].code))
   await pick(/^Carrier$/, nvocc.code)
   await fieldInput(/^Price$/).fill('500')
   await saveBooking()
 
   // ─── 5. Step 3: Depot / Container — required before Confirm ───────────
   await gotoStep(2)
-  check('step 3 shows Containers only (not Carrier Booking Confirmation)', await page.getByText('Container Type & Quantity').isVisible() && !(await page.getByText('Carrier Booking Confirmation').isVisible()))
+  check('step 3 shows the container rows only (not Carrier Booking Confirmation), and no Container Location', await page.getByText('Containers — type, container number (auto from stock), seal').isVisible() && !(await page.getByText('Carrier Booking Confirmation').isVisible()) && (await page.locator('label', { hasText: /Container Location/ }).count()) === 0)
   const confirmBtnDisabled = page.getByRole('button', { name: 'Confirm', exact: true })
   check('Confirm is disabled with no depot yet', await confirmBtnDisabled.isDisabled())
-  await pick(/^Depot$/, depot.code)
-  await saveBooking()
-  check('Confirm becomes enabled once a depot is set and saved', await waitUntil(() => page.getByRole('button', { name: 'Confirm', exact: true }).isEnabled()))
-
   // Seed stock so Confirm has something to allocate (2x 20DC selected above).
   // Diff before/after so cleanup can delete exactly these units — never
   // assume this (type, nvocc, depot) triple started empty.
@@ -226,6 +261,28 @@ try {
   const seedRes = await api('POST', '/master/containers/quick-add', { containerType: t20._id, nvocc: nvocc._id, depot: depot._id, quantity: 2 })
   check('seeded 2 units of 20DC stock for this booking\'s NVOCC/Depot', seedRes.status === 201, JSON.stringify(seedRes.json))
   seedIds.containerIds.push(...(await stockAt()).filter((u) => !beforeSeedIds.has(u._id)).map((u) => u._id))
+
+  await page.reload()
+  await gotoStep(2)
+  await pick(/^Depot$/, depot.code)
+  const freeAsc = (await stockAt()).filter((u2) => u2.status === 'available').sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt))
+  const autoRows = page.locator('[data-testid="slot-type"]')
+  await autoRows.first().waitFor({ timeout: 15000 })
+  const typeCells = await autoRows.allTextContents()
+  check('Depot step has one row per container (2 rows), each showing its own type even though the type is the same', typeCells.length === 2 && typeCells.every((t) => t.trim() === '20DC'), JSON.stringify(typeCells))
+  const scrollBox = page.getByTestId('container-scroll')
+  check('the containers table sits in a vertically scrolling box with a max height', (await scrollBox.evaluate((el) => { const c = getComputedStyle(el); return c.overflowY === 'auto' && c.maxHeight !== 'none' })))
+  await waitUntil(async () => (await page.locator('[data-testid="auto-container"]').first().textContent()) !== 'No free stock')
+  const shown = await page.locator('[data-testid="auto-container"]').allTextContents()
+  check('the container numbers are auto-selected: the oldest free stock first, in order', shown.length === 2 && shown[0] === freeAsc[0].containerNumber && shown[1] === freeAsc[1].containerNumber, JSON.stringify([shown, freeAsc.slice(0, 2).map((x) => x.containerNumber)]))
+  check('the container list is view-only (no select / button to choose a number)', (await page.locator('[data-testid="container-scroll"] select, [data-testid="container-scroll"] button').count()) === 0)
+  const sealInputs = page.locator('[data-testid="container-scroll"]').getByLabel('Seal number')
+  await sealInputs.nth(0).fill('SEAL-PICK-1')
+  await sealInputs.nth(1).fill('SEAL-PICK-2')
+  await saveBooking()
+  const savedPick = (await api('GET', `/export/bookings/${jobId}`)).json?.data
+  check('the seals are saved on the booking (nothing reserved until confirm)', savedPick?.containerAssignments?.length === 2 && savedPick.containerAssignments[0].sealNumber === 'SEAL-PICK-1' && (await stockAt()).filter((x) => x.status === 'available').length >= 2, JSON.stringify(savedPick?.containerAssignments))
+  check('Confirm becomes enabled once a depot is set and saved', await waitUntil(() => page.getByRole('button', { name: 'Confirm', exact: true }).isEnabled()))
 
   // ─── 6. Confirm via the header action ──────────────────────────────────
   await page.getByRole('button', { name: 'Confirm', exact: true }).click()
@@ -239,6 +296,8 @@ try {
   // (stockApi.getContainers), a beat after the "Allocated Containers —
   // Fulfillment" heading itself renders — poll rather than a one-shot read.
   check('Allocated Containers panel shows 2 units after confirm', await waitUntil(async () => (await page.locator('table tbody tr').count()) === 2))
+  const heldNow = ((await api('GET', `/master/containers?booking=${jobId}`)).json?.data || []).sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt))
+  check('confirm allocated exactly the displayed oldest units, with the seals in order', heldNow.length === 2 && heldNow[0].containerNumber === freeAsc[0].containerNumber && heldNow[0].sealNumber === 'SEAL-PICK-1' && heldNow[1].sealNumber === 'SEAL-PICK-2', JSON.stringify(heldNow.map((x) => [x.containerNumber, x.sealNumber])))
   // Edit one unit's fulfillment fields inline and save
   await page.locator('table tbody tr').first().locator('input').first().fill('SEAL-UI-1')
   await page.locator('table tbody tr').first().getByRole('button', { name: 'Save' }).click()
@@ -307,6 +366,80 @@ try {
   check('delete worked and redirected to the list', afterDelete.status === 404 && page.url().endsWith('/export/bookings'), `${afterDelete.status} ${page.url()}`)
   jobId = null
 
+  // ─── 9b. Convert an approved quotation: its data is shown read-only ────
+  const qCustomer = await api('POST', '/master/customers', { name: `${RUN} QClient`, phone: '+20155', email: 'qclient@example.com' })
+  seedIds.customerIds.push(qCustomer.json.data._id)
+  const vo = await api('POST', '/master/vessel-operators', { name: `${RUN} VO`, code: `${RUN}-VO`, contacts: [{ name: 'VO Alice', phone: '+2001' }, { name: 'VO Bob', phone: '+2002' }] })
+  seedIds.voIds.push(vo.json.data._id)
+  const otherVo = await api('POST', '/master/vessel-operators', { name: `${RUN} VO2`, code: `${RUN}-V2` })
+  seedIds.voIds.push(otherVo.json.data._id)
+  const vessel = await api('POST', '/master/vessels', { vesselOperator: vo.json.data._id, name: `${RUN} MV Alpha` })
+  seedIds.vesselIds.push(vessel.json.data._id)
+  const otherVessel = await api('POST', '/master/vessels', { vesselOperator: otherVo.json.data._id, name: `${RUN} MV Other` })
+  seedIds.vesselIds.push(otherVessel.json.data._id)
+
+  const qRes = await api('POST', '/export/quotations', {
+    customerType: 'existing', customer: qCustomer.json.data._id, clientName: `${RUN} QClient`, contactPerson: 'Q Contact', contactPhone: '+20155', contactEmail: 'qclient@example.com',
+    salesRep: 'E2E', commodity: `${RUN} QCommodity`, hsCode: '1234.56', pol: ports[0]._id, pod: ports[1]._id,
+    containers: [{ containerType: t20._id, quantity: 2, grossWeight: 2000, netWeight: 1800 }],
+    isDangerous: true, unNumber: 'UN1203', nvocc: nvocc._id, paymentTerms: 'Freight Prepaid', freeTimeBuyingDays: 7,
+    buyingOrigin: { oceanFreight: { rate20: 100, currency: 'USD' } }, sellingOrigin: { oceanFreight: { rate20: 150, currency: 'USD' } },
+  })
+  const qId = qRes.json?.data?._id
+  if (qId) { seedIds.quotationIds.push(qId); seedIds.quotationNos.push(qRes.json.data.quotationNo) }
+  check('quotation for the convert flow created', qRes.status === 201, JSON.stringify(qRes.json))
+  const msdsUp = await context.request.post(API + `/export/quotations/${qId}/msds`, { multipart: { msds: { name: 'msds-sheet.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64') } } })
+  check('MSDS file attached to the quotation', msdsUp.status() === 201, msdsUp.status())
+  await api('PUT', `/export/quotations/${qId}/status`, { status: 'sent' })
+  const approved = await api('PUT', `/export/quotations/${qId}/status`, { status: 'approved' })
+  check('quotation sent + approved', approved.json?.data?.status === 'approved', JSON.stringify(approved.json))
+
+  await page.goto(`${WEB}/export/bookings/new?fromQuotation=${qId}`)
+  await page.getByText('Shipment & Cargo').waitFor({ timeout: 90000 })
+  check('container types come from the quotation, as text', await page.getByText('20DC × 2').isVisible() && (await page.locator('label', { hasText: /^Container Type/ }).count()) === 0)
+  check('commodity + HS code + gross/net weights are pre-filled from the quotation', (await hasValue(page, `${RUN} QCommodity`)) && (await hasValue(page, '1234.56')) && (await hasValue(page, '2000')) && (await hasValue(page, '1800')))
+  check('Dangerous Goods is shown read-only with the quotation\'s UN number', await page.getByText('UN1203').first().isVisible() && (await page.locator('label', { hasText: /^UN Number/ }).count()) === 0)
+  check('DG attachment (MSDS) from the quotation is listed', await page.getByRole('button', { name: 'msds-sheet.png' }).isVisible())
+  const [msdsDl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.getByRole('button', { name: 'msds-sheet.png' }).click()])
+  check('the DG attachment downloads', msdsDl.suggestedFilename() === 'msds-sheet.png', msdsDl.suggestedFilename())
+  await fieldInput(/^Class Number/).fill('3')
+
+  await gotoStep(1)
+  check('client name / phone / email are view-only (no inputs) and show the quotation\'s client',
+    (await page.locator('label', { hasText: /^Client (Name|Phone|Email)/ }).count()) === 0 && (await page.getByText(`${RUN} QClient`).first().isVisible()) && (await page.getByText('qclient@example.com').first().isVisible()))
+  check('Commercial is view-only: carrier, currency, price, cost and free time (7 days) from the quotation',
+    (await page.locator('label', { hasText: /^(Price|Cost|Currency)$/ }).count()) === 0 && (await page.getByText('7 days').isVisible()) && (await page.getByText('300', { exact: true }).count()) > 0)
+  check('ETD/ETA labels carry the quotation\'s POL / POD', (await page.locator('label', { hasText: /^ETD/ }).first().textContent()).includes(ports[0].code) && (await page.locator('label', { hasText: /^ETA/ }).first().textContent()).includes(ports[1].code))
+  check('no B/L No input on the Carrier Booking Confirmation section', (await page.locator('label', { hasText: /^B\/L No/ }).count()) === 0)
+
+  // VO -> vessel list (only that VO's vessels) and VO contact person (that VO's contacts)
+  await pick(/^Vessel Operator/, `${RUN}-VO`)
+  const vesselRoot = page.locator('label', { hasText: /^Vessel Name/ }).locator('xpath=..')
+  await vesselRoot.locator('button').first().click()
+  const vesselOpts = await vesselRoot.locator('div.absolute button').allTextContents()
+  check('Vessel Name is a master-data list filtered by the chosen VO', vesselOpts.some((t) => t.includes('MV Alpha')) && !vesselOpts.some((t) => t.includes('MV Other')), vesselOpts.join('|'))
+  await vesselRoot.locator('div.absolute button').filter({ hasText: 'MV Alpha' }).first().click()
+  const contactRoot = page.locator('label', { hasText: /^VO Contact Person/ }).locator('xpath=..')
+  await contactRoot.locator('button').first().click()
+  const contactOpts = await contactRoot.locator('div.absolute button').allTextContents()
+  check('VO Contact Person lists the chosen VO\'s contacts from master data', contactOpts.some((t) => t.includes('VO Alice')) && contactOpts.some((t) => t.includes('VO Bob')), contactOpts.join('|'))
+  await contactRoot.locator('div.absolute button').filter({ hasText: 'VO Bob' }).first().click()
+
+  await page.getByRole('button', { name: 'Create booking' }).click()
+  await page.waitForURL(/\/export\/bookings\/[0-9a-f]{24}$/, { timeout: 30000 }).catch(() => {})
+  const convJobId = jobIdFrom(page.url())
+  if (convJobId) seedIds.bookingIds.push(convJobId)
+  const conv = (await api('GET', `/export/bookings/${convJobId}`)).json?.data
+  check('converted booking is linked to the quotation and carries its data (client, DG, weights, price)',
+    conv?.quotation?.quotationNo === qRes.json.data.quotationNo && conv?.clientName === `${RUN} QClient` && conv?.isDangerous === true && conv?.unNumber === 'UN1203' && conv?.dangerousClass === '3' && conv?.grossWeight === 2000 && conv?.netWeight === 1800 && conv?.price === 300,
+    JSON.stringify([conv?.quotation?.quotationNo, conv?.unNumber, conv?.dangerousClass, conv?.grossWeight, conv?.netWeight, conv?.price]))
+  check('VO, vessel and VO contact person saved', conv?.carrier?._id === vo.json.data._id && conv?.vesselName === `${RUN} MV Alpha` && conv?.voContactPerson === 'VO Bob', JSON.stringify([conv?.carrier?._id, conv?.vesselName, conv?.voContactPerson]))
+  check('the booking\'s quotation reference carries the MSDS file list (for the DG attachments)', conv?.quotation?.msdsFiles?.[0]?.fileName === 'msds-sheet.png', JSON.stringify(conv?.quotation))
+  const msdsViaBooking = await context.request.get(API + `/export/bookings/${convJobId}/msds/${conv?.quotation?.msdsFiles?.[0]?._id}`)
+  check('booking:read users can download the DG attachment through the booking', msdsViaBooking.status() === 200, msdsViaBooking.status())
+  await page.getByText('Shipment & Cargo').waitFor({ timeout: 60000 })
+  check('on the saved job the client and commercial data stay view-only', (await page.locator('label', { hasText: /^Client Name/ }).count()) === 0 && (await page.getByRole('button', { name: 'msds-sheet.png' }).isVisible()))
+
   // ─── 10. List page: filters, pagination, quick create ──────────────────
   const listBookings = []
   for (const suffix of ['alpha', 'beta']) {
@@ -322,12 +455,12 @@ try {
   await page.goto(`${WEB}/export/bookings`)
   await page.getByPlaceholder('Search job no / client / B-L').fill(RUN)
   await page.getByText(`${RUN} alpha`).first().waitFor({ timeout: 30000 }).catch(() => {})
-  check('list search finds both newly created bookings', (await page.locator('tbody tr').filter({ hasText: RUN }).count()) === 2)
+  check('list search finds both newly created bookings', (await page.locator('tbody tr').filter({ hasText: RUN }).filter({ hasText: /alpha|beta/ }).count()) === 2)
   // This filter Select has no `label` prop (just a bare placeholder button),
   // unlike the labeled form fields `pick()` targets elsewhere in this file.
   await page.locator('button', { hasText: 'All Statuses' }).click()
   await page.locator('div.absolute button', { hasText: 'Pending' }).first().click()
-  check('status=Pending filter still shows both (both pending)', await waitUntil(async () => (await page.locator('tbody tr').filter({ hasText: RUN }).count()) === 2))
+  check('status=Pending filter still shows both (both pending)', await waitUntil(async () => (await page.locator('tbody tr').filter({ hasText: RUN }).filter({ hasText: /alpha|beta/ }).count()) === 2))
   await page.screenshot({ path: fileURLToPath(new URL(`./shots/${RUN}-list.png`, import.meta.url)), fullPage: true })
 
   // ─── 11. Preview page + Excel export ───────────────────────────────────
@@ -395,6 +528,23 @@ try {
     const delContainers = seedIds.containerIds.length
       ? await db.collection('containers').deleteMany({ _id: { $in: seedIds.containerIds.map((id) => new mongoose.Types.ObjectId(id)) } })
       : { deletedCount: 0 }
+    const oid = (arr) => ({ _id: { $in: arr.map((id) => new mongoose.Types.ObjectId(id)) } })
+    if (seedIds.partyIds.length) await db.collection('parties').deleteMany(oid(seedIds.partyIds))
+    if (seedIds.agentIds.length) await db.collection('agents').deleteMany(oid(seedIds.agentIds))
+    if (seedIds.vesselIds.length) await db.collection('vessels').deleteMany(oid(seedIds.vesselIds))
+    if (seedIds.voIds.length) await db.collection('vesseloperators').deleteMany(oid(seedIds.voIds))
+    if (seedIds.customerIds.length) await db.collection('customers').deleteMany(oid(seedIds.customerIds))
+    if (seedIds.quotationIds.length) {
+      const qs = await db.collection('quotations').find(oid(seedIds.quotationIds)).project({ msdsFiles: 1 }).toArray()
+      for (const q of qs) for (const f of q.msdsFiles || []) await unlink(fileURLToPath(new URL('../../backend/uploads/msds/' + f.filePath, import.meta.url))).catch(() => {})
+      await db.collection('quotations').deleteMany(oid(seedIds.quotationIds))
+      // give the consumed quotation numbers back only while ours are still the tail
+      const qYear = new Date().getFullYear()
+      for (const no of [...seedIds.quotationNos].reverse()) {
+        const res = await db.collection('jobcounters').updateOne({ _id: `quotation-${qYear}`, seq: Number(/(\d{4})$/.exec(no)?.[1]) }, { $inc: { seq: -1 } })
+        if (!res.modifiedCount) break
+      }
+    }
     const delUsers = seedIds.userIds.length ? await db.collection('users').deleteMany({ _id: { $in: seedIds.userIds.map((id) => new mongoose.Types.ObjectId(id)) } }) : { deletedCount: 0 }
     const delRoles = seedIds.roleIds.length ? await db.collection('roles').deleteMany({ _id: { $in: seedIds.roleIds.map((id) => new mongoose.Types.ObjectId(id)) } }) : { deletedCount: 0 }
     console.log(`cleanup: removed ${delBookings.deletedCount} booking(s), ${delContainers.deletedCount} container unit(s), ${delUsers.deletedCount} user(s), ${delRoles.deletedCount} role(s)`)

@@ -16,11 +16,14 @@ const containerEntrySchema = new mongoose.Schema(
   { _id: false }
 )
 
-// Shipper / consignee are entered directly on the booking (not master data) —
-// each party's own contact details, not just a company name.
+// Shipper / consignee / notify are picked from the Parties master data; the
+// picked party's details are copied here (a snapshot) so the booking, the BL
+// recap and the exports keep reading plain fields even if the master record
+// changes or is deleted later.
 const partySchema = new mongoose.Schema(
   {
     name: { type: String, trim: true },
+    country: { type: String, trim: true },
     email: { type: String, trim: true, lowercase: true },
     phone1: { type: String, trim: true },
     phone2: { type: String, trim: true },
@@ -30,13 +33,26 @@ const partySchema = new mongoose.Schema(
   { _id: false }
 )
 
-// POL/POD agents are free-text at Step 2 rather than a Master Data selection.
+// The POD agent is picked from the Agent (POD AGENTS) master data and copied
+// here as a snapshot; the POL agent is no longer captured in the UI.
 const agentContactSchema = new mongoose.Schema(
   {
     name: { type: String, trim: true },
     email: { type: String, trim: true, lowercase: true },
     phone: { type: String, trim: true },
     address: { type: String, trim: true },
+  },
+  { _id: false }
+)
+
+// One slot of a container line on the Depot / Container step: the seal number
+// typed for it. The container NUMBERS are not chosen by anyone — the form just
+// shows the depot's oldest free units of that type, and confirmBooking()
+// allocates exactly those (oldest first) and applies these seals in slot order.
+const containerAssignmentSchema = new mongoose.Schema(
+  {
+    containerType: { type: mongoose.Schema.Types.ObjectId, ref: 'ContainerType', required: true },
+    sealNumber: { type: String, trim: true },
   },
   { _id: false }
 )
@@ -133,17 +149,13 @@ const bookingSchema = new mongoose.Schema(
       type: Number,
       min: [0, 'Number of packages must be a positive number'],
     },
-    vgm: {
-      type: Number,
-      min: [0, 'VGM must be a positive number'],
-    },
     grossWeight: {
       type: Number,
       min: [0, 'Gross weight must be a positive number'],
     },
-    cbm: {
+    netWeight: {
       type: Number,
-      min: [0, 'CBM must be a positive number'],
+      min: [0, 'Net weight must be a positive number'],
     },
     hsCode: { type: String, trim: true },
     packageType: { type: String, trim: true },
@@ -151,14 +163,26 @@ const bookingSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    dangerousNumber: {
+    // Dangerous goods: class number + UN number (UN number comes from the
+    // quotation on convert; the old single "dangerous goods number" is gone).
+    dangerousClass: {
       type: String,
       trim: true,
       validate: {
         validator: function (v) {
           return !this.isDangerous || !!(v && v.trim())
         },
-        message: 'Dangerous goods number is required when cargo is marked dangerous',
+        message: 'Class number is required when cargo is marked dangerous',
+      },
+    },
+    unNumber: {
+      type: String,
+      trim: true,
+      validate: {
+        validator: function (v) {
+          return !this.isDangerous || !!(v && v.trim())
+        },
+        message: 'UN number is required when cargo is marked dangerous',
       },
     },
     shippingDeclaration: {
@@ -230,7 +254,8 @@ const bookingSchema = new mongoose.Schema(
     },
     gateInDate: { type: Date },
     gateOutDate: { type: Date },
-    containerLocation: { type: String, trim: true },
+    containerLocation: { type: String, trim: true }, // no longer in the UI; kept so old data isn't lost
+    containerAssignments: { type: [containerAssignmentSchema], default: [] },
 
     // ─── Section 6 — Commercial ────────────────────────────────────────
     nvocc: {
@@ -245,10 +270,17 @@ const bookingSchema = new mongoose.Schema(
     // ─── Section 7 — Parties ───────────────────────────────────────────
     shipper: { type: partySchema },
     consignee: { type: partySchema },
+    notify: { type: partySchema },
+    // true -> notify mirrors the consignee (the form copies it; stored so the UI restores the checkbox)
+    notifySameAsConsignee: { type: Boolean, default: false },
+    shipperParty: { type: mongoose.Schema.Types.ObjectId, ref: 'Party', default: null },
+    consigneeParty: { type: mongoose.Schema.Types.ObjectId, ref: 'Party', default: null },
+    notifyParty: { type: mongoose.Schema.Types.ObjectId, ref: 'Party', default: null },
 
     // ─── Section 8 — Agents ────────────────────────────────────────────
     polAgent: { type: agentContactSchema },
     podAgent: { type: agentContactSchema },
+    podAgentRef: { type: mongoose.Schema.Types.ObjectId, ref: 'Agent', default: null },
 
     // ─── Section 9 — Status & Notes ────────────────────────────────────
     manifestStatus: {

@@ -202,3 +202,10 @@ export const exportExcel = async (req, res, next) => {
     res.end()
   } catch (err) { next(err) }
 }
+
+export const getQuotationMsds = async (req, res, next) => {
+  try {
+    const file = await service.getQuotationMsdsFile(req.params.id, req.params.fileId)
+    res.download(file.path, file.fileName)
+  } catch (err) { next(err) }
+}

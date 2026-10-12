@@ -307,8 +307,26 @@ try {
   check('editing a rate updates totals live (selling OF 250*2+400 = 900.00)', (await rowTotal(T.so, 'Ocean Freight')) === '900.00', await rowTotal(T.so, 'Ocean Freight'))
   await page.locator('label', { hasText: 'Container Type & Quantity' }).locator('xpath=..').locator('button.h-9.w-9').nth(1).click() // remove the 40HC row
   check('removing the 40HC container removes every "40 ft" column', (await page.locator('thead th', { hasText: /^40 ft$/ }).count()) === 0)
-  await page.getByRole('button', { name: 'Save changes' }).click()
-  check('save shows the success toast', await toastShown(/Quotation updated/))
+  // Not ready to send yet (no payment terms): the readiness card lists it and Send is disabled
+  check('readiness card lists the missing payment terms, and Send to Client is disabled', (await page.getByTestId('readiness').getByText(/payment terms/).count()) === 1 && (await page.getByRole('button', { name: 'Send to Client', exact: true }).isDisabled()))
+  // Two separate saves: sections 1-4 (the container change) and 5-8 (the rate change + payment terms)
+  check('edit mode has no single "Save changes" button; one button under section 4 and one at the bottom',
+    (await page.getByRole('button', { name: 'Save changes' }).count()) === 0 && (await page.getByRole('button', { name: 'Save sections 1–4' }).count()) === 1 && (await page.getByRole('button', { name: 'Save sections 5–8' }).count()) === 1)
+  const h4 = await page.getByRole('heading', { name: '4. Rate Request' }).boundingBox()
+  const b14 = await page.getByRole('button', { name: 'Save sections 1–4' }).boundingBox()
+  const h5 = await page.getByRole('heading', { name: '5. Carrier (Master Data)' }).boundingBox()
+  check('"Save sections 1–4" sits under section 4 and above section 5', b14.y > h4.y && b14.y < h5.y)
+  if (!(await fieldInput(/^Contact Phone/).inputValue())) await fieldInput(/^Contact Phone/).fill('+20111111')
+  if (!(await fieldInput(/^Contact Email/).inputValue())) await fieldInput(/^Contact Email/).fill('ui@example.com') // both are required before sending
+  await pick(/^Payment Terms/, 'Freight Prepaid')
+  await page.getByRole('button', { name: 'Save sections 1–4' }).click()
+  check('saving sections 1–4 shows its own toast', await toastShown(/Sections 1–4 saved/))
+  const midway = (await api('GET', `/export/quotations/${qId}`)).json?.data
+  check('...and saved ONLY that part: containers changed, the rate edit + payment terms are not saved yet', midway?.containers?.length === 1 && !midway?.paymentTerms, JSON.stringify([midway?.containers?.length, midway?.paymentTerms]))
+  check('...and the unsaved sections 5–8 edits were NOT discarded in the form', (await rowTotal(T.so, 'Ocean Freight')) !== '' && (await cell(T.so, 'Ocean Freight', 0).inputValue()) === '250')
+  await page.getByRole('button', { name: 'Save sections 5–8' }).click()
+  check('saving sections 5–8 shows its own toast', await toastShown(/Sections 5–8 saved/))
+  check('readiness card disappears once everything required is saved', (await page.getByTestId('readiness').count()) === 0, JSON.stringify((await api('GET', `/export/quotations/${qId}`)).json?.data?.readinessIssues))
   const edited = (await api('GET', `/export/quotations/${qId}`)).json?.data
   check('DB after edit: USD buying 290 (200+20+10+60) / selling 600 (500+40+60); EGP BL unchanged', near(edited?.totalBuyingCost, 290) && near(edited?.totalSellingPrice, 600) && near(edited?.totalsByCurrency?.find((x) => x.currency === 'EGP')?.selling, 100), `${edited?.totalBuyingCost}/${edited?.totalSellingPrice} ${JSON.stringify(edited?.totalsByCurrency)}`)
   check('DB after edit: no stale 40ft rate/qty stored', edited?.buyingOrigin?.oceanFreight?.rate40 === undefined && edited?.sellingDestination?.dthc?.rate40 === undefined, JSON.stringify(edited?.buyingOrigin?.oceanFreight))
@@ -332,13 +350,14 @@ try {
   await page.waitForURL(new RegExp(`/export/bookings/new\\?fromQuotation=${qId}`), { timeout: 30000 }).catch(() => {})
   check('convert navigates to /export/bookings/new?fromQuotation=<id>', page.url().includes(`fromQuotation=${qId}`), page.url())
   await hasValue('E2E UI Commodity', 90000)
-  check('booking form pre-filled: commodity + client name', (await hasValue('E2E UI Commodity', 5000)) && (await hasValue(`E2E UI Client ${RUN}`, 5000)))
-  check('booking form pre-filled: price = 600, cost = 290 (primary currency USD)', (await hasValue('600', 5000)) && (await hasValue('290', 5000)))
+  check('booking form pre-filled: commodity (input) + client name (view-only text)', (await hasValue('E2E UI Commodity', 5000)) && (await page.getByText(`E2E UI Client ${RUN}`).count()) > 0)
+  check('booking form shows price = 600, cost = 290 (primary currency USD) read-only', (await page.getByText('600', { exact: true }).count()) > 0 && (await page.getByText('290', { exact: true }).count()) > 0)
   await shot(page, '5-booking-prefill')
 
   // ─── 13. Reject flow through the modal ──────────────────────────────
   const rej = await api('POST', '/export/quotations', {
-    customerType: 'new', clientName: `E2E UI Reject ${RUN}`, salesRep: 'E2E', commodity: 'rej', pol: ports[0]._id, pod: ports[1]._id,
+    customerType: 'existing', customer: withContacts.json.data._id, clientName: contactsCustomerName, contactPerson: 'Alice Contact', contactPhone: '+20111', contactEmail: 'alice@example.com',
+    nvocc: nvocc._id, paymentTerms: 'Freight Prepaid', salesRep: 'E2E', commodity: 'rej', pol: ports[0]._id, pod: ports[1]._id,
     containers: [{ containerType: t20._id, quantity: 1 }], buyingOrigin: { oceanFreight: { rate20: 100 } }, sellingOrigin: { oceanFreight: { rate20: 200 } },
   })
   seedIds.push(rej.json.data._id)

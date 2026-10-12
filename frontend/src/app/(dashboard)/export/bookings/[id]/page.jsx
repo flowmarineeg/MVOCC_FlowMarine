@@ -46,6 +46,8 @@ export default function BookingDetailPage() {
   const [blData, setBlData] = useState(null)
   const [ports, setPorts] = useState([])
   const [carriers, setCarriers] = useState([])
+  // vessels / parties / POD agents / packages — the master-data picks on the Job form
+  const [lookups, setLookups] = useState({ vessels: [], parties: [], agents: [], packages: [] })
   const [nvoccs, setNvoccs] = useState([])
   const [depots, setDepots] = useState([])
   const [containerTypes, setContainerTypes] = useState([])
@@ -101,8 +103,10 @@ export default function BookingDetailPage() {
       canReadBooking ? masterDataApi.getDepots() : Promise.resolve([]),
       canReadBooking ? masterDataApi.getContainerTypes() : Promise.resolve([]),
       canReadBooking ? stockApi.getStockMapByType() : Promise.resolve({}),
+      canReadBooking ? Promise.all([masterDataApi.getVessels(), masterDataApi.getParties(), masterDataApi.getAgents(), masterDataApi.getPackages()]) : Promise.resolve([[], [], [], []]),
     ])
-      .then(([, portsRes, carriersRes, nvoccsRes, depotsRes, typesRes, map]) => {
+      .then(([, portsRes, carriersRes, nvoccsRes, depotsRes, typesRes, map, [vessels, parties, agents, packages]]) => {
+        setLookups({ vessels, parties, agents, packages })
         setPorts(portsRes)
         setCarriers(carriersRes)
         setNvoccs(nvoccsRes)
@@ -283,6 +287,10 @@ export default function BookingDetailPage() {
             onInvalidStep={setStep}
             ports={ports}
             carriers={carriers}
+            vessels={lookups.vessels}
+            parties={lookups.parties}
+            agents={lookups.agents}
+            packages={lookups.packages}
             nvoccs={nvoccs}
             depots={depots}
             containerTypes={containerTypes}

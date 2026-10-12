@@ -118,11 +118,15 @@ try {
   await bad('bad ETD date', { etd: 'not-a-date' })
 
   // ─── 3. Dangerous goods: required together, cleared server-side when off ──
-  r1 = await mk('dangerous', { isDangerous: true, dangerousNumber: 'UN1234 / Class 3' })
-  check('dangerous-goods booking created with its number', r1.status === 201 && r1.json.data.dangerousNumber === 'UN1234 / Class 3', msg(r1))
+  r1 = await mk('dangerous-no-class', { isDangerous: true, unNumber: 'UN1234' })
+  check('dangerous goods without a class number -> 400', r1.status === 400 && /class number/i.test(msg(r1)), msg(r1))
+  r1 = await mk('dangerous-no-un', { isDangerous: true, dangerousClass: '3' })
+  check('dangerous goods without a UN number -> 400', r1.status === 400 && /UN number/i.test(msg(r1)), msg(r1))
+  r1 = await mk('dangerous', { isDangerous: true, dangerousClass: '3', unNumber: 'UN1234' })
+  check('dangerous-goods booking created with class + UN number', r1.status === 201 && r1.json.data.dangerousClass === '3' && r1.json.data.unNumber === 'UN1234' && r1.json.data.dangerousNumber === undefined, msg(r1))
   const bDangerous = r1.json.data
   r = await admin('PUT', `/export/bookings/${bDangerous._id}`, { isDangerous: false })
-  check('toggling isDangerous off clears dangerousNumber server-side', r.status === 200 && (r.json.data.dangerousNumber === '' || r.json.data.dangerousNumber == null), JSON.stringify(r.json?.data?.dangerousNumber))
+  check('toggling isDangerous off clears class + UN number server-side', r.status === 200 && !r.json.data.dangerousClass && !r.json.data.unNumber, JSON.stringify([r.json?.data?.dangerousClass, r.json?.data?.unNumber]))
 
   // ─── 4. Stock warning on create (global, type-only check) ─────────────
   r1 = await mk('stock-warning', { containers: [{ containerType: t20._id, quantity: 999999 }] })
@@ -158,13 +162,14 @@ try {
   // ─── 7. Update every section ────────────────────────────────────────────
   const sectionUpdate = {
     ucrNumber: 'UCR-1', exportTaxNumber: 'ETX-1', importTaxNumber: 'ITX-1', importCountry: 'Germany', packagesCount: 12,
-    vgm: 1000, grossWeight: 900, cbm: 40, hsCode: '0207.14', packageType: 'Cartons',
+    grossWeight: 900, netWeight: 850, hsCode: '0207.14', packageType: 'Cartons',
     carrier: undefined, vesselName: 'MSC E2E', voyageNo: 'V001', blNo: 'BL-E2E-1',
     spaceConfirmationStatus: 'Confirmed', carrierBookingRef: 'CBR-1', voContactPerson: 'Jane Doe',
     bookingConfirmationStatus: 'Issued',
     nvocc: nvocc._id, currency: 'EUR', price: 500, cost: 300, freeTime: '2026-12-01',
     shipper: { name: 'Shipper Co', email: 'shipper@example.com', phone1: '+201', address: 'Addr S', taxNumber: 'TX-S' },
     consignee: { name: 'Consignee Co', email: 'consignee@example.com', phone1: '+202', address: 'Addr C', taxNumber: 'TX-C' },
+    notify: { name: 'Notify Co', country: 'Germany', email: 'notify@example.com', phone1: '+205', address: 'Addr N', taxNumber: 'TX-N' }, notifySameAsConsignee: false,
     polAgent: { name: 'POL Agent', email: 'pol@example.com', phone: '+203' },
     podAgent: { name: 'POD Agent', email: 'pod@example.com', phone: '+204' },
     manifestStatus: 'SUBMITTED', notes: 'E2E note',
@@ -173,6 +178,7 @@ try {
   check('unified update persists fields across every section', r.status === 200
     && r.json.data.ucrNumber === 'UCR-1' && r.json.data.nvocc?._id === nvocc._id && r.json.data.currency === 'EUR'
     && r.json.data.shipper?.name === 'Shipper Co' && r.json.data.polAgent?.name === 'POL Agent'
+    && r.json.data.netWeight === 850 && r.json.data.notify?.name === 'Notify Co' && r.json.data.notify?.country === 'Germany' && r.json.data.vgm === undefined && r.json.data.cbm === undefined
     && r.json.data.manifestStatus === 'SUBMITTED' && r.json.data.notes === 'E2E note' && r.json.data.blNo === 'BL-E2E-1',
     msg(r))
 
@@ -250,6 +256,30 @@ try {
   check('cancelling an already-cancelled booking -> 400', r.status === 400 && /already cancelled/i.test(msg(r)), `${r.status} ${msg(r)}`)
   r = await admin('PUT', `/export/bookings/${bFlow._id}`, { notes: 'should be rejected' })
   check('updating a cancelled booking -> 400', r.status === 400 && /cancelled/i.test(msg(r)), `${r.status} ${msg(r)}`)
+
+  // ─── 10b. Seals per container slot; container numbers auto-assigned (oldest first) ───
+  const seededUnits = (await stockAt()).filter((u) => created.containerIds.slice(0, 3).includes(u._id)).sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt))
+  check('three seeded units are still free', seededUnits.length === 3 && seededUnits.every((u) => u.status === 'available'), seededUnits.length)
+  r1 = await mk('seals', { containers: [{ containerType: t20._id, quantity: 2 }], nvocc: nvocc._id, depot: depot._id })
+  const bSeal = r1.json.data
+  r = await admin('PUT', `/export/bookings/${bSeal._id}`, { containerAssignments: [{ containerType: t40._id, sealNumber: 'X' }] })
+  check('a seal entry for a container type that is not on the booking -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+  r = await admin('PUT', `/export/bookings/${bSeal._id}`, { containerAssignments: [1, 2, 3].map((n) => ({ containerType: t20._id, sealNumber: 'S' + n })) })
+  check('more seal entries than the quantity (3 for 2) -> 400', r.status === 400 && /more seal entries/i.test(msg(r)), `${r.status} ${msg(r)}`)
+  r = await admin('PUT', `/export/bookings/${bSeal._id}`, { containerAssignments: [{ containerType: t20._id, sealNumber: 'SEAL-A' }, { containerType: t20._id, sealNumber: 'SEAL-B' }] })
+  check('one seal per container slot saves; nothing is reserved until confirm', r.status === 200 && r.json.data.containerAssignments?.length === 2 && (await stockAt()).filter((u) => u.status === 'available').length >= 3, `${r.status} ${msg(r)}`)
+  r = await admin('PUT', `/export/bookings/${bSeal._id}/confirm`)
+  check('confirm succeeds', r.status === 200 && r.json.data.status === 'confirmed', msg(r))
+  units = ((await admin('GET', `/master/containers?booking=${bSeal._id}`)).json?.data || []).sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt))
+  // the dev DB may hold older real stock at this triple: the two units allocated must be the two OLDEST free ones
+  const oldestFree = (await stockAt()).concat(units).filter((u, i, all) => all.findIndex((v) => v._id === u._id) === i).sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt))
+  check('exactly 2 units allocated, and they are the oldest free stock (FIFO)', units.length === 2 && units[0]._id === oldestFree[0]._id && units[1]._id === oldestFree[1]._id, JSON.stringify(units.map((u) => u.containerNumber)))
+  check('seals were applied in slot order to the allocated units (oldest first)', units[0].sealNumber === 'SEAL-A' && units[1].sealNumber === 'SEAL-B', JSON.stringify(units.map((u) => u.sealNumber)))
+  r = await admin('PUT', `/export/bookings/${bSeal._id}`, { containerAssignments: [] })
+  check('seal entries are frozen once confirmed (an update cannot drop them)', r.status === 200 && r.json.data.containerAssignments?.length === 2, msg(r))
+  r = await admin('PUT', `/export/bookings/${bSeal._id}/cancel`)
+  units = (await admin('GET', `/master/containers?booking=${bSeal._id}`)).json?.data || []
+  check('cancel releases those units', r.status === 200 && units.length === 0, msg(r))
 
   // ─── 11. B&L sub-API — field-limited projection, independent save ─────
   r = await admin('GET', `/export/bookings/${bMinimal._id}/bl`)

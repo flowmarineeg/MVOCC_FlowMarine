@@ -24,13 +24,34 @@ const validateContainerEntries = async (containers) => {
   return true
 }
 
-const dangerousGoodsRule = body('dangerousNumber').custom((value, { req }) => {
-  const isDangerous = req.body.isDangerous === true || req.body.isDangerous === 'true'
-  if (isDangerous && !(value && value.trim())) {
-    throw new Error('Dangerous goods number is required when cargo is marked dangerous')
-  }
-  return true
-})
+const requiredWhenDangerous = (field, label) =>
+  body(field).custom((value, { req }) => {
+    const isDangerous = req.body.isDangerous === true || req.body.isDangerous === 'true'
+    if (isDangerous && !(value && String(value).trim())) {
+      throw new Error(`${label} is required when cargo is marked dangerous`)
+    }
+    return true
+  })
+
+const dangerousGoodsRules = [requiredWhenDangerous('dangerousClass', 'Class number'), requiredWhenDangerous('unNumber', 'UN number')]
+
+// One entry per container slot (type + its seal number); the service checks
+// the types are on the booking and the counts don't exceed the quantities.
+const containerAssignmentRules = [
+  body('containerAssignments').optional().isArray().withMessage('containerAssignments must be a list'),
+  body('containerAssignments.*.containerType').isMongoId().withMessage('Valid containerType ID required for a seal entry'),
+  body('containerAssignments.*.sealNumber').optional().trim(),
+]
+
+const partyRules = (name) => [
+  body(`${name}.name`).optional().trim(),
+  body(`${name}.country`).optional().trim(),
+  body(`${name}.email`).optional({ checkFalsy: true }).isEmail().withMessage(`Invalid ${name} email`),
+  body(`${name}.phone1`).optional().trim(),
+  body(`${name}.phone2`).optional().trim(),
+  body(`${name}.address`).optional().trim(),
+  body(`${name}.taxNumber`).optional().trim(),
+]
 
 // Every field the single unified Job form can submit, besides the always-
 // required core (clientName/Phone/Email, containers, pol, pod, commodity)
@@ -44,13 +65,13 @@ const sharedOptionalRules = [
   body('importTaxNumber').optional().trim(),
   body('importCountry').optional().trim(),
   body('packagesCount').optional({ checkFalsy: true }).isInt({ min: 0 }).withMessage('Number of packages must be a positive number'),
-  body('vgm').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('VGM must be a positive number'),
   body('grossWeight').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Gross weight must be a positive number'),
-  body('cbm').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('CBM must be a positive number'),
+  body('netWeight').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Net weight must be a positive number'),
   body('hsCode').optional().trim(),
   body('packageType').optional().trim(),
   body('isDangerous').optional().isBoolean().withMessage('isDangerous must be true or false').toBoolean(),
-  dangerousGoodsRule,
+  ...dangerousGoodsRules,
+  ...containerAssignmentRules,
 
   body('jobStatus').optional({ checkFalsy: true }).isIn(['open', 'in_progress', 'completed', 'closed_invoiced']).withMessage('Invalid job status'),
   body('customsSubmitted').optional().isBoolean().withMessage('customsSubmitted must be true or false').toBoolean(),
@@ -82,18 +103,14 @@ const sharedOptionalRules = [
   body('cost').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Cost must be a positive number'),
   body('freeTime').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid date for freeTime'),
 
-  body('shipper.name').optional().trim(),
-  body('shipper.email').optional({ checkFalsy: true }).isEmail().withMessage('Invalid shipper email'),
-  body('shipper.phone1').optional().trim(),
-  body('shipper.phone2').optional().trim(),
-  body('shipper.address').optional().trim(),
-  body('shipper.taxNumber').optional().trim(),
-  body('consignee.name').optional().trim(),
-  body('consignee.email').optional({ checkFalsy: true }).isEmail().withMessage('Invalid consignee email'),
-  body('consignee.phone1').optional().trim(),
-  body('consignee.phone2').optional().trim(),
-  body('consignee.address').optional().trim(),
-  body('consignee.taxNumber').optional().trim(),
+  ...partyRules('shipper'),
+  ...partyRules('consignee'),
+  ...partyRules('notify'),
+  body('notifySameAsConsignee').optional().isBoolean().withMessage('notifySameAsConsignee must be true or false').toBoolean(),
+  body('shipperParty').optional({ checkFalsy: true }).isMongoId().withMessage('Valid shipper party ID required'),
+  body('consigneeParty').optional({ checkFalsy: true }).isMongoId().withMessage('Valid consignee party ID required'),
+  body('notifyParty').optional({ checkFalsy: true }).isMongoId().withMessage('Valid notify party ID required'),
+  body('podAgentRef').optional({ checkFalsy: true }).isMongoId().withMessage('Valid POD agent ID required'),
 
   body('polAgent.name').optional().trim(),
   body('polAgent.email').optional({ checkFalsy: true }).isEmail().withMessage('Invalid POL agent email'),

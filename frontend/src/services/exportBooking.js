@@ -42,3 +42,16 @@ export const exportExcel = async (params = {}) => {
   link.remove()
   window.URL.revokeObjectURL(url)
 }
+
+// MSDS files attached to the booking's quotation (DG attachments).
+export const downloadMsds = async (bookingId, file) => {
+  const res = await api.get(`/export/bookings/${bookingId}/msds/${file._id}`, { responseType: 'blob' })
+  const url = window.URL.createObjectURL(new Blob([res.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', file.fileName)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}

@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react'
 import Select from '@/components/ui/Select'
 import ContainerSelector from './ContainerSelector'
 import * as stockApi from '@/services/stock'
-import { COUNTRY_OPTIONS } from '@/constants/countries'
+import * as bookingApi from '@/services/exportBooking'
+import * as quotationApi from '@/services/quotation'
+import { useToast } from '@/components/ui/Toast'
 import { CURRENCY_OPTIONS } from '@/constants/currencies'
 
 // `d` is either a Date instance or an ISO date string from the API —
@@ -30,7 +32,7 @@ const formatDateTime = (d) => (d ? new Date(d).toLocaleString() : '-')
 
 const ALLOWED_FILE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
 
-const emptyParty = { name: '', email: '', phone1: '', phone2: '', address: '', taxNumber: '' }
+const emptyParty = { name: '', country: '', email: '', phone1: '', phone2: '', address: '', taxNumber: '' }
 const emptyAgent = { name: '', email: '', phone: '', address: '' }
 
 const JOB_STATUS_OPTIONS = [
@@ -71,25 +73,65 @@ function mergeContainerRows(containers) {
   return merged
 }
 
+// A party picked from the Parties master data -> the snapshot stored on the
+// booking (name, country, first two contact phones, first contact email, ...).
+function partySnapshot(p) {
+  return {
+    name: p.name || '',
+    country: p.country || '',
+    email: p.contacts?.[0]?.email || '',
+    phone1: p.contacts?.[0]?.phone || '',
+    phone2: p.contacts?.[1]?.phone || '',
+    address: p.address || '',
+    taxNumber: p.taxNumber || '',
+  }
+}
+
+// Exporter = the shipper; importer = the consignee (and notify, when it is the
+// same). Those three fields are never typed — they follow the picked parties.
+const withDerived = (f) => ({
+  ...f,
+  exportTaxNumber: f.shipper.taxNumber || '',
+  importTaxNumber: f.consignee.taxNumber || '',
+  importCountry: f.consignee.country || '',
+})
+
+// One stock-unit slot per container the job needs: `${containerTypeId}:${n}`.
+const slotKey = (type, n) => `${type}:${n}`
+
+// The seal typed for each container slot, in slot order per container type.
+function slotsFromAssignments(assignments = []) {
+  const counters = {}
+  const slots = {}
+  assignments.forEach((a) => {
+    const type = a.containerType?._id || a.containerType
+    counters[type] = counters[type] ?? 0
+    slots[slotKey(type, counters[type]++)] = { sealNumber: a.sealNumber || '' }
+  })
+  return slots
+}
+
 function emptyForm() {
   return {
     clientName: '', clientPhone: '', clientEmail: '',
     pol: '', pod: '', commodity: '',
     ucrNumber: '', exportTaxNumber: '', importTaxNumber: '', importCountry: '', packagesCount: '',
-    vgm: '', grossWeight: '', cbm: '', hsCode: '', packageType: '',
-    isDangerous: false, dangerousNumber: '',
+    grossWeight: '', netWeight: '', hsCode: '', packageType: '',
+    isDangerous: false, dangerousClass: '', unNumber: '',
     shippingDeclaration: null,
     containers: [{ containerType: '', quantity: 1 }],
+    containerSlots: {},
     jobStatus: 'open',
-    blNo: '', carrier: '', vesselName: '', voyageNo: '', etd: '', atd: '', eta: '', ata: '',
+    carrier: '', vesselName: '', voyageNo: '', etd: '', atd: '', eta: '', ata: '',
     spaceConfirmationStatus: 'Requested', carrierBookingRef: '', voContactPerson: '',
     siCutoff: '', vgmCutoff: '', cyGateInCutoff: '',
     bookingConfirmationStatus: 'Not Issued', bookingConfirmationFile: null,
     customsSubmitted: false, customsReferenceNo: '',
-    depot: '', gateInDate: '', gateOutDate: '', containerLocation: '',
+    depot: '', gateInDate: '', gateOutDate: '',
     nvocc: '', currency: 'USD', price: '', cost: '', freeTime: '',
-    shipper: { ...emptyParty }, consignee: { ...emptyParty },
-    polAgent: { ...emptyAgent }, podAgent: { ...emptyAgent },
+    shipper: { ...emptyParty }, consignee: { ...emptyParty }, notify: { ...emptyParty },
+    shipperParty: '', consigneeParty: '', notifyParty: '', notifySameAsConsignee: false,
+    podAgent: { ...emptyAgent }, podAgentRef: '',
     manifestStatus: 'PENDING', notes: '',
   }
 }
@@ -108,20 +150,20 @@ function buildInitialForm(booking, prefill) {
     importTaxNumber: booking.importTaxNumber || '',
     importCountry: booking.importCountry || '',
     packagesCount: booking.packagesCount ?? '',
-    vgm: booking.vgm ?? '',
     grossWeight: booking.grossWeight ?? '',
-    cbm: booking.cbm ?? '',
+    netWeight: booking.netWeight ?? '',
     hsCode: booking.hsCode || '',
     packageType: booking.packageType || '',
     isDangerous: !!booking.isDangerous,
-    dangerousNumber: booking.dangerousNumber || '',
+    dangerousClass: booking.dangerousClass || '',
+    unNumber: booking.unNumber || '',
     shippingDeclaration: null,
     containers: (booking.containers || []).map((c) => ({
       containerType: c.containerType?._id || c.containerType,
       quantity: c.quantity,
     })),
+    containerSlots: slotsFromAssignments(booking.containerAssignments),
     jobStatus: booking.jobStatus || 'open',
-    blNo: booking.blNo || '',
     carrier: booking.carrier?._id || booking.carrier || '',
     vesselName: booking.vesselName || '',
     voyageNo: booking.voyageNo || '',
@@ -142,7 +184,6 @@ function buildInitialForm(booking, prefill) {
     depot: booking.depot?._id || booking.depot || '',
     gateInDate: toDateInput(booking.gateInDate),
     gateOutDate: toDateInput(booking.gateOutDate),
-    containerLocation: booking.containerLocation || '',
     nvocc: booking.nvocc?._id || booking.nvocc || '',
     currency: booking.currency || 'USD',
     price: booking.price ?? '',
@@ -150,8 +191,13 @@ function buildInitialForm(booking, prefill) {
     freeTime: toDateInput(booking.freeTime),
     shipper: { ...emptyParty, ...(booking.shipper || {}) },
     consignee: { ...emptyParty, ...(booking.consignee || {}) },
-    polAgent: { ...emptyAgent, ...(booking.polAgent || {}) },
+    notify: { ...emptyParty, ...(booking.notify || {}) },
+    shipperParty: booking.shipperParty?._id || booking.shipperParty || '',
+    consigneeParty: booking.consigneeParty?._id || booking.consigneeParty || '',
+    notifyParty: booking.notifyParty?._id || booking.notifyParty || '',
+    notifySameAsConsignee: !!booking.notifySameAsConsignee,
     podAgent: { ...emptyAgent, ...(booking.podAgent || {}) },
+    podAgentRef: booking.podAgentRef?._id || booking.podAgentRef || '',
     manifestStatus: booking.manifestStatus || 'PENDING',
     notes: booking.notes || '',
   }
@@ -161,6 +207,34 @@ const labelCls = 'mb-1.5 block font-mono text-[11px] font-semibold uppercase tra
 const inputCls = 'w-full border bg-card px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust'
 const sectionCls = 'space-y-5 border border-ink/25 bg-card p-5 sm:p-6'
 const sectionTitleCls = 'font-display text-base font-bold uppercase tracking-wide text-ink'
+const subTitleCls = 'font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust'
+
+// A value shown but not editable (data that comes from the quotation or from a
+// master-data pick).
+function ReadOnly({ label, children, className = '' }) {
+  return (
+    <div className={className}>
+      <span className={labelCls}>{label}</span>
+      <p className="min-h-[42px] border border-ink/20 bg-paper/60 px-3.5 py-2.5 text-sm text-ink">{children || '-'}</p>
+    </div>
+  )
+}
+
+// The details copied from a picked party / agent.
+function PartyDetails({ data }) {
+  if (!data?.name) return <p className="font-mono text-xs text-muted">Nothing selected yet.</p>
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <ReadOnly label="Name">{data.name}</ReadOnly>
+      <ReadOnly label="Country">{data.country}</ReadOnly>
+      <ReadOnly label="Email">{data.email}</ReadOnly>
+      <ReadOnly label="Phone 1">{data.phone1 ?? data.phone}</ReadOnly>
+      {'phone2' in data && <ReadOnly label="Phone 2">{data.phone2}</ReadOnly>}
+      <ReadOnly label="Address">{data.address}</ReadOnly>
+      {'taxNumber' in data && <ReadOnly label="Tax Number">{data.taxNumber}</ReadOnly>}
+    </div>
+  )
+}
 
 // Per-unit operational fields for the containers actually allocated to a
 // confirmed booking (Section 5's fulfillment table) — separate from the
@@ -219,6 +293,7 @@ function AllocatedContainersPanel({ bookingId, canUpdate }) {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b-2 border-ink text-left font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+            <th className="px-3 py-2">Type</th>
             <th className="px-3 py-2">Container No.</th>
             <th className="px-3 py-2">Seal Number</th>
             <th className="px-3 py-2">Guarantee Receipt</th>
@@ -233,6 +308,7 @@ function AllocatedContainersPanel({ bookingId, canUpdate }) {
             const d = drafts[c._id] || {}
             return (
               <tr key={c._id} className="border-b border-line last:border-0">
+                <td className="px-3 py-2 font-mono text-ink">{c.containerType?.code}</td>
                 <td className="px-3 py-2 font-mono text-ink">{c.containerNumber}</td>
                 <td className="px-3 py-2">
                   <input value={d.sealNumber} onChange={(e) => setDraft(c._id, 'sealNumber')(e.target.value)} disabled={!canUpdate} className={`${inputCls} border-ink/30 font-mono`} />
@@ -270,6 +346,90 @@ function AllocatedContainersPanel({ bookingId, canUpdate }) {
   )
 }
 
+// Depot / Container step, before the booking is confirmed: one row per container
+// TYPE. The container numbers are not chosen by anyone — the list simply shows
+// the depot's oldest free units of that type (oldest -> newest, as many as the
+// job needs), and confirming the booking allocates exactly those. Only the seal
+// of each container is typed here.
+function ContainerAutoRows({ rows, slots, onChange, depot, nvocc, containerTypes, disabled }) {
+  const [stock, setStock] = useState({}) // typeId -> free units, oldest first
+  const typeKey = rows.map((r) => r.containerType).join(',')
+
+  useEffect(() => {
+    if (!depot || !typeKey) return undefined
+    let cancelled = false
+    Promise.all(
+      typeKey.split(',').map((type) =>
+        stockApi.getContainers({ containerType: type, depot, nvocc: nvocc || undefined }).then((units) => [
+          type,
+          units.filter((u) => u.status === 'available').sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt)),
+        ])
+      )
+    )
+      .then((pairs) => { if (!cancelled) setStock(Object.fromEntries(pairs)) })
+      .catch(() => { if (!cancelled) setStock({}) })
+    return () => { cancelled = true }
+  }, [depot, nvocc, typeKey])
+
+  const typeCode = (id) => containerTypes.find((t) => t._id === id)?.code || '—'
+  const setSeal = (key, sealNumber) => onChange({ ...slots, [key]: { sealNumber } })
+
+  if (!depot) return <p className="font-mono text-xs text-muted">Select a depot to see the containers that will be assigned from its stock.</p>
+
+  const shortBy = rows.map((row) => ({ type: row.containerType, short: Math.max(row.quantity - (stock[row.containerType] || []).length, 0) })).filter((x) => x.short > 0)
+
+  return (
+    <div className="space-y-2">
+      {/* one row per container (its own type on every row); scrolls inside a fixed max height */}
+      <div className="max-h-72 overflow-auto border border-ink/25" data-testid="container-scroll">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 z-10 bg-card">
+            <tr className="border-b-2 border-ink text-left font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+              <th className="px-3 py-2">Container Type</th>
+              <th className="px-3 py-2">Container No. (auto — oldest stock first)</th>
+              <th className="px-3 py-2">Seal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.flatMap((row) =>
+              Array.from({ length: row.quantity }, (_, n) => {
+                const key = slotKey(row.containerType, n)
+                const unit = (stock[row.containerType] || [])[n]
+                return (
+                  <tr key={key} className="border-b border-line last:border-0">
+                    <td className="px-3 py-2 font-mono text-ink" data-testid="slot-type">{typeCode(row.containerType)}</td>
+                    <td className="px-3 py-2">
+                      <span
+                        data-testid="auto-container"
+                        className={`inline-block w-48 border border-ink/20 bg-paper/60 px-3 py-2 font-mono text-sm ${unit ? 'text-ink' : 'text-brick'}`}
+                      >
+                        {unit ? unit.containerNumber : 'No free stock'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        aria-label="Seal number"
+                        value={slots[key]?.sealNumber || ''}
+                        onChange={(e) => setSeal(key, e.target.value)}
+                        disabled={disabled}
+                        placeholder="Seal no."
+                        className={`${inputCls} border-ink/30 font-mono`}
+                      />
+                    </td>
+                  </tr>
+                )
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+      {shortBy.map((x) => (
+        <p key={x.type} className="font-mono text-[11px] text-brick">{typeCode(x.type)}: {x.short} short — not enough free containers at this depot.</p>
+      ))}
+    </div>
+  )
+}
+
 // Which of the 5 merged-page steps each section belongs to — see
 // docs/BOOKING_JOB_MERGE_DATA_REPORT.md. `activeStep` is undefined on the
 // plain create page (/export/bookings/new), where every section is always
@@ -277,13 +437,11 @@ function AllocatedContainersPanel({ bookingId, canUpdate }) {
 // 1-5 and only the matching section(s) are visible (CSS-hidden, not
 // unmounted, so nothing in `form` state is ever lost by switching steps).
 const STEP = {
-  jobIdentity: 2, // Job No/Status, Client — Header & Job Info, part A
-  declarationIdentity: 1, // UCR/tax numbers/import country/packages — Header & Job Info, part B
+  jobIdentity: 2, // Job No/Status, Client — Header & Job Info
   shipmentCargo: 1,
   parties: 1,
   carrierBooking: 2,
   commercial: 2,
-  agents: 2,
   customsNafeza: 4,
   containers: 3,
   statusNotes: 5,
@@ -292,36 +450,102 @@ const STEP = {
 export default function BookingForm({
   booking = null,
   prefill = null,
+  quotation: quotationProp = null,
   quotationId = null,
   activeStep,
   ports = [],
   containerTypes = [],
-  carriers = [],
+  carriers = [], // vessel operators (VO)
+  vessels = [],
   nvoccs = [],
   depots = [],
+  parties = [],
+  agents = [],
+  packages = [],
   stockMap = {},
   submitting = false,
   canUpdate = true,
   onSubmit,
   onInvalidStep,
 }) {
+  const toast = useToast()
   const isEdit = !!booking
   const isCancelled = isEdit && booking.status === 'cancelled'
+  const isConfirmed = isEdit && booking.status === 'confirmed'
   const isLocked = isCancelled || !canUpdate
   const [form, setForm] = useState(() => buildInitialForm(booking, prefill))
   const [errors, setErrors] = useState({})
 
+  // A job that came from a quotation shows that quotation's data (client,
+  // container types, DG info + attachments, commercial) read-only; a job created
+  // directly keeps those fields editable.
+  const quotation = booking?.quotation && typeof booking.quotation === 'object' ? booking.quotation : quotationProp
+  const hasQuotation = !!(booking?.quotation || quotationId)
+
   const set = (field) => (v) => setForm((f) => ({ ...f, [field]: v }))
   const setInput = (field) => (e) => set(field)(e.target.value)
-  const setNested = (section, key) => (e) => setForm((f) => ({ ...f, [section]: { ...f[section], [key]: e.target.value } }))
 
   // undefined activeStep (the create page) -> every section always shown.
   const visible = (step) => activeStep === undefined || activeStep === step
 
   const portOptions = ports.map((p) => ({ value: p._id, label: `${p.code} — ${p.name}` }))
   const carrierOptions = carriers.map((c) => ({ value: c._id, label: `${c.code} — ${c.name}` }))
-  const nvoccOptions = nvoccs.map((n) => ({ value: n._id, label: `${n.code} — ${n.name}` }))
   const depotOptions = depots.map((d) => ({ value: d._id, label: `${d.code} — ${d.name}` }))
+  const portLabel = (id) => ports.find((p) => p._id === id)?.code || ''
+
+  // ── Parties (master data) ───────────────────────────────────────────
+  const partyOptions = (type) =>
+    parties.filter((p) => p.partyType === type).map((p) => ({ value: p._id, label: p.country ? `${p.name} — ${p.country}` : p.name }))
+
+  const selectParty = (kind, id) =>
+    setForm((f) => {
+      const p = parties.find((x) => x._id === id)
+      const snap = p ? partySnapshot(p) : { ...emptyParty }
+      const next = { ...f, [`${kind}Party`]: id || '', [kind]: snap }
+      if (kind === 'consignee' && f.notifySameAsConsignee) {
+        next.notify = { ...snap }
+        next.notifyParty = id || ''
+      }
+      return withDerived(next)
+    })
+
+  const toggleNotifySame = (checked) =>
+    setForm((f) => ({
+      ...f,
+      notifySameAsConsignee: checked,
+      ...(checked ? { notify: { ...f.consignee }, notifyParty: f.consigneeParty } : {}),
+    }))
+
+  const selectPodAgent = (id) =>
+    setForm((f) => {
+      const a = agents.find((x) => x._id === id)
+      return {
+        ...f,
+        podAgentRef: id || '',
+        podAgent: a
+          ? { name: a.name, email: a.contacts?.[0]?.email || '', phone: a.contacts?.[0]?.phone || '', address: [a.address, a.city, a.country].filter(Boolean).join(', ') }
+          : { ...emptyAgent },
+      }
+    })
+
+  // ── Package type / vessel / VO contact: master-data lists ───────────
+  const packageOptions = packages.map((p) => ({ value: p.name, label: p.name }))
+  if (form.packageType && !packageOptions.some((o) => o.value === form.packageType)) packageOptions.unshift({ value: form.packageType, label: form.packageType })
+
+  const vesselOptions = vessels
+    .filter((v) => !form.carrier || (v.vesselOperator?._id || v.vesselOperator) === form.carrier)
+    .map((v) => ({ value: v.name, label: v.name }))
+  if (form.vesselName && !vesselOptions.some((o) => o.value === form.vesselName)) vesselOptions.unshift({ value: form.vesselName, label: form.vesselName })
+
+  const selectedVo = carriers.find((c) => c._id === form.carrier)
+  const voContactOptions = (selectedVo?.contacts || []).map((c) => ({ value: c.name, label: c.phone ? `${c.name} — ${c.phone}` : c.name }))
+  if (form.voContactPerson && !voContactOptions.some((o) => o.value === form.voContactPerson)) voContactOptions.unshift({ value: form.voContactPerson, label: form.voContactPerson })
+
+  const changeVo = (id) =>
+    setForm((f) => {
+      const stillValid = (name) => vessels.some((v) => v.name === name && (v.vesselOperator?._id || v.vesselOperator) === id)
+      return { ...f, carrier: id, vesselName: id && !stillValid(f.vesselName) ? '' : f.vesselName, voContactPerson: '' }
+    })
 
   const handleFileChange = (field) => (e) => {
     const file = e.target.files?.[0] || null
@@ -338,6 +562,11 @@ export default function BookingForm({
     set(field)(file)
   }
 
+  const downloadMsds = (file) => {
+    const run = booking ? bookingApi.downloadMsds(booking._id, file) : quotationApi.downloadMsds(quotation?._id, file)
+    run.catch((err) => toast(err.message, 'error'))
+  }
+
   const validate = () => {
     const next = {}
     if (!form.clientName.trim()) next.clientName = 'Client name is required'
@@ -346,14 +575,15 @@ export default function BookingForm({
     if (!form.pol) next.pol = 'Port of loading is required'
     if (!form.pod) next.pod = 'Port of discharge is required'
     if (!form.commodity.trim()) next.commodity = 'Commodity is required'
-    if (form.isDangerous && !form.dangerousNumber.trim()) next.dangerousNumber = 'Dangerous goods number is required'
+    if (form.isDangerous && !form.dangerousClass.trim()) next.dangerousClass = 'Class number is required'
+    if (form.isDangerous && !form.unNumber.trim()) next.unNumber = 'UN number is required'
     const validContainers = form.containers.filter((c) => c.containerType && c.quantity >= 1)
     if (validContainers.length === 0) next.containers = 'Add at least one container entry'
     setErrors((prev) => ({ ...prev, ...next }))
     // Jump to the earliest step holding an error, so a failed submit from a
     // different step doesn't look like a silent no-op.
     if (onInvalidStep) {
-      const fieldStep = { pol: 1, pod: 1, commodity: 1, dangerousNumber: 1, clientName: 2, clientPhone: 2, clientEmail: 2, containers: 3 }
+      const fieldStep = { pol: 1, pod: 1, commodity: 1, dangerousClass: 1, unNumber: 1, containers: 1, clientName: 2, clientPhone: 2, clientEmail: 2 }
       const steps = Object.keys(next).map((k) => fieldStep[k]).filter(Boolean)
       if (steps.length) onInvalidStep(Math.min(...steps))
     }
@@ -364,6 +594,8 @@ export default function BookingForm({
     e.preventDefault()
     if (!validate()) return
 
+    const containers = mergeContainerRows(form.containers)
+
     const fd = new FormData()
     fd.append('clientName', form.clientName.trim())
     fd.append('clientPhone', form.clientPhone.trim())
@@ -371,17 +603,20 @@ export default function BookingForm({
     fd.append('pol', form.pol)
     fd.append('pod', form.pod)
     fd.append('commodity', form.commodity.trim())
-    ;['ucrNumber', 'exportTaxNumber', 'importTaxNumber', 'importCountry', 'hsCode', 'packageType', 'blNo', 'vesselName', 'voyageNo', 'carrierBookingRef', 'voContactPerson', 'customsReferenceNo', 'containerLocation', 'notes'].forEach((k) => {
+    ;['ucrNumber', 'exportTaxNumber', 'importTaxNumber', 'importCountry', 'hsCode', 'packageType', 'vesselName', 'voyageNo', 'carrierBookingRef', 'voContactPerson', 'customsReferenceNo', 'notes'].forEach((k) => {
       if (form[k].trim()) fd.append(k, form[k].trim())
     })
-    ;['packagesCount', 'vgm', 'grossWeight', 'cbm', 'price', 'cost'].forEach((k) => {
+    ;['packagesCount', 'grossWeight', 'netWeight', 'price', 'cost'].forEach((k) => {
       if (form[k] !== '') fd.append(k, form[k])
     })
     ;['etd', 'atd', 'eta', 'ata', 'siCutoff', 'vgmCutoff', 'cyGateInCutoff', 'gateInDate', 'gateOutDate', 'freeTime'].forEach((k) => {
       if (form[k]) fd.append(k, form[k])
     })
     fd.append('isDangerous', String(form.isDangerous))
-    if (form.isDangerous) fd.append('dangerousNumber', form.dangerousNumber.trim())
+    if (form.isDangerous) {
+      fd.append('dangerousClass', form.dangerousClass.trim())
+      fd.append('unNumber', form.unNumber.trim())
+    }
     fd.append('jobStatus', form.jobStatus)
     fd.append('spaceConfirmationStatus', form.spaceConfirmationStatus)
     fd.append('bookingConfirmationStatus', form.bookingConfirmationStatus)
@@ -393,9 +628,25 @@ export default function BookingForm({
     fd.append('currency', form.currency)
     fd.append('shipper', JSON.stringify(form.shipper))
     fd.append('consignee', JSON.stringify(form.consignee))
-    fd.append('polAgent', JSON.stringify(form.polAgent))
+    fd.append('notify', JSON.stringify(form.notify))
+    fd.append('notifySameAsConsignee', String(form.notifySameAsConsignee))
+    // '' clears a previously picked party / agent
+    fd.append('shipperParty', form.shipperParty)
+    fd.append('consigneeParty', form.consigneeParty)
+    fd.append('notifyParty', form.notifyParty)
     fd.append('podAgent', JSON.stringify(form.podAgent))
-    fd.append('containers', JSON.stringify(mergeContainerRows(form.containers)))
+    fd.append('podAgentRef', form.podAgentRef)
+    fd.append('containers', JSON.stringify(containers))
+    // one seal entry per container slot, in order (applied to the oldest free units at confirm)
+    const assignments = containers.flatMap((row) =>
+      Array.from({ length: row.quantity }, (_, n) => ({
+        containerType: row.containerType,
+        sealNumber: (form.containerSlots[slotKey(row.containerType, n)]?.sealNumber || '').trim(),
+      }))
+    )
+    // (a booking with no seal typed anywhere sends nothing)
+    if (assignments.every((a) => !a.sealNumber)) assignments.length = 0
+    fd.append('containerAssignments', JSON.stringify(assignments))
     if (form.shippingDeclaration) fd.append('shippingDeclaration', form.shippingDeclaration)
     if (form.bookingConfirmationFile) fd.append('bookingConfirmationFile', form.bookingConfirmationFile)
     if (quotationId) fd.append('quotation', quotationId)
@@ -403,12 +654,32 @@ export default function BookingForm({
     onSubmit(fd)
   }
 
-  const consigneePreview = [form.consignee.name, form.consignee.phone1, form.consignee.email].filter(Boolean).join(' · ')
+  const containerRows = mergeContainerRows(form.containers)
+  const typeCode = (id) => containerTypes.find((t) => t._id === id)?.code || '—'
+  const msdsFiles = quotation?.msdsFiles || []
+  const freeTimeShown = quotation?.freeTimeBuyingDays != null ? `${quotation.freeTimeBuyingDays} days` : form.freeTime ? new Date(form.freeTime).toLocaleDateString() : ''
+
+  const renderParty = (kind, title, { disabled = false } = {}) => (
+    <div className="space-y-3">
+      <p className={subTitleCls}>{title}</p>
+      <Select
+        clearable
+        searchable
+        label={`${title} (Parties master data)`}
+        placeholder={`Select ${title.toLowerCase()}`}
+        options={partyOptions(kind)}
+        value={form[`${kind}Party`]}
+        onChange={(id) => selectParty(kind, id)}
+        disabled={disabled}
+      />
+      <PartyDetails data={form[kind]} />
+    </div>
+  )
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <fieldset disabled={isLocked} className="space-y-6">
-        {/* Header & Job Info — part A: job/client identity (Step 2 — Booking) */}
+        {/* Header & Job Info — job/client identity (Step 2 — Booking) */}
         <div className={`${sectionCls} ${visible(STEP.jobIdentity) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Header &amp; Job Info</h2>
 
@@ -436,98 +707,42 @@ export default function BookingForm({
             <Select label="Job Status" options={JOB_STATUS_OPTIONS} value={form.jobStatus} onChange={set('jobStatus')} />
           </div>
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-            <div>
-              <label className={labelCls}>Client Name <span className="text-rust">*</span></label>
-              <input value={form.clientName} onChange={setInput('clientName')} className={`${inputCls} ${errors.clientName ? 'border-brick' : 'border-ink/30'}`} />
-              {errors.clientName && <p className="mt-1 font-mono text-xs text-brick">{errors.clientName}</p>}
+          {hasQuotation ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+                <ReadOnly label="Client Name">{form.clientName}</ReadOnly>
+                <ReadOnly label="Client Phone">{form.clientPhone}</ReadOnly>
+                <ReadOnly label="Client Email">{form.clientEmail}</ReadOnly>
+              </div>
+              <p className="font-mono text-xs text-muted">Client details come from the quotation.</p>
+              {(errors.clientName || errors.clientPhone || errors.clientEmail) && (
+                <p className="font-mono text-xs text-brick">{errors.clientName || errors.clientPhone || errors.clientEmail} — fix it on the quotation.</p>
+              )}
             </div>
-            <div>
-              <label className={labelCls}>Client Phone <span className="text-rust">*</span></label>
-              <input value={form.clientPhone} onChange={setInput('clientPhone')} className={`${inputCls} ${errors.clientPhone ? 'border-brick' : 'border-ink/30'}`} />
-              {errors.clientPhone && <p className="mt-1 font-mono text-xs text-brick">{errors.clientPhone}</p>}
-            </div>
-            <div>
-              <label className={labelCls}>Client Email <span className="text-rust">*</span></label>
-              <input type="email" value={form.clientEmail} onChange={setInput('clientEmail')} className={`${inputCls} ${errors.clientEmail ? 'border-brick' : 'border-ink/30'}`} />
-              {errors.clientEmail && <p className="mt-1 font-mono text-xs text-brick">{errors.clientEmail}</p>}
-            </div>
-          </div>
-        </div>
-
-        {/* Shipment & Cargo + Header & Job Info part B (declaration-identity fields) — Step 1 */}
-        <div className={`${sectionCls} ${visible(STEP.shipmentCargo) ? '' : 'hidden'}`}>
-          <h2 className={sectionTitleCls}>Shipment &amp; Cargo</h2>
-
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <Select label="Port of Loading (POL)" required searchable placeholder="Select POL" options={portOptions} value={form.pol} onChange={set('pol')} error={errors.pol} />
-            <Select label="Port of Discharge (POD)" required searchable placeholder="Select POD" options={portOptions} value={form.pod} onChange={set('pod')} error={errors.pod} />
-          </div>
-
-          <div>
-            <label className={labelCls}>Commodity <span className="text-rust">*</span></label>
-            <input value={form.commodity} onChange={setInput('commodity')} className={`${inputCls} ${errors.commodity ? 'border-brick' : 'border-ink/30'}`} placeholder="e.g. Frozen poultry" />
-            {errors.commodity && <p className="mt-1 font-mono text-xs text-brick">{errors.commodity}</p>}
-          </div>
-
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
-            <div>
-              <label className={labelCls}>UCR Number</label>
-              <input value={form.ucrNumber} onChange={setInput('ucrNumber')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-            <div>
-              <label className={labelCls}>Exporter Tax Number</label>
-              <input value={form.exportTaxNumber} onChange={setInput('exportTaxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-            <div>
-              <label className={labelCls}>Importer Tax Number</label>
-              <input value={form.importTaxNumber} onChange={setInput('importTaxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-            <Select label="Importer Country" searchable placeholder="Select country" options={COUNTRY_OPTIONS} value={form.importCountry} onChange={set('importCountry')} />
-            <div>
-              <label className={labelCls}>No. of Packages <span className="normal-case text-muted/70">(preliminary)</span></label>
-              <input type="number" min="0" value={form.packagesCount} onChange={setInput('packagesCount')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <label className={labelCls}>VGM (kg)</label>
-              <input type="number" min="0" value={form.vgm} onChange={setInput('vgm')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-            <div>
-              <label className={labelCls}>Gross Weight (kg)</label>
-              <input type="number" min="0" value={form.grossWeight} onChange={setInput('grossWeight')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-            <div>
-              <label className={labelCls}>CBM</label>
-              <input type="number" min="0" value={form.cbm} onChange={setInput('cbm')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-            <div>
-              <label className={labelCls}>HS Code</label>
-              <input value={form.hsCode} onChange={setInput('hsCode')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-          </div>
-
-          <div>
-            <label className={labelCls}>Package Type</label>
-            <input value={form.packageType} onChange={setInput('packageType')} className={`${inputCls} border-ink/30 sm:w-64`} placeholder="e.g. Cartons, Pallets" />
-          </div>
-
-          <div>
-            <label className={labelCls}>Dangerous Goods</label>
-            <div className="flex border border-ink/30">
-              <button type="button" onClick={() => set('isDangerous')(false)} className={`flex-1 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${!form.isDangerous ? 'bg-ink text-paper' : 'bg-card text-muted hover:text-ink'}`}>No</button>
-              <button type="button" onClick={() => set('isDangerous')(true)} className={`flex-1 border-l border-ink/30 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${form.isDangerous ? 'bg-brick text-card' : 'bg-card text-muted hover:text-ink'}`}>Yes</button>
-            </div>
-          </div>
-          {form.isDangerous && (
-            <div>
-              <label className={labelCls}>Dangerous Goods Number <span className="text-rust">*</span></label>
-              <input value={form.dangerousNumber} onChange={setInput('dangerousNumber')} className={`${inputCls} font-mono sm:w-80 ${errors.dangerousNumber ? 'border-brick' : 'border-ink/30'}`} placeholder="UN Number / IMO Class" />
-              {errors.dangerousNumber && <p className="mt-1 font-mono text-xs text-brick">{errors.dangerousNumber}</p>}
+          ) : (
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              <div>
+                <label className={labelCls}>Client Name <span className="text-rust">*</span></label>
+                <input value={form.clientName} onChange={setInput('clientName')} className={`${inputCls} ${errors.clientName ? 'border-brick' : 'border-ink/30'}`} />
+                {errors.clientName && <p className="mt-1 font-mono text-xs text-brick">{errors.clientName}</p>}
+              </div>
+              <div>
+                <label className={labelCls}>Client Phone <span className="text-rust">*</span></label>
+                <input value={form.clientPhone} onChange={setInput('clientPhone')} className={`${inputCls} ${errors.clientPhone ? 'border-brick' : 'border-ink/30'}`} />
+                {errors.clientPhone && <p className="mt-1 font-mono text-xs text-brick">{errors.clientPhone}</p>}
+              </div>
+              <div>
+                <label className={labelCls}>Client Email <span className="text-rust">*</span></label>
+                <input type="email" value={form.clientEmail} onChange={setInput('clientEmail')} className={`${inputCls} ${errors.clientEmail ? 'border-brick' : 'border-ink/30'}`} />
+                {errors.clientEmail && <p className="mt-1 font-mono text-xs text-brick">{errors.clientEmail}</p>}
+              </div>
             </div>
           )}
+        </div>
+
+        {/* Shipment & Cargo — Step 1 */}
+        <div className={`${sectionCls} ${visible(STEP.shipmentCargo) ? '' : 'hidden'}`}>
+          <h2 className={sectionTitleCls}>Shipment &amp; Cargo</h2>
 
           <div>
             <label className={labelCls}>Shipping Declaration <span className="normal-case text-muted/70">(optional, PDF or image)</span></label>
@@ -543,71 +758,144 @@ export default function BookingForm({
             )}
             {errors.shippingDeclaration && <p className="mt-1 font-mono text-xs text-brick">{errors.shippingDeclaration}</p>}
           </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <Select label="Port of Loading (POL)" required searchable placeholder="Select POL" options={portOptions} value={form.pol} onChange={set('pol')} error={errors.pol} />
+            <Select label="Port of Discharge (POD)" required searchable placeholder="Select POD" options={portOptions} value={form.pod} onChange={set('pod')} error={errors.pod} />
+          </div>
+
+          {hasQuotation ? (
+            <ReadOnly label="Container Types (from the quotation)">
+              {containerRows.length ? containerRows.map((r) => `${typeCode(r.containerType)} × ${r.quantity}`).join('  ·  ') : ''}
+            </ReadOnly>
+          ) : (
+            <div>
+              <label className={labelCls}>Container Type &amp; Quantity <span className="text-rust">*</span></label>
+              <ContainerSelector containerTypes={containerTypes} stockMap={stockMap} value={form.containers} onChange={set('containers')} />
+              {errors.containers && <p className="mt-1 font-mono text-xs text-brick">{errors.containers}</p>}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>Commodity <span className="text-rust">*</span></label>
+              <input value={form.commodity} onChange={setInput('commodity')} className={`${inputCls} ${errors.commodity ? 'border-brick' : 'border-ink/30'}`} placeholder="e.g. Frozen poultry" />
+              {errors.commodity && <p className="mt-1 font-mono text-xs text-brick">{errors.commodity}</p>}
+            </div>
+            <div>
+              <label className={labelCls}>HS Code</label>
+              <input value={form.hsCode} onChange={setInput('hsCode')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+
+          <div className="sm:w-1/2 sm:pr-2.5">
+            <label className={labelCls}>UCR Number</label>
+            <input value={form.ucrNumber} onChange={setInput('ucrNumber')} className={`${inputCls} border-ink/30 font-mono`} />
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>No. of Packages</label>
+              <input type="number" min="0" value={form.packagesCount} onChange={setInput('packagesCount')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <Select clearable searchable label="Package Type" placeholder="Select package type" options={packageOptions} value={form.packageType} onChange={set('packageType')} />
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>Gross Weight (kg)</label>
+              <input type="number" min="0" value={form.grossWeight} onChange={setInput('grossWeight')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>Net Weight (kg)</label>
+              <input type="number" min="0" value={form.netWeight} onChange={setInput('netWeight')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+
+          {/* Dangerous goods: the flag, UN number and attachments come from the quotation */}
+          <div className="space-y-4 border-t border-line pt-4">
+            <p className={subTitleCls}>Dangerous Goods</p>
+            {hasQuotation ? (
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+                <ReadOnly label="Dangerous Goods">{form.isDangerous ? 'Yes' : 'No'}</ReadOnly>
+                {form.isDangerous && <ReadOnly label="UN Number (from the quotation)">{form.unNumber}</ReadOnly>}
+              </div>
+            ) : (
+              <div>
+                <label className={labelCls}>Dangerous Goods</label>
+                <div className="flex border border-ink/30">
+                  <button type="button" onClick={() => set('isDangerous')(false)} className={`flex-1 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${!form.isDangerous ? 'bg-ink text-paper' : 'bg-card text-muted hover:text-ink'}`}>No</button>
+                  <button type="button" onClick={() => set('isDangerous')(true)} className={`flex-1 border-l border-ink/30 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${form.isDangerous ? 'bg-brick text-card' : 'bg-card text-muted hover:text-ink'}`}>Yes</button>
+                </div>
+              </div>
+            )}
+            {form.isDangerous && (
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                <div>
+                  <label className={labelCls}>Class Number <span className="text-rust">*</span></label>
+                  <input value={form.dangerousClass} onChange={setInput('dangerousClass')} className={`${inputCls} font-mono ${errors.dangerousClass ? 'border-brick' : 'border-ink/30'}`} placeholder="IMO class, e.g. 3" />
+                  {errors.dangerousClass && <p className="mt-1 font-mono text-xs text-brick">{errors.dangerousClass}</p>}
+                </div>
+                {!hasQuotation && (
+                  <div>
+                    <label className={labelCls}>UN Number <span className="text-rust">*</span></label>
+                    <input value={form.unNumber} onChange={setInput('unNumber')} className={`${inputCls} font-mono ${errors.unNumber ? 'border-brick' : 'border-ink/30'}`} placeholder="e.g. UN1203" />
+                    {errors.unNumber && <p className="mt-1 font-mono text-xs text-brick">{errors.unNumber}</p>}
+                  </div>
+                )}
+              </div>
+            )}
+            {form.isDangerous && (
+              <div>
+                <span className={labelCls}>DG Attachments (MSDS{hasQuotation ? ', from the quotation' : ''})</span>
+                {msdsFiles.length > 0 ? (
+                  <ul className="divide-y divide-line border border-ink/25 bg-card text-sm">
+                    {msdsFiles.map((f) => (
+                      <li key={f._id} className="px-3 py-2">
+                        <button type="button" onClick={() => downloadMsds(f)} className="truncate text-left text-rust hover:text-rust-dark">{f.fileName}</button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="font-mono text-xs text-muted">{hasQuotation ? 'The quotation has no MSDS files attached.' : 'MSDS files are attached on the quotation.'}</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Parties — Step 1 (required source info for the shipping declaration) */}
+        {/* Parties — Step 1 (master-data picks; required source info for the shipping declaration) */}
         <div className={`${sectionCls} ${visible(STEP.parties) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Parties</h2>
 
-          <div>
-            <label className={labelCls}>Consignee Contact <span className="normal-case text-muted/70">(preview — full details below)</span></label>
-            <p className="border border-ink/20 bg-paper/60 px-3.5 py-2.5 text-sm text-ink">{consigneePreview || '-'}</p>
+          <div className="space-y-3">
+            <p className={subTitleCls}>POD Agent</p>
+            <Select
+              clearable
+              searchable
+              label="POD Agent (POD AGENTS master data)"
+              placeholder="Select POD agent"
+              options={agents.map((a) => ({ value: a._id, label: a.country ? `${a.name} — ${a.country}` : a.name }))}
+              value={form.podAgentRef}
+              onChange={selectPodAgent}
+            />
+            <PartyDetails data={form.podAgent} />
           </div>
 
-          <p className="font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">Shipper</p>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <div>
-              <label className={labelCls}>Name</label>
-              <input value={form.shipper.name} onChange={setNested('shipper', 'name')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Email</label>
-              <input type="email" value={form.shipper.email} onChange={setNested('shipper', 'email')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Phone 1</label>
-              <input value={form.shipper.phone1} onChange={setNested('shipper', 'phone1')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Phone 2</label>
-              <input value={form.shipper.phone2} onChange={setNested('shipper', 'phone2')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Address</label>
-              <input value={form.shipper.address} onChange={setNested('shipper', 'address')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Tax Number</label>
-              <input value={form.shipper.taxNumber} onChange={setNested('shipper', 'taxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-          </div>
+          <div className="border-t border-line pt-4">{renderParty('shipper', 'Shipper')}</div>
+          <div className="border-t border-line pt-4">{renderParty('consignee', 'Consignee')}</div>
 
-          <p className="border-t border-line pt-4 font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">Consignee</p>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <div>
-              <label className={labelCls}>Name</label>
-              <input value={form.consignee.name} onChange={setNested('consignee', 'name')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Email</label>
-              <input type="email" value={form.consignee.email} onChange={setNested('consignee', 'email')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Phone 1</label>
-              <input value={form.consignee.phone1} onChange={setNested('consignee', 'phone1')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Phone 2</label>
-              <input value={form.consignee.phone2} onChange={setNested('consignee', 'phone2')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Address</label>
-              <input value={form.consignee.address} onChange={setNested('consignee', 'address')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Tax Number</label>
-              <input value={form.consignee.taxNumber} onChange={setNested('consignee', 'taxNumber')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
+          <label className="flex items-center gap-2 text-sm text-ink">
+            <input type="checkbox" checked={form.notifySameAsConsignee} onChange={(e) => toggleNotifySame(e.target.checked)} className="h-4 w-4" />
+            Notify is the same as the Consignee
+          </label>
+
+          {renderParty('notify', 'Notify', { disabled: form.notifySameAsConsignee })}
+
+          <div className="grid grid-cols-1 gap-5 border-t border-line pt-4 sm:grid-cols-3">
+            <ReadOnly label="Exporter Tax Number (shipper)">{form.exportTaxNumber}</ReadOnly>
+            <ReadOnly label="Importer Tax Number (consignee)">{form.importTaxNumber}</ReadOnly>
+            <ReadOnly label="Importer Country (consignee)">{form.importCountry}</ReadOnly>
           </div>
         </div>
 
@@ -615,25 +903,26 @@ export default function BookingForm({
         <div className={`${sectionCls} ${visible(STEP.carrierBooking) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Carrier Booking Confirmation</h2>
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            <Select label="Vessel Operator (VO)" searchable placeholder="Select vessel operator" options={carrierOptions} value={form.carrier} onChange={set('carrier')} />
-            <div>
-              <label className={labelCls}>Vessel Name</label>
-              <input value={form.vesselName} onChange={setInput('vesselName')} className={`${inputCls} border-ink/30`} placeholder="e.g. MSC OSCAR" />
-            </div>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+            <Select label="Vessel Operator (VO)" searchable clearable placeholder="Select vessel operator" options={carrierOptions} value={form.carrier} onChange={changeVo} />
+            <Select
+              label="Vessel Name"
+              searchable
+              clearable
+              placeholder={vesselOptions.length ? 'Select vessel' : 'No vessels for this VO'}
+              options={vesselOptions}
+              value={form.vesselName}
+              onChange={set('vesselName')}
+            />
             <div>
               <label className={labelCls}>Voyage No</label>
               <input value={form.voyageNo} onChange={setInput('voyageNo')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-            <div>
-              <label className={labelCls}>B/L No</label>
-              <input value={form.blNo} onChange={setInput('blNo')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
             <div>
-              <label className={labelCls}>ETD</label>
+              <label className={labelCls}>ETD <span className="normal-case text-rust">· POL: {portLabel(form.pol) || '-'}</span></label>
               <input type="date" value={form.etd} onChange={setInput('etd')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
             <div>
@@ -641,7 +930,7 @@ export default function BookingForm({
               <input type="date" value={form.atd} onChange={setInput('atd')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
             <div>
-              <label className={labelCls}>ETA</label>
+              <label className={labelCls}>ETA <span className="normal-case text-rust">· POD: {portLabel(form.pod) || '-'}</span></label>
               <input type="date" value={form.eta} onChange={setInput('eta')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
             <div>
@@ -656,10 +945,16 @@ export default function BookingForm({
               <label className={labelCls}>Carrier Booking Ref</label>
               <input value={form.carrierBookingRef} onChange={setInput('carrierBookingRef')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
-            <div>
-              <label className={labelCls}>VO Contact Person</label>
-              <input value={form.voContactPerson} onChange={setInput('voContactPerson')} className={`${inputCls} border-ink/30`} />
-            </div>
+            <Select
+              label="VO Contact Person"
+              searchable
+              clearable
+              disabled={!form.carrier}
+              placeholder={!form.carrier ? 'Select a VO first' : voContactOptions.length ? 'Select contact' : 'No contacts on this VO'}
+              options={voContactOptions}
+              value={form.voContactPerson}
+              onChange={set('voContactPerson')}
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
@@ -693,70 +988,38 @@ export default function BookingForm({
           </div>
         </div>
 
-        {/* Commercial — Step 2 */}
+        {/* Commercial — Step 2 (view only for a job that came from a quotation) */}
         <div className={`${sectionCls} ${visible(STEP.commercial) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Commercial</h2>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
-            <Select label="Carrier" searchable placeholder="Select carrier" options={nvoccOptions} value={form.nvocc} onChange={set('nvocc')} />
-            <Select label="Currency" searchable options={CURRENCY_OPTIONS} value={form.currency} onChange={set('currency')} />
-            <div>
-              <label className={labelCls}>Price</label>
-              <input type="number" min="0" value={form.price} onChange={setInput('price')} className={`${inputCls} border-ink/30 font-mono`} />
+          {hasQuotation ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
+                <ReadOnly label="Carrier">{nvoccs.find((n) => n._id === form.nvocc) ? `${nvoccs.find((n) => n._id === form.nvocc).code} — ${nvoccs.find((n) => n._id === form.nvocc).name}` : ''}</ReadOnly>
+                <ReadOnly label="Currency">{form.currency}</ReadOnly>
+                <ReadOnly label="Price">{form.price !== '' ? String(form.price) : ''}</ReadOnly>
+                <ReadOnly label="Cost">{form.cost !== '' ? String(form.cost) : ''}</ReadOnly>
+                <ReadOnly label="Free Time">{freeTimeShown}</ReadOnly>
+              </div>
+              <p className="font-mono text-xs text-muted">Commercial data comes from the quotation.</p>
             </div>
-            <div>
-              <label className={labelCls}>Cost</label>
-              <input type="number" min="0" value={form.cost} onChange={setInput('cost')} className={`${inputCls} border-ink/30 font-mono`} />
+          ) : (
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
+              <Select label="Carrier" searchable placeholder="Select carrier" options={nvoccs.map((n) => ({ value: n._id, label: `${n.code} — ${n.name}` }))} value={form.nvocc} onChange={set('nvocc')} />
+              <Select label="Currency" searchable options={CURRENCY_OPTIONS} value={form.currency} onChange={set('currency')} />
+              <div>
+                <label className={labelCls}>Price</label>
+                <input type="number" min="0" value={form.price} onChange={setInput('price')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <div>
+                <label className={labelCls}>Cost</label>
+                <input type="number" min="0" value={form.cost} onChange={setInput('cost')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <div>
+                <label className={labelCls}>Free Time</label>
+                <input type="date" value={form.freeTime} onChange={setInput('freeTime')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
             </div>
-            <div>
-              <label className={labelCls}>Free Time</label>
-              <input type="date" value={form.freeTime} onChange={setInput('freeTime')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-          </div>
-        </div>
-
-        {/* Agents — Step 2 (part of the operational booking process) */}
-        <div className={`${sectionCls} ${visible(STEP.agents) ? '' : 'hidden'}`}>
-          <h2 className={sectionTitleCls}>Agents</h2>
-
-          <p className="font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">POL Agent</p>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <div>
-              <label className={labelCls}>Agent Name</label>
-              <input value={form.polAgent.name} onChange={setNested('polAgent', 'name')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Email</label>
-              <input type="email" value={form.polAgent.email} onChange={setNested('polAgent', 'email')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Phone</label>
-              <input value={form.polAgent.phone} onChange={setNested('polAgent', 'phone')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Address</label>
-              <input value={form.polAgent.address} onChange={setNested('polAgent', 'address')} className={`${inputCls} border-ink/30`} />
-            </div>
-          </div>
-
-          <p className="border-t border-line pt-4 font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">POD Agent</p>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <div>
-              <label className={labelCls}>Agent Name</label>
-              <input value={form.podAgent.name} onChange={setNested('podAgent', 'name')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Email</label>
-              <input type="email" value={form.podAgent.email} onChange={setNested('podAgent', 'email')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Phone</label>
-              <input value={form.podAgent.phone} onChange={setNested('podAgent', 'phone')} className={`${inputCls} border-ink/30`} />
-            </div>
-            <div>
-              <label className={labelCls}>Address</label>
-              <input value={form.podAgent.address} onChange={setNested('podAgent', 'address')} className={`${inputCls} border-ink/30`} />
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Containers — Step 3 (Depot / Container) */}
@@ -766,13 +1029,27 @@ export default function BookingForm({
           <Select label="Depot" searchable placeholder="Select depot" options={depotOptions} value={form.depot} onChange={set('depot')} />
           <p className="font-mono text-xs text-muted">Required before this booking can be confirmed.</p>
 
-          <div>
-            <label className={labelCls}>Container Type &amp; Quantity <span className="text-rust">*</span></label>
-            <ContainerSelector containerTypes={containerTypes} stockMap={stockMap} value={form.containers} onChange={set('containers')} />
-            {errors.containers && <p className="mt-1 font-mono text-xs text-brick">{errors.containers}</p>}
-          </div>
+          {!isConfirmed && (
+            <div>
+              <label className={labelCls}>Containers — type, container number (auto from stock), seal</label>
+              {containerRows.length === 0 ? (
+                <p className="font-mono text-xs text-muted">No container types on this job yet.</p>
+              ) : (
+                <ContainerAutoRows
+                  rows={containerRows}
+                  slots={form.containerSlots}
+                  onChange={set('containerSlots')}
+                  depot={form.depot}
+                  nvocc={form.nvocc}
+                  containerTypes={containerTypes}
+                  disabled={isLocked}
+                />
+              )}
+              <p className="mt-1 font-mono text-xs text-muted">Container numbers are assigned automatically from the depot&apos;s oldest free stock and are reserved when the booking is confirmed.</p>
+            </div>
+          )}
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
               <label className={labelCls}>Gate In Date</label>
               <input type="date" value={form.gateInDate} onChange={setInput('gateInDate')} className={`${inputCls} border-ink/30 font-mono`} />
@@ -781,13 +1058,9 @@ export default function BookingForm({
               <label className={labelCls}>Gate Out Date</label>
               <input type="date" value={form.gateOutDate} onChange={setInput('gateOutDate')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
-            <div>
-              <label className={labelCls}>Container Location</label>
-              <input value={form.containerLocation} onChange={setInput('containerLocation')} className={`${inputCls} border-ink/30`} placeholder="Yard A — Block 3" />
-            </div>
           </div>
 
-          {isEdit && booking.status === 'confirmed' && (
+          {isConfirmed && (
             <div>
               <label className={labelCls}>Allocated Containers — Fulfillment</label>
               <AllocatedContainersPanel bookingId={booking._id} canUpdate={canUpdate} />

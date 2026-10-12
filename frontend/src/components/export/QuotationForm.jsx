@@ -187,6 +187,7 @@ export default function QuotationForm({
   submitting = false,
   canOverrideLock = false,
   onSubmit,
+  onSavePart,
   onCustomerCreated,
 }) {
   const isEdit = !!quotation
@@ -338,7 +339,8 @@ export default function QuotationForm({
     }
   }
 
-  const validate = () => {
+  // Sections 1–4 (the request itself)
+  const validateMain = () => {
     const next = {}
     if (!form.customer) next.customer = form.customerType === 'new' ? 'Create the new client first' : 'Select a client'
     if (!form.salesRep.trim()) next.salesRep = 'Sales representative is required'
@@ -348,6 +350,20 @@ export default function QuotationForm({
     if (form.isDangerous && !form.unNumber.trim()) next.unNumber = 'UN Number is required'
     const validContainers = form.containers.filter((c) => c.containerType && c.quantity >= 1)
     if (validContainers.length === 0) next.containers = 'Add at least one container entry'
+    if (form.pol && form.pod && form.pol === form.pod) next.pod = 'POL and POD must be different ports'
+    if (form.contactEmail.trim() && !/^\S+@\S+\.\S+$/.test(form.contactEmail.trim())) next.contactEmail = 'Enter a valid email address'
+    return next
+  }
+
+  // Sections 5–8 (carrier, buying, selling)
+  const validatePricing = () => {
+    const next = {}
+    if (form.rateValidFrom && form.rateValidTo && form.rateValidTo < form.rateValidFrom) next.rateValidTo = 'Valid-to must not be before valid-from'
+    return next
+  }
+
+  const runValidation = (...checks) => {
+    const next = Object.assign({}, ...checks.map((c) => c()))
     setErrors(next)
     return Object.keys(next).length === 0
   }
@@ -373,10 +389,7 @@ export default function QuotationForm({
     }
   }
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    if (!validate()) return
-
+  const buildMainPayload = () => {
     const containers = form.containers
       .filter((c) => c.containerType && c.quantity >= 1)
       .map((c) => ({
@@ -387,7 +400,7 @@ export default function QuotationForm({
         netWeight: c.netWeight === '' || c.netWeight === undefined ? null : Number(c.netWeight),
       }))
 
-    const payload = {
+    return {
       customerType: form.customerType,
       customer: form.customer,
       clientName: form.clientName.trim(),
@@ -410,6 +423,10 @@ export default function QuotationForm({
       targetRate: form.targetRate === '' ? null : Number(form.targetRate),
       cargoReadinessDate: form.cargoReadinessDate || null,
       specialNotes: form.specialNotes.trim(),
+    }
+  }
+
+  const buildPricingPayload = () => ({
       nvocc: form.nvocc || undefined,
       rateValidFrom: form.rateValidFrom || undefined,
       rateValidTo: form.rateValidTo || undefined,
@@ -420,10 +437,35 @@ export default function QuotationForm({
       sellingOrigin: tablePayload(form.sellingOrigin, ORIGIN_LINES, sizes),
       sellingDestination: tablePayload(form.sellingDestination, DESTINATION_LINES, sizes),
       paymentTerms: form.paymentTerms || undefined,
-    }
+  })
 
+  // Create: one submit saves everything (nothing exists yet to split).
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!runValidation(validateMain, validatePricing)) return
     // Switching Dangerous Goods off discards the saved MSDS files server-side.
-    onSubmit(payload, form.isDangerous ? pendingMsds : [])
+    onSubmit({ ...buildMainPayload(), ...buildPricingPayload() }, form.isDangerous ? pendingMsds : [])
+  }
+
+  // Edit: sections 1–4 and 5–8 are saved separately. Same document in the DB —
+  // each button only sends the fields of its own part.
+  const [savingPart, setSavingPart] = useState(null)
+  const savePart = async (part) => {
+    const valid = part === 'main' ? runValidation(validateMain) : runValidation(validatePricing)
+    if (!valid) {
+      toast('Fix the highlighted fields first', 'error')
+      return
+    }
+    setSavingPart(part)
+    try {
+      const updated = await onSavePart(part, part === 'main' ? buildMainPayload() : buildPricingPayload(), part === 'main' && form.isDangerous ? pendingMsds : [])
+      if (part === 'main' && updated) {
+        setSavedMsds(updated.msdsFiles || [])
+        setPendingMsds([])
+      }
+    } finally {
+      setSavingPart(null)
+    }
   }
 
   return (
@@ -571,7 +613,8 @@ export default function QuotationForm({
             </div>
             <div>
               <label className={labelCls}>Contact Email</label>
-              <input type="email" value={form.contactEmail} onChange={setInput('contactEmail')} className={`${inputCls} border-ink/30`} />
+              <input type="email" value={form.contactEmail} onChange={setInput('contactEmail')} className={`${inputCls} ${errors.contactEmail ? 'border-brick' : 'border-ink/30'}`} />
+              {errors.contactEmail && <p className="mt-1 font-mono text-xs text-brick">{errors.contactEmail}</p>}
             </div>
           </div>
 
@@ -704,6 +747,20 @@ export default function QuotationForm({
           </div>
         </div>
 
+        {isEdit && !isLocked && (
+          <div className="flex items-center justify-between gap-3 border border-ink/25 bg-paper/60 px-5 py-3">
+            <p className="font-mono text-xs text-muted">Sections 1–4 save on their own — carrier and pricing below are saved separately.</p>
+            <button
+              type="button"
+              onClick={() => savePart('main')}
+              disabled={savingPart !== null}
+              className="shrink-0 bg-rust px-5 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark disabled:opacity-50"
+            >
+              {savingPart === 'main' ? 'Saving…' : 'Save sections 1–4'}
+            </button>
+          </div>
+        )}
+
         {/* 5. Carrier (NVOCC master data) */}
         <div className={sectionCls}>
           <h2 className={sectionTitleCls}>5. Carrier (Master Data)</h2>
@@ -770,7 +827,8 @@ export default function QuotationForm({
             </div>
             <div>
               <label className={labelCls}>Rate Valid To</label>
-              <input type="date" value={form.rateValidTo} onChange={setInput('rateValidTo')} className={`${inputCls} border-ink/30 font-mono`} />
+              <input type="date" value={form.rateValidTo} onChange={setInput('rateValidTo')} className={`${inputCls} font-mono ${errors.rateValidTo ? 'border-brick' : 'border-ink/30'}`} />
+              {errors.rateValidTo && <p className="mt-1 font-mono text-xs text-brick">{errors.rateValidTo}</p>}
             </div>
           </div>
 
@@ -846,9 +904,15 @@ export default function QuotationForm({
 
       {!isLocked && (
         <div className="flex justify-end border-t border-line pt-5">
-          <button type="submit" disabled={submitting} className="bg-rust px-6 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark disabled:opacity-50">
-            {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create quotation'}
-          </button>
+          {isEdit ? (
+            <button type="button" onClick={() => savePart('pricing')} disabled={savingPart !== null} className="bg-rust px-6 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark disabled:opacity-50">
+              {savingPart === 'pricing' ? 'Saving…' : 'Save sections 5–8'}
+            </button>
+          ) : (
+            <button type="submit" disabled={submitting} className="bg-rust px-6 py-2.5 text-sm font-semibold text-card transition-colors hover:bg-rust-dark disabled:opacity-50">
+              {submitting ? 'Saving…' : 'Create quotation'}
+            </button>
+          )}
         </div>
       )}
 
