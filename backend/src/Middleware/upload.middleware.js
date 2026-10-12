@@ -14,6 +14,8 @@ const UPLOAD_DIRS = {
   shippingDeclaration: path.join(process.cwd(), 'uploads', 'shipping-declarations'),
   bookingConfirmationFile: path.join(process.cwd(), 'uploads', 'booking-confirmations'),
   customsCertificateFile: path.join(process.cwd(), 'uploads', 'customs-certificates'),
+  msds: path.join(process.cwd(), 'uploads', 'msds'),
+  customerFile: path.join(process.cwd(), 'uploads', 'customer-certificates'),
 }
 for (const dir of Object.values(UPLOAD_DIRS)) fs.mkdirSync(dir, { recursive: true })
 
@@ -51,6 +53,13 @@ export const uploadBookingFiles = upload.fields([
   { name: 'customsCertificateFile', maxCount: 1 },
 ])
 
+// Quotation MSDS: up to 5 PDF/image files per request (the per-quotation cap of
+// 5 total is enforced in quotation.service.js).
+export const uploadMsdsFiles = upload.array('msds', 5)
+
+// Customer tax / registration certificate: one file per request (field `customerFile`).
+export const uploadCustomerFile = upload.single('customerFile')
+
 // Normalizes the two multer shapes (`.single()` → req.file, `.fields()` →
 // req.files[field][0]) into one lookup.
 const getUploadedFile = (req, fieldName) => {
@@ -67,10 +76,17 @@ const getUploadedFile = (req, fieldName) => {
 // and rejecting the request if they don't match.
 const matchesSignature = (buffer, signature) => signature.every((byte, i) => buffer[i] === byte)
 
+const hasValidSignature = (buffer) =>
+  matchesSignature(buffer, [0x25, 0x50, 0x44, 0x46]) || // %PDF
+  matchesSignature(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) || // PNG
+  matchesSignature(buffer, [0xff, 0xd8, 0xff]) || // JPEG
+  (matchesSignature(buffer, [0x52, 0x49, 0x46, 0x46]) && buffer.slice(8, 12).toString('ascii') === 'WEBP') // RIFF....WEBP
+
 const FIELD_LABELS = {
   shippingDeclaration: 'Shipping declaration',
   bookingConfirmationFile: 'Booking confirmation file',
   customsCertificateFile: 'Customs certificate file',
+  customerFile: 'Certificate file',
 }
 
 // Factory so the same verification logic covers both file fields — call once
@@ -82,13 +98,7 @@ export const verifyFileSignature = (fieldName) => (req, res, next) => {
   fs.readFile(file.path, (err, buffer) => {
     if (err) return next(err)
 
-    const valid =
-      matchesSignature(buffer, [0x25, 0x50, 0x44, 0x46]) || // %PDF
-      matchesSignature(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) || // PNG
-      matchesSignature(buffer, [0xff, 0xd8, 0xff]) || // JPEG
-      (matchesSignature(buffer, [0x52, 0x49, 0x46, 0x46]) && buffer.slice(8, 12).toString('ascii') === 'WEBP') // RIFF....WEBP
-
-    if (!valid) {
+    if (!hasValidSignature(buffer)) {
       fs.unlink(file.path, () => {})
       return next(Object.assign(
         new Error(`${FIELD_LABELS[fieldName] || 'File'} content does not match a PDF or image — the file may be mislabeled or corrupted`),
@@ -97,6 +107,26 @@ export const verifyFileSignature = (fieldName) => (req, res, next) => {
     }
     next()
   })
+}
+
+// Same check for the multi-file MSDS upload: if ANY file fails, every file in
+// the request is deleted and the request rejected.
+export const verifyMsdsSignatures = async (req, res, next) => {
+  const files = req.files || []
+  if (files.length === 0) return next()
+  try {
+    for (const file of files) {
+      const buffer = await fs.promises.readFile(file.path)
+      if (!hasValidSignature(buffer)) {
+        await Promise.all(files.map((f) => fs.promises.unlink(f.path).catch(() => {})))
+        return next(Object.assign(
+          new Error(`"${file.originalname}" does not match a PDF or image — the file may be mislabeled or corrupted`),
+          { statusCode: 400 }
+        ))
+      }
+    }
+    next()
+  } catch (err) { next(err) }
 }
 
 // ─── Container stock Excel import — parsed in memory, never written to disk ───

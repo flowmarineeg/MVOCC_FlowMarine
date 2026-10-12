@@ -2,6 +2,7 @@
 // Run: cd e2e && npm install && npm run quotation:api   (backend must be running)
 // Everything it creates is prefixed E2E-<runId> and removed in `finally`.
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { unlink } from 'node:fs/promises'
 
 // Repo-relative: e2e/quotation/ -> ../../backend/
 const BACKEND = fileURLToPath(new URL('../../backend/', import.meta.url))
@@ -276,6 +277,66 @@ try {
   check('second convert -> 409', r.status === 409, `${r.status} ${msg(r)}`)
   check('second convert left no orphan booking', mid === after && mid === before + 1, `before=${before} mid=${mid} after=${after}`)
 
+  // ─── 10a. per-container weights ────────────────────────────────────
+  r = await mk('weights', { containers: [{ containerType: t20._id, quantity: 2, grossWeight: 2400, netWeight: 2000 }, { containerType: t40._id, quantity: 1 }] })
+  check('container rows store gross + net weight (optional per row)', r.status === 201 && r.json.data.containers[0].grossWeight === 2400 && r.json.data.containers[0].netWeight === 2000 && r.json.data.containers[1].grossWeight === undefined, msg(r))
+  const wId = r.json?.data?._id
+  r = await call('PUT', `/export/quotations/${wId}`, { containers: [{ containerType: t20._id, quantity: 2, grossWeight: null, netWeight: 1500 }] })
+  check('update can clear a weight (null) and change another', r.status === 200 && r.json.data.containers[0].grossWeight == null && r.json.data.containers[0].netWeight === 1500, msg(r))
+  r = await call('PUT', `/export/quotations/${wId}`, { containers: [{ containerType: t20._id, quantity: 2, grossWeight: -5 }] })
+  check('negative container weight -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+
+  // ─── 10b. MSDS (dangerous goods files, max 5) ────────────────────────
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+  const msdsForm = (files) => {
+    const fd = new FormData()
+    files.forEach(({ name, bytes, mime }) => fd.append('msds', new Blob([bytes], { type: mime || 'image/png' }), name))
+    return fd
+  }
+  const png = (n) => ({ name: `msds-${n}.png`, bytes: PNG })
+
+  r = await mk('msds-plain', { containers: [{ containerType: t20._id, quantity: 1 }] })
+  const plainId = r.json?.data?._id
+  r = await call('POST', `/export/quotations/${plainId}/msds`, msdsForm([png(0)]), { form: true })
+  check('MSDS upload on a NON-dangerous quotation -> 400', !!plainId && r.status === 400, `${r.status} ${msg(r)}`)
+
+  r = await mk('msds', { isDangerous: true, unNumber: 'UN1203', containers: [{ containerType: t20._id, quantity: 1 }] })
+  const dgId = r.json?.data?._id
+  check('dangerous quotation starts with no MSDS files', r.status === 201 && Array.isArray(r.json.data.msdsFiles) && r.json.data.msdsFiles.length === 0, msg(r))
+  r = await call('POST', `/export/quotations/${dgId}/msds`, msdsForm([png(1), png(2)]), { form: true })
+  check('upload 2 MSDS files -> 201, both stored', r.status === 201 && r.json.data.msdsFiles.length === 2 && r.json.data.msdsFiles[0].fileName === 'msds-1.png', `${r.status} ${msg(r)}`)
+  r = await call('POST', `/export/quotations/${dgId}/msds`, msdsForm([{ name: 'fake.png', bytes: Buffer.from('this is plainly not image bytes') }]), { form: true })
+  check('MSDS with a spoofed mimetype (text sent as image/png) -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+  r = await call('POST', `/export/quotations/${dgId}/msds`, msdsForm([{ name: 'note.txt', bytes: Buffer.from('hi'), mime: 'text/plain' }]), { form: true })
+  check('MSDS with a disallowed type (text/plain) -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+  r = await call('POST', `/export/quotations/${dgId}/msds`, msdsForm([png(3), png(4), png(5)]), { form: true })
+  check('3 more files (5 total) -> 201', r.status === 201 && r.json.data.msdsFiles.length === 5, `${r.status} ${msg(r)}`)
+  r = await call('POST', `/export/quotations/${dgId}/msds`, msdsForm([png(6)]), { form: true })
+  check('a 6th MSDS file -> 400 (limit is 5)', r.status === 400 && /at most 5/i.test(msg(r)), `${r.status} ${msg(r)}`)
+  r = await call('POST', `/export/quotations/${dgId}/msds`, msdsForm([png(7), png(8), png(9), png(10), png(11), png(12)]), { form: true })
+  check('6 files in one request -> rejected', r.status >= 400, `${r.status} ${msg(r)}`)
+  r = await call('GET', `/export/quotations/${dgId}`)
+  check('rejected uploads did not change the stored list (still 5)', r.json.data.msdsFiles.length === 5, r.json?.data?.msdsFiles?.length)
+  const msdsList = r.json.data.msdsFiles
+
+  const dl = await fetch(`${API}/export/quotations/${dgId}/msds/${msdsList[0]._id}`, { headers: { cookie } })
+  const dlBytes = Buffer.from(await dl.arrayBuffer())
+  check('download streams the stored file back (auth required)', dl.status === 200 && dlBytes.equals(PNG), dl.status)
+  const dlNoAuth = await fetch(`${API}/export/quotations/${dgId}/msds/${msdsList[0]._id}`)
+  check('download without a session -> 401', dlNoAuth.status === 401, dlNoAuth.status)
+
+  r = await call('PUT', `/export/quotations/${dgId}`, { msdsFiles: [{ fileName: 'x', filePath: '../../../.env' }] })
+  r = await call('GET', `/export/quotations/${dgId}`)
+  check('msdsFiles cannot be injected through the JSON update', r.json.data.msdsFiles.length === 5 && !r.json.data.msdsFiles.some((f) => f.filePath.includes('..')), JSON.stringify(r.json.data.msdsFiles.map((f) => f.filePath)))
+
+  r = await call('DELETE', `/export/quotations/${dgId}/msds/${msdsList[4]._id}`)
+  check('delete one MSDS file -> 200, 4 left', r.status === 200 && r.json.data.msdsFiles.length === 4, `${r.status} ${msg(r)}`)
+  r = await call('DELETE', `/export/quotations/${dgId}/msds/${msdsList[4]._id}`)
+  check('deleting it again -> 404', r.status === 404, r.status)
+
+  r = await call('PUT', `/export/quotations/${dgId}`, { isDangerous: false })
+  check('switching Dangerous Goods off discards every MSDS file', r.status === 200 && r.json.data.msdsFiles.length === 0 && !r.json.data.unNumber, `${r.status} ${msg(r)}`)
+
   // ─── 11. Audit trail ─────────────────────────────────────────────────
   r = await call('GET', `/audit-logs?resource=Quotation&limit=50`)
   const mine = (r.json?.logs || []).filter((l) => created.quotationNos.includes(String(l.resourceId || '')))
@@ -287,6 +348,8 @@ try {
   try {
     await mongoose.connect(process.env.MONGO_URI)
     const dbh = mongoose.connection.db
+    const leftovers = await dbh.collection('quotations').find({ clientName: { $regex: `^${RUN}` }, 'msdsFiles.0': { $exists: true } }).project({ msdsFiles: 1 }).toArray()
+    for (const q of leftovers) for (const f of q.msdsFiles) await unlink(BACKEND + 'uploads/msds/' + f.filePath).catch(() => {})
     const delQ = await dbh.collection('quotations').deleteMany({ clientName: { $regex: `^${RUN}` } })
     // Give the consumed quotation numbers back ONLY while ours are still the tail.
     const qYear = new Date().getFullYear()

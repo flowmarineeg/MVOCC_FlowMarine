@@ -131,10 +131,19 @@ export default function QuotationDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
-  const handleSave = async (data) => {
+  const handleSave = async (data, msdsFiles = []) => {
     setSaving(true)
     try {
       await quotationApi.updateQuotation(id, data)
+      if (msdsFiles.length > 0) {
+        try {
+          await quotationApi.uploadMsds(id, msdsFiles)
+        } catch (err) {
+          toast(`Quotation saved, but the MSDS upload failed: ${err.message}`, 'error')
+          load()
+          return
+        }
+      }
       toast('Quotation updated', 'success')
       load()
     } catch (err) {
@@ -225,6 +234,8 @@ export default function QuotationDetailPage() {
       )}
 
       <QuotationForm
+        // remounts when the saved MSDS list changes so the file list shows the new state
+        key={(quotation.msdsFiles || []).map((f) => f._id).join(',')}
         quotation={quotation}
         customers={customers}
         ports={ports}

@@ -63,3 +63,28 @@ export const suggestRate = async (req, res, next) => {
     res.json({ success: true, data: suggestion })
   } catch (err) { next(err) }
 }
+
+export const uploadMsds = async (req, res, next) => {
+  try {
+    const files = req.files || []
+    if (files.length === 0) return res.status(400).json({ success: false, message: 'Choose at least one PDF or image to upload' })
+    const canOverride = !!req.user?.permissions?.includes('quotation:approve')
+    const quotation = await service.addMsdsFiles(req.params.id, files, req.user, { canOverride })
+    res.status(201).json({ success: true, data: quotation })
+  } catch (err) { next(err) }
+}
+
+export const deleteMsds = async (req, res, next) => {
+  try {
+    const canOverride = !!req.user?.permissions?.includes('quotation:approve')
+    const quotation = await service.removeMsdsFile(req.params.id, req.params.fileId, req.user, { canOverride })
+    res.json({ success: true, data: quotation })
+  } catch (err) { next(err) }
+}
+
+export const downloadMsds = async (req, res, next) => {
+  try {
+    const file = await service.getMsdsFile(req.params.id, req.params.fileId)
+    res.download(file.path, file.fileName)
+  } catch (err) { next(err) }
+}

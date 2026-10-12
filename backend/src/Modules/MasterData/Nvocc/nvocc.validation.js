@@ -1,7 +1,7 @@
 import { body } from 'express-validator'
-import { partyRules } from '../_shared/party.shared.js'
+import { basePartyRules, contractTypeRules } from '../_shared/party.shared.js'
 
-const optionalFields = [...partyRules, body('tradeLane').optional().trim()]
+const optionalFields = [...basePartyRules, ...contractTypeRules, body('tradeLane').optional().trim()]
 
 export const createRules = [
   body('name').trim().notEmpty().withMessage('NVOCC name is required'),

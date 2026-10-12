@@ -1,5 +1,5 @@
 import mongoose from 'mongoose'
-import { partyFields } from '../_shared/party.shared.js'
+import { basePartyFields, contractTypeField } from '../_shared/party.shared.js'
 
 const nvoccSchema = new mongoose.Schema(
   {
@@ -15,7 +15,8 @@ const nvoccSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
-    ...partyFields,
+    ...basePartyFields,
+    ...contractTypeField,
     tradeLane: {
       type: String,
       trim: true,

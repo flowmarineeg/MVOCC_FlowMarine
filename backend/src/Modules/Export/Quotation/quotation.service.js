@@ -1,5 +1,7 @@
 import mongoose from 'mongoose'
-import Quotation, { ORIGIN_LINE_KEYS, DESTINATION_LINE_KEYS } from './quotation.model.js'
+import fs from 'fs'
+import path from 'path'
+import Quotation, { ORIGIN_LINE_KEYS, DESTINATION_LINE_KEYS, MSDS_MAX_FILES } from './quotation.model.js'
 import ContainerType from '../../MasterData/ContainerType/containerType.model.js'
 import JobCounter from '../Booking/jobCounter.model.js'
 
@@ -13,7 +15,7 @@ const POPULATE_FIELDS = [
   { path: 'containers.containerType', select: 'code label' },
   { path: 'pol', select: 'name code country' },
   { path: 'pod', select: 'name code country' },
-  { path: 'nvocc', select: 'name code contractType contractValidFrom contractValidTo tradeLane address contacts' },
+  { path: 'nvocc', select: 'name code contractType tradeLane country city address contacts' },
   { path: 'approvedBy', select: 'name email' },
   { path: 'linkedBooking', select: 'jobNo status' },
   { path: 'updatedBy', select: 'name email' },
@@ -203,12 +205,86 @@ export const updateQuotation = async (id, data, currentUser, { canOverride } = {
     if (data[field] !== undefined) quotation[field] = data[field]
   }
   clearDangerousFieldsIfNotDangerous(quotation)
+  // MSDS only belongs to dangerous cargo — switching it off discards the files.
+  if (!quotation.isDangerous && quotation.msdsFiles.length > 0) {
+    quotation.msdsFiles.forEach(deleteMsdsFromDisk)
+    quotation.msdsFiles = []
+  }
   await applyProfitability(quotation)
   quotation.updatedBy = currentUser?._id || currentUser?.id
 
   await quotation.save()
   await quotation.populate(POPULATE_FIELDS)
   return quotation
+}
+
+// ─── MSDS files (dangerous goods) ───────────────────────────────────────────
+// Up to MSDS_MAX_FILES per quotation, uploaded after the quotation is saved
+// (multipart, separate from the JSON save). Follows the same edit lock as
+// updateQuotation: sent/approved/rejected needs the quotation:approve override.
+const MSDS_DIR = path.join(process.cwd(), 'uploads', 'msds')
+
+// path.basename: filePath is a server-generated bare filename; this is defense
+// in depth so a bad stored value could never escape the MSDS directory.
+const msdsDiskPath = (file) => path.join(MSDS_DIR, path.basename(file.filePath))
+const deleteMsdsFromDisk = (file) => fs.unlink(msdsDiskPath(file), () => {})
+
+const loadForMsdsEdit = async (id, { canOverride } = {}) => {
+  const quotation = await Quotation.findById(id)
+  if (!quotation) throw Object.assign(new Error('Quotation not found'), { statusCode: 404 })
+  if (LOCKED_STATUSES.includes(quotation.status) && !canOverride) {
+    throw Object.assign(
+      new Error(`Cannot edit a quotation with status: ${quotation.status} — requires quotation:approve permission`),
+      { statusCode: 403 }
+    )
+  }
+  return quotation
+}
+
+export const addMsdsFiles = async (id, files, currentUser, { canOverride } = {}) => {
+  const discard = () => files.forEach((f) => fs.unlink(f.path, () => {}))
+  try {
+    const quotation = await loadForMsdsEdit(id, { canOverride })
+    if (!quotation.isDangerous) {
+      throw Object.assign(new Error('MSDS files can only be attached when Dangerous Goods is Yes (save the quotation first)'), { statusCode: 400 })
+    }
+    if (quotation.msdsFiles.length + files.length > MSDS_MAX_FILES) {
+      throw Object.assign(
+        new Error(`A quotation can hold at most ${MSDS_MAX_FILES} MSDS files (it has ${quotation.msdsFiles.length})`),
+        { statusCode: 400 }
+      )
+    }
+    files.forEach((f) =>
+      quotation.msdsFiles.push({ fileName: f.originalname, filePath: f.filename, mimeType: f.mimetype, uploadedAt: new Date() })
+    )
+    quotation.updatedBy = currentUser?._id || currentUser?.id
+    await quotation.save()
+    await quotation.populate(POPULATE_FIELDS)
+    return quotation
+  } catch (err) {
+    discard()
+    throw err
+  }
+}
+
+export const removeMsdsFile = async (id, fileId, currentUser, { canOverride } = {}) => {
+  const quotation = await loadForMsdsEdit(id, { canOverride })
+  const file = quotation.msdsFiles.id(fileId)
+  if (!file) throw Object.assign(new Error('MSDS file not found'), { statusCode: 404 })
+  deleteMsdsFromDisk(file)
+  file.deleteOne()
+  quotation.updatedBy = currentUser?._id || currentUser?.id
+  await quotation.save()
+  await quotation.populate(POPULATE_FIELDS)
+  return quotation
+}
+
+export const getMsdsFile = async (id, fileId) => {
+  const quotation = await Quotation.findById(id)
+  if (!quotation) throw Object.assign(new Error('Quotation not found'), { statusCode: 404 })
+  const file = quotation.msdsFiles.id(fileId)
+  if (!file) throw Object.assign(new Error('MSDS file not found'), { statusCode: 404 })
+  return { path: msdsDiskPath(file), fileName: file.fileName }
 }
 
 // ─── Status transitions ─────────────────────────────────────────────────────

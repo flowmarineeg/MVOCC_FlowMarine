@@ -19,7 +19,6 @@ import auditLogRoutes from './Modules/AuditLog/auditLog.routes.js'
 
 // ─── Master Data Routes ───────────────────────────────────────────────────────
 import containerTypeRoutes from './Modules/MasterData/ContainerType/containerType.routes.js'
-import carrierRoutes from './Modules/MasterData/Carrier/carrier.routes.js'
 import vesselOperatorRoutes from './Modules/MasterData/VesselOperator/vesselOperator.routes.js'
 import vesselRoutes from './Modules/MasterData/Vessel/vessel.routes.js'
 import packageRoutes from './Modules/MasterData/Package/package.routes.js'
@@ -73,7 +72,6 @@ app.use('/api/audit-logs', auditLogRoutes)
 
 // ─── Master Data ──────────────────────────────────────────────────────────────
 app.use('/api/master/container-types', containerTypeRoutes)
-app.use('/api/master/carriers', carrierRoutes)
 app.use('/api/master/ports', portRoutes)
 app.use('/api/master/agents', agentRoutes)
 app.use('/api/master/nvoccs', nvoccRoutes)

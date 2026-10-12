@@ -4,10 +4,14 @@ import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { FaTimes, FaPlus, FaTrash } from 'react-icons/fa'
 
-// Field types: text (default) | email | date | select | country | governorate | contacts
+// Field types: text (default) | email | date | select | country | governorate | city | file | contacts
 //  - select:      `options` is a string[] or [{ value, label }]
 //  - country:     select fed by the free `country-state-city` library (lazy-loaded)
 //  - governorate: states of the country picked in the field named by `countryKey`
+//  - city:        cities of the country picked in the field named by `countryKey`
+//  - file:        a PDF/image picker. The value is a File (or null); the saved file, if
+//                 any, is shown with Download / Remove via the field's `download(item)`
+//                 and `remove(item)` callbacks. Uploading is the caller's job.
 //  - contacts:    add/remove rows of { name, title, email, phone }
 const inputCls = 'w-full border border-ink/30 bg-paper px-3.5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust'
 const labelCls = 'mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted'
@@ -17,6 +21,7 @@ const normalizeOptions = (options = []) => options.map((o) => (typeof o === 'str
 
 const initialValue = (field, item) => {
   const raw = item?.[field.key]
+  if (field.type === 'file') return null
   if (field.type === 'contacts') {
     return (raw || []).map((c) => ({ name: c.name || '', title: c.title || '', email: c.email || '', phone: c.phone || '' }))
   }
@@ -31,13 +36,14 @@ export default function MasterDataFormModal({ isOpen, onClose, onSave, item, fie
   )
   const [error, setError] = useState('')
   const [geo, setGeo] = useState(null)
+  const [removedFiles, setRemovedFiles] = useState([]) // file keys deleted from the saved record in this dialog
 
-  const needsGeo = fields.some((f) => f.type === 'country' || f.type === 'governorate')
+  const needsGeo = fields.some((f) => f.type === 'country' || f.type === 'governorate' || f.type === 'city')
   useEffect(() => {
     if (!needsGeo) return
     let cancelled = false
     import('country-state-city').then((m) => {
-      if (!cancelled) setGeo({ Country: m.Country, State: m.State })
+      if (!cancelled) setGeo({ Country: m.Country, State: m.State, City: m.City })
     })
     return () => { cancelled = true }
   }, [needsGeo])
@@ -57,8 +63,15 @@ export default function MasterDataFormModal({ isOpen, onClose, onSave, item, fie
     return country ? geo.State.getStatesOfCountry(country.isoCode).map((s) => s.name) : []
   }
 
+  const citiesFor = (countryName) => {
+    if (!geo || !countryName) return []
+    const country = geo.Country.getAllCountries().find((c) => c.name === countryName)
+    const names = country ? (geo.City.getCitiesOfCountry(country.isoCode) || []).map((c) => c.name) : []
+    return [...new Set(names)].sort((a, b) => a.localeCompare(b))
+  }
+
   const setCountry = (field) => (e) => {
-    const dependents = fields.filter((f) => f.type === 'governorate' && f.countryKey === field.key).map((f) => f.key)
+    const dependents = fields.filter((f) => (f.type === 'governorate' || f.type === 'city') && f.countryKey === field.key).map((f) => f.key)
     setValues((v) => ({ ...v, [field.key]: e.target.value, ...Object.fromEntries(dependents.map((k) => [k, ''])) }))
   }
 
@@ -136,6 +149,53 @@ export default function MasterDataFormModal({ isOpen, onClose, onSave, item, fie
           <option value="">{values[f.countryKey] ? 'Select…' : 'Select a country first'}</option>
           {options.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
+      )
+    }
+
+    if (f.type === 'city') {
+      const cities = citiesFor(values[f.countryKey])
+      // Some countries have no cities in the dataset — fall back to free text.
+      if (geo && values[f.countryKey] && cities.length === 0) {
+        return <input value={values[f.key]} onChange={set(f.key)} required={required} className={inputCls} />
+      }
+      const options = values[f.key] && !cities.includes(values[f.key]) ? [values[f.key], ...cities] : cities
+      return (
+        <select value={values[f.key]} onChange={set(f.key)} required={required} disabled={!values[f.countryKey]} className={`${inputCls} disabled:opacity-50`}>
+          <option value="">{values[f.countryKey] ? 'Select…' : 'Select a country first'}</option>
+          {options.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+      )
+    }
+
+    if (f.type === 'file') {
+      const saved = item?.[f.key]?.fileName && !removedFiles.includes(f.key) ? item[f.key] : null
+      const chosen = values[f.key]
+      return (
+        <div className="space-y-2">
+          {saved && (
+            <div className="flex items-center justify-between gap-3 border border-ink/20 bg-paper/60 px-3 py-2 text-sm">
+              <button type="button" onClick={() => f.download(item).catch((err) => setError(err.message))} className="truncate text-left text-rust hover:text-rust-dark">
+                {saved.fileName}
+              </button>
+              <button
+                type="button"
+                onClick={() => f.remove(item).then(() => setRemovedFiles((r) => [...r, f.key])).catch((err) => setError(err.message))}
+                className="font-mono text-[10px] uppercase tracking-wide text-muted hover:text-brick"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+          <input
+            type="file"
+            accept="application/pdf,image/jpeg,image/png,image/webp"
+            onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.files?.[0] || null }))}
+            className={`${inputCls} file:mr-3 file:border-0 file:bg-ink file:px-3 file:py-1 file:text-xs file:font-semibold file:text-paper`}
+          />
+          <p className="font-mono text-[10px] text-muted">
+            {chosen ? `${chosen.name} — uploads on save` : saved ? 'Choose a file to replace it (PDF or image, 10 MB max)' : 'PDF or image, 10 MB max'}
+          </p>
+        </div>
       )
     }
 

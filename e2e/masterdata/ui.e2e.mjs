@@ -41,7 +41,7 @@ const openNew = async (singular) => { await page.getByRole('button', { name: `Ne
 const save = async () => { await modal().getByRole('button', { name: 'Save', exact: true }).click() }
 const rowOf = (text) => page.locator('tbody tr').filter({ hasText: text })
 
-const TABS = ['Container Types', 'Carriers', 'Ports (POL / POD)', 'NVOCC', 'VO (Vessel Operators)', 'Vessels', 'Depots', 'Customers', 'Agents', 'Parties', 'Packages', 'Units']
+const TABS = ['Container Types', 'Carriers', 'Ports (POL / POD)', 'VO (Vessel Operators)', 'Vessels', 'Depots', 'Customers', 'POD AGENTS', 'Parties', 'Packages', 'Units']
 const cleanup = [] // [apiPath, name-prefix lookup]
 
 try {
@@ -56,21 +56,23 @@ try {
   await page.goto(`${WEB}/master-data`)
   await vis(page.getByRole('heading', { name: 'Master Data' }))
   const tabResults = await Promise.all(TABS.map((t) => vis(tab(t), 3000)))
-  check('every expected tab is present (incl. Carriers, new VO/Vessels/Agents/Parties/Packages/Units)', tabResults.every(Boolean), TABS.filter((_, i) => !tabResults[i]).join(', '))
+  check('every expected tab is present (Carriers = the former NVOCC list, VO/Vessels/POD AGENTS/Parties/Packages/Units)', tabResults.every(Boolean), TABS.filter((_, i) => !tabResults[i]).join(', '))
 
   // ─── NVOCC: new inputs + contact rows add/delete ─────────────────────
-  await tab('NVOCC').click()
-  await openNew('NVOCC')
+  await tab('Carriers').click()
+  await openNew('Carrier')
   const labels = (await modal().locator('label').allTextContents()).join('|')
-  check('NVOCC form has Address / Tax Number / Registration Number / Contract Type / Valid From / Valid To / Contacts',
-    ['Address', 'Tax Number', 'Registration Number', 'Contract Type', 'Valid From', 'Valid To', 'Contacts'].every((l) => labels.includes(l)), labels)
+  check('NVOCC form has Country / City / Address / Tax Number / Registration Number / Contract Type / Contacts, and no Valid From / Valid To',
+    ['Country', 'City', 'Address', 'Tax Number', 'Registration Number', 'Contract Type', 'Contacts'].every((l) => labels.includes(l)) && !/Valid From|Valid To/.test(labels), labels)
+  check('NVOCC form: Country and City come right before Address', /Country\s*\|City\s*\|Address/.test(labels.replace(/\s*\*/g, '')), labels)
   check('NVOCC form no longer has Local Agent inputs', !/Local Agent/.test(labels), labels)
   await field(/^Name/).fill(`${RUN} NVOCC`)
   await field(/^Code/).fill(`${RUN}-NV`)
   await field(/Registration Number/).fill('REG-77')
   await field(/Contract Type/).selectOption('Contract')
-  await field(/Valid From/).fill('2026-01-01')
-  await field(/Valid To/).fill('2026-12-31')
+  await page.waitForFunction(() => [...document.querySelectorAll('div.fixed select')].some((s) => s.options.length > 100), null, { timeout: 15000 })
+  await field(/^Country/).selectOption('Egypt')
+  await field(/^City/).selectOption('Cairo')
   await modal().getByRole('button', { name: 'Add contact' }).click()
   await modal().getByRole('button', { name: 'Add contact' }).click()
   const nameInputs = modal().locator('input[placeholder="Name *"]')
@@ -96,12 +98,14 @@ try {
   await gone(modal().locator('form'))
   await page.waitForTimeout(500)
   const nv = (await api('GET', '/master/nvoccs')).json.data.find((n) => n.code === `${RUN}-NV`)
-  check('an empty added contact row is discarded on save', nv?.contacts?.length === 1 && nv.registrationNumber === 'REG-77', JSON.stringify(nv?.contacts))
+  check('an empty added contact row is discarded on save; country + city persisted', nv?.contacts?.length === 1 && nv.registrationNumber === 'REG-77' && nv.country === 'Egypt' && nv.city === 'Cairo', JSON.stringify(nv?.contacts))
 
   // ─── VO then Vessel (select VO + name) ───────────────────────────────
   await tab('VO (Vessel Operators)').click()
   await openNew('Vessel Operator')
   await field(/^Name/).fill(`${RUN} VO`)
+  const voLabels = (await modal().locator('label').allTextContents()).join('|')
+  check('VO form has no Contract Type / Valid From / Valid To', !/Contract Type|Valid From|Valid To/.test(voLabels), voLabels)
   await field(/VO Code/).fill(`${RUN}-VO`)
   await save()
   check('VO saves', await vis(rowOf(`${RUN}-VO`)))
@@ -129,17 +133,38 @@ try {
   check('changing country clears the governorate', (await field(/Governorate/).inputValue().catch(() => '')) === '')
   await field(/^Country/).selectOption('Egypt')
   await field(/Governorate/).selectOption('Alexandria')
+  const custLabels = (await modal().locator('label').allTextContents()).map((l) => l.replace(/\s*\*$/, '').trim())
+  const at = (n) => custLabels.indexOf(n)
+  check('Customer form order: Country before Address; Phone + Email directly under Registration Number',
+    at('Country') > -1 && at('Country') < at('Address') && at('Registration Number') > -1 && at('Phone') === at('Registration Number') + 1 && at('Email') === at('Phone') + 1 && !custLabels.includes('Tax Register'), custLabels.join('|'))
+  check('Customer form has Tax Certification + Registration Certification file inputs', custLabels.includes('Tax Certification') && custLabels.includes('Registration Certification') && (await modal().locator('input[type="file"]').count()) === 2)
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+  await modal().locator('input[type="file"]').nth(0).setInputFiles({ name: 'tax-ui.png', mimeType: 'image/png', buffer: PNG })
+  await modal().locator('input[type="file"]').nth(1).setInputFiles({ name: 'reg-ui.png', mimeType: 'image/png', buffer: PNG })
   await save()
   check('Customer saves with country + governorate', await vis(rowOf(`${RUN} Customer`).filter({ hasText: 'Egypt' }).filter({ hasText: 'Alexandria' })))
   cleanup.push('/master/customers')
+  const uiCust = (await api('GET', '/master/customers')).json.data.find((c) => c.name === `${RUN} Customer`)
+  check('both certificates were uploaded with the customer', uiCust?.taxCertificateFile?.fileName === 'tax-ui.png' && uiCust?.registrationCertificateFile?.fileName === 'reg-ui.png', JSON.stringify([uiCust?.taxCertificateFile, uiCust?.registrationCertificateFile]))
+  await rowOf(`${RUN} Customer`).locator('button[title="Edit"]').click()
+  await vis(modal().locator('form'))
+  check('editing the customer shows the saved certificate names', (await vis(modal().getByText('tax-ui.png'))) && (await vis(modal().getByText('reg-ui.png'))))
+  await modal().getByRole('button', { name: 'Remove' }).first().click()
+  await page.waitForTimeout(800)
+  check('Remove deletes a certificate immediately', !(await modal().getByText('tax-ui.png').count()) && ((await api('GET', '/master/customers')).json.data.find((c) => c.name === `${RUN} Customer`)?.taxCertificateFile?.fileName === undefined))
+  await modal().locator('button').filter({ has: page.locator('svg') }).first().click() // close the dialog (X)
+  await gone(modal().locator('form'))
 
   // ─── Agent (country selector), Parties (type), Packages, Units ───────
-  await tab('Agents').click()
+  await tab('POD AGENTS').click()
   await openNew('Agent')
   await field(/^Name/).fill(`${RUN} Agent`)
+  const agentLabels = await modal().locator('label').allTextContents()
+  check('Agent form: Country + City right before Address, Agent Code not required, no Valid From / Valid To', agentLabels.findIndex((l) => /^Country/.test(l)) + 2 === agentLabels.findIndex((l) => /^Address/.test(l)) && /^City/.test(agentLabels[agentLabels.findIndex((l) => /^Address/.test(l)) - 1]) && !/\*/.test(agentLabels.find((l) => /Agent Code/.test(l)) || '*') && !agentLabels.some((l) => /Valid/.test(l)), agentLabels.join('|'))
   await field(/Agent Code/).fill(`${RUN}-AG`)
   await page.waitForFunction(() => [...document.querySelectorAll('div.fixed select')].some((s) => s.options.length > 100), null, { timeout: 15000 })
   await field(/^Country/).selectOption('China')
+  await field(/^City/).selectOption({ index: 1 })
   await save()
   check('Agent saves with a country', await vis(rowOf(`${RUN}-AG`).filter({ hasText: 'China' })))
   cleanup.push('/master/agents')
@@ -148,9 +173,12 @@ try {
   await openNew('Party')
   await field(/Party Type/).selectOption('notify')
   await field(/^Name/).fill(`${RUN} Notify Co`)
-  await field(/Party Code/).fill(`${RUN}-PT`)
+  const partyLabels = (await modal().locator('label').allTextContents()).join('|')
+  check('Party form has Country and no Party Code / Contract Type / Valid From / Valid To', /Country/.test(partyLabels) && !/Party Code|Contract Type|Valid From|Valid To/.test(partyLabels), partyLabels)
+  await page.waitForFunction(() => [...document.querySelectorAll('div.fixed select')].some((s) => s.options.length > 100), null, { timeout: 15000 })
+  await field(/^Country/).selectOption('Egypt')
   await save()
-  check('Party saves; table shows its type', await vis(rowOf(`${RUN}-PT`).filter({ hasText: 'Notify' })))
+  check('Party saves with a country; table shows its type', await vis(rowOf(`${RUN} Notify Co`).filter({ hasText: 'Notify' }).filter({ hasText: 'Egypt' })))
   cleanup.push('/master/parties')
 
   await tab('Packages').click()

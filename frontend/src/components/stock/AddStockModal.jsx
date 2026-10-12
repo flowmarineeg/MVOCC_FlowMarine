@@ -37,7 +37,7 @@ export default function AddStockModal({ isOpen, onClose, onAdded, containerTypes
     e.preventDefault()
     setError('')
     if (!containerType || !nvocc || !depot) {
-      setError('Select an NVOCC, a depot, and a container type')
+      setError('Select a carrier, a depot, and a container type')
       return
     }
     const qty = Number(quantity)
@@ -82,7 +82,7 @@ export default function AddStockModal({ isOpen, onClose, onAdded, containerTypes
               </button>
             </div>
             <form onSubmit={handleSubmit} className="space-y-4">
-              <Select label="NVOCC" options={nvoccOptions} value={nvocc} onChange={setNvocc} placeholder="Select NVOCC" required />
+              <Select label="Carrier" options={nvoccOptions} value={nvocc} onChange={setNvocc} placeholder="Select carrier" required />
               <Select label="Depot" options={depotOptions} value={depot} onChange={setDepot} placeholder="Select depot" required />
               <Select label="Container Type" options={typeOptions} value={containerType} onChange={setContainerType} placeholder="Select container type" required />
               <div>

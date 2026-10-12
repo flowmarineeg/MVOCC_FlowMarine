@@ -2,7 +2,7 @@ import mongoose from 'mongoose'
 import { body } from 'express-validator'
 
 // Shared "party" shape used by Nvocc, VesselOperator, Depot, Agent and Party
-// master data: identity + tax/registration + contract validity + contact rows.
+// master data: identity + country/city/address + tax/registration + contact rows.
 
 export const CONTRACT_TYPES = ['Contract', 'Spot']
 
@@ -13,15 +13,21 @@ export const contactSchema = new mongoose.Schema({
   phone: { type: String, trim: true },
 })
 
-export const partyFields = {
+// Identity + location + contacts. No contract block: Party and VO use this alone;
+// Carrier (NVOCC), Depot and Agent add `contractTypeField` on top. The contract
+// valid-from / valid-to dates no longer exist on any party-shaped entity.
+export const basePartyFields = {
+  country: { type: String, trim: true },
+  city: { type: String, trim: true },
   address: { type: String, trim: true },
   taxNumber: { type: String, trim: true },
   registrationNumber: { type: String, trim: true },
+  contacts: { type: [contactSchema], default: [] },
+}
+
+export const contractTypeField = {
   // '' is allowed so a form that clears the select doesn't fail the enum check.
   contractType: { type: String, enum: [...CONTRACT_TYPES, ''] },
-  contractValidFrom: { type: Date },
-  contractValidTo: { type: Date },
-  contacts: { type: [contactSchema], default: [] },
 }
 
 export const contactRules = [
@@ -32,19 +38,15 @@ export const contactRules = [
   body('contacts.*.phone').optional().trim(),
 ]
 
-export const partyRules = [
+export const basePartyRules = [
+  body('country').optional().trim(),
+  body('city').optional().trim(),
   body('address').optional().trim(),
   body('taxNumber').optional().trim(),
   body('registrationNumber').optional().trim(),
-  body('contractType').optional({ checkFalsy: true }).isIn(CONTRACT_TYPES).withMessage('Contract type must be Contract or Spot'),
-  body('contractValidFrom').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid contract valid-from date'),
-  body('contractValidTo')
-    .optional({ checkFalsy: true })
-    .isISO8601().withMessage('Invalid contract valid-to date')
-    .custom((to, { req }) => {
-      const from = req.body.contractValidFrom
-      if (from && new Date(to) < new Date(from)) throw new Error('Contract valid-to must not be before valid-from')
-      return true
-    }),
   ...contactRules,
+]
+
+export const contractTypeRules = [
+  body('contractType').optional({ checkFalsy: true }).isIn(CONTRACT_TYPES).withMessage('Contract type must be Contract or Spot'),
 ]

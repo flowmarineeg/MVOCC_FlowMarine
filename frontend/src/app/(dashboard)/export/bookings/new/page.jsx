@@ -76,7 +76,7 @@ function NewBookingPageInner() {
     Promise.all([
       masterDataApi.getPorts(),
       masterDataApi.getContainerTypes(),
-      masterDataApi.getCarriers(),
+      masterDataApi.getVesselOperators(),
       masterDataApi.getNvoccs(),
       masterDataApi.getDepots(),
       stockApi.getStockMapByType(),

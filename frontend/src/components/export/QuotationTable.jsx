@@ -18,7 +18,7 @@ export default function QuotationTable({ quotations = [], canUpdate = false, can
             <th className="px-4 py-3">Client</th>
             <th className="px-4 py-3">POL</th>
             <th className="px-4 py-3">POD</th>
-            <th className="px-4 py-3">NVOCC</th>
+            <th className="px-4 py-3">Carrier</th>
             <th className="px-4 py-3">Margin</th>
             <th className="px-4 py-3">Status</th>
             <th className="px-4 py-3 text-right">Actions</th>

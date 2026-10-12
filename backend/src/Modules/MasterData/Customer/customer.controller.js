@@ -40,3 +40,25 @@ export const remove = async (req, res, next) => {
     res.json({ success: true, message: 'Customer deleted' })
   } catch (err) { next(err) }
 }
+
+export const uploadCertificate = async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'Choose a PDF or image to upload' })
+    const data = await service.setCertificate(req.params.id, req.params.kind, req.file)
+    res.status(201).json({ success: true, data })
+  } catch (err) { next(err) }
+}
+
+export const deleteCertificate = async (req, res, next) => {
+  try {
+    const data = await service.removeCertificate(req.params.id, req.params.kind)
+    res.json({ success: true, data })
+  } catch (err) { next(err) }
+}
+
+export const downloadCertificate = async (req, res, next) => {
+  try {
+    const file = await service.getCertificate(req.params.id, req.params.kind)
+    res.download(file.path, file.fileName)
+  } catch (err) { next(err) }
+}

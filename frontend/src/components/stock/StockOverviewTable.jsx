@@ -10,7 +10,7 @@ export default function StockOverviewTable({ rows = [], onView }) {
         <thead>
           <tr className="border-b-2 border-ink text-left font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
             <th className="px-4 py-3">Container Type</th>
-            <th className="px-4 py-3">NVOCC</th>
+            <th className="px-4 py-3">Carrier</th>
             <th className="px-4 py-3">Depot</th>
             <th className="px-4 py-3">Available</th>
             <th className="px-4 py-3">Total</th>

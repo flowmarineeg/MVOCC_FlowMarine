@@ -1,5 +1,6 @@
 import VesselOperator from './vesselOperator.model.js'
 import Vessel from '../Vessel/vessel.model.js'
+import Booking from '../../Export/Booking/booking.model.js'
 
 export const getAllVesselOperators = async ({ activeOnly } = {}) => {
   const filter = activeOnly ? { isActive: true } : {}
@@ -24,9 +25,15 @@ export const toggleActive = async (id) => {
 export const deleteVesselOperator = async (id) => {
   const vo = await VesselOperator.findById(id)
   if (!vo) throw Object.assign(new Error('Vessel operator not found'), { statusCode: 404 })
-  const usedByVessels = await Vessel.countDocuments({ vesselOperator: id })
+  const [usedByVessels, usedByBookings] = await Promise.all([
+    Vessel.countDocuments({ vesselOperator: id }),
+    Booking.countDocuments({ carrier: id }),
+  ])
   if (usedByVessels > 0) {
     throw Object.assign(new Error(`Vessel operator has ${usedByVessels} vessel(s)`), { statusCode: 409 })
+  }
+  if (usedByBookings > 0) {
+    throw Object.assign(new Error(`Vessel operator is used by ${usedByBookings} booking(s)`), { statusCode: 409 })
   }
   await vo.deleteOne()
   return vo

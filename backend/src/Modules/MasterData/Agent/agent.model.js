@@ -1,5 +1,5 @@
 import mongoose from 'mongoose'
-import { partyFields } from '../_shared/party.shared.js'
+import { basePartyFields, contractTypeField } from '../_shared/party.shared.js'
 
 const agentSchema = new mongoose.Schema(
   {
@@ -17,11 +17,8 @@ const agentSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
-    country: {
-      type: String,
-      trim: true,
-    },
-    ...partyFields,
+    ...basePartyFields,
+    ...contractTypeField,
     isActive: {
       type: Boolean,
       default: true,

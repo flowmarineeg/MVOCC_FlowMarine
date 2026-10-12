@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useToast } from '@/components/ui/Toast'
 import Select from '@/components/ui/Select'
 import ContainerSelector from './ContainerSelector'
 import ProfitabilitySummary from './ProfitabilitySummary'
@@ -89,12 +90,10 @@ function emptyForm(currentUser) {
     contactEmail: '',
     clientReferenceNo: '',
     inquiryDate: toDateInput(new Date()),
-    salesRep: currentUser?.name || currentUser?.email || '',
+    salesRep: defaultSalesRep(currentUser),
     commodity: '',
     hsCode: '',
     containers: [{ containerType: '', quantity: 1 }],
-    grossWeight: '',
-    cbm: '',
     isDangerous: false,
     unNumber: '',
     pol: '',
@@ -129,15 +128,15 @@ function buildInitialForm(quotation, currentUser) {
     contactEmail: quotation.contactEmail || '',
     clientReferenceNo: quotation.clientReferenceNo || '',
     inquiryDate: toDateInput(quotation.inquiryDate) || toDateInput(new Date()),
-    salesRep: quotation.salesRep || currentUser?.name || currentUser?.email || '',
+    salesRep: quotation.salesRep || defaultSalesRep(currentUser),
     commodity: quotation.commodity || '',
     hsCode: quotation.hsCode || '',
     containers: (quotation.containers || []).map((c) => ({
       containerType: c.containerType?._id || c.containerType,
       quantity: c.quantity,
+      grossWeight: c.grossWeight ?? '',
+      netWeight: c.netWeight ?? '',
     })),
-    grossWeight: quotation.grossWeight ?? '',
-    cbm: quotation.cbm ?? '',
     isDangerous: !!quotation.isDangerous,
     unNumber: quotation.unNumber || '',
     pol: quotation.pol?._id || quotation.pol || '',
@@ -170,6 +169,13 @@ const PAYMENT_TERMS = ['Freight Prepaid', 'Freight Collect']
 
 const LOCKED_STATUSES = ['sent', 'approved', 'rejected']
 
+// Sales Representative only lists users whose role is a sales role (role name
+// contains "sales", e.g. Sales / Sales Manager).
+const isSalesUser = (u) => /sales/i.test(u?.role?.name || '')
+const userLabel = (u) => (u?.name && u?.email ? `${u.name} (${u.email})` : undefined)
+const userValue = (u) => u?.name || u?.email || ''
+const defaultSalesRep = (u) => (isSalesUser(u) ? userValue(u) : '')
+
 export default function QuotationForm({
   quotation = null,
   customers = [],
@@ -192,6 +198,13 @@ export default function QuotationForm({
   const [newClientOpen, setNewClientOpen] = useState(false)
   const [creatingCustomer, setCreatingCustomer] = useState(false)
   const [rateNote, setRateNote] = useState('')
+  const toast = useToast()
+  // MSDS: files already saved on the quotation + files picked but not uploaded
+  // yet (the page uploads them right after the quotation itself is saved).
+  const [savedMsds, setSavedMsds] = useState(quotation?.msdsFiles || [])
+  const [pendingMsds, setPendingMsds] = useState([])
+  const [msdsBusy, setMsdsBusy] = useState(false)
+  const msdsCount = savedMsds.length + pendingMsds.length
 
   const set = (field) => (v) => setForm((f) => ({ ...f, [field]: v }))
   const setInput = (field) => (e) => set(field)(e.target.value)
@@ -201,9 +214,10 @@ export default function QuotationForm({
   const nvoccOptions = nvoccs.map((n) => ({ value: n._id, label: `${n.code} — ${n.name}` }))
   const selectedCustomer = customers.find((c) => c._id === form.customer) || null
 
-  // Sales rep: the logged-in user by default, any team member selectable. The
-  // stored value stays a plain string (name, else email); a legacy free-text
-  // value on an old quotation is kept selectable instead of being blanked.
+  // Sales rep: only users with a sales role are offered. The logged-in user is
+  // the default when they are one. The stored value stays a plain string (name,
+  // else email); a legacy value on an old quotation (a non-sales user or free
+  // text) is kept selectable instead of being blanked.
   const salesRepOptions = (() => {
     const seen = new Set()
     const out = []
@@ -212,9 +226,8 @@ export default function QuotationForm({
       seen.add(value)
       out.push({ value, label: label || value })
     }
-    const labelFor = (m) => (m?.name && m?.email ? `${m.name} (${m.email})` : undefined)
-    add(currentUser?.name || currentUser?.email, labelFor(currentUser))
-    teamMembers.forEach((m) => add(m.name || m.email, labelFor(m)))
+    if (isSalesUser(currentUser)) add(userValue(currentUser), userLabel(currentUser))
+    teamMembers.filter(isSalesUser).forEach((m) => add(userValue(m), userLabel(m)))
     add(form.salesRep)
     return out
   })()
@@ -267,7 +280,8 @@ export default function QuotationForm({
     setForm((f) => ({
       ...f,
       [`buying${kind}`]: next,
-      [`selling${kind}`]: mirrorBuyingToSelling(f[`buying${kind}`], next, f[`selling${kind}`], lines),
+      // Selling Destination is view-only, so removals on Buying are mirrored too.
+      [`selling${kind}`]: mirrorBuyingToSelling(f[`buying${kind}`], next, f[`selling${kind}`], lines, { mirrorRemovals: kind === 'Destination' }),
     }))
 
   const handleSelectCustomer = (id) => {
@@ -318,7 +332,7 @@ export default function QuotationForm({
         freeTimeBuyingDays: suggestion.freeTimeBuyingDays ?? '',
         rateSourceReference: suggestion.rateSourceReference || '',
       }))
-      setRateNote(`Prefilled from the last quotation (${suggestion.quotationNo}) using this NVOCC — edit freely, some rates are Spot.`)
+      setRateNote(`Prefilled from the last quotation (${suggestion.quotationNo}) using this carrier — edit freely, some rates are Spot.`)
     } catch {
       // best-effort suggestion only — silently skip if the lookup fails
     }
@@ -338,11 +352,40 @@ export default function QuotationForm({
     return Object.keys(next).length === 0
   }
 
+  const addMsdsFiles = (e) => {
+    const picked = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (picked.length === 0) return
+    const room = Math.max(quotationApi.MSDS_MAX_FILES - msdsCount, 0)
+    if (picked.length > room) toast(`MSDS is limited to ${quotationApi.MSDS_MAX_FILES} files — ${room > 0 ? `only the first ${room} added` : 'remove one first'}`, 'error')
+    setPendingMsds((p) => [...p, ...picked.slice(0, room)])
+  }
+
+  const removeSavedMsds = async (file) => {
+    setMsdsBusy(true)
+    try {
+      const updated = await quotationApi.deleteMsds(quotation._id, file._id)
+      setSavedMsds(updated.msdsFiles || [])
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setMsdsBusy(false)
+    }
+  }
+
   const handleSubmit = (e) => {
     e.preventDefault()
     if (!validate()) return
 
-    const containers = form.containers.filter((c) => c.containerType && c.quantity >= 1)
+    const containers = form.containers
+      .filter((c) => c.containerType && c.quantity >= 1)
+      .map((c) => ({
+        containerType: c.containerType,
+        quantity: c.quantity,
+        // null clears a weight on edit; blank rows just omit it
+        grossWeight: c.grossWeight === '' || c.grossWeight === undefined ? null : Number(c.grossWeight),
+        netWeight: c.netWeight === '' || c.netWeight === undefined ? null : Number(c.netWeight),
+      }))
 
     const payload = {
       customerType: form.customerType,
@@ -357,8 +400,6 @@ export default function QuotationForm({
       commodity: form.commodity.trim(),
       hsCode: form.hsCode.trim(),
       containers,
-      grossWeight: form.grossWeight === '' ? undefined : Number(form.grossWeight),
-      cbm: form.cbm === '' ? undefined : Number(form.cbm),
       isDangerous: form.isDangerous,
       unNumber: form.isDangerous ? form.unNumber.trim() : undefined,
       pol: form.pol,
@@ -381,7 +422,8 @@ export default function QuotationForm({
       paymentTerms: form.paymentTerms || undefined,
     }
 
-    onSubmit(payload)
+    // Switching Dangerous Goods off discards the saved MSDS files server-side.
+    onSubmit(payload, form.isDangerous ? pendingMsds : [])
   }
 
   return (
@@ -562,12 +604,12 @@ export default function QuotationForm({
           <h2 className={sectionTitleCls}>3. Containers & Cargo</h2>
           <div>
             <label className={labelCls}>Container Type & Quantity <span className="text-rust">*</span></label>
-            <ContainerSelector clearable containerTypes={containerTypes} showStock={false} value={form.containers} onChange={set('containers')} />
+            <ContainerSelector clearable weights containerTypes={containerTypes} showStock={false} value={form.containers} onChange={set('containers')} />
             {errors.containers && <p className="mt-1 font-mono text-xs text-brick">{errors.containers}</p>}
           </div>
 
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
               <label className={labelCls}>Commodity <span className="text-rust">*</span></label>
               <input
@@ -581,14 +623,6 @@ export default function QuotationForm({
             <div>
               <label className={labelCls}>HS Code (preliminary)</label>
               <input value={form.hsCode} onChange={setInput('hsCode')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-            <div>
-              <label className={labelCls}>Gross Weight (kg, estimated)</label>
-              <input type="number" min="0" value={form.grossWeight} onChange={setInput('grossWeight')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
-            <div>
-              <label className={labelCls}>CBM (estimated)</label>
-              <input type="number" min="0" value={form.cbm} onChange={setInput('cbm')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
           </div>
 
@@ -606,6 +640,46 @@ export default function QuotationForm({
                 <input value={form.unNumber} onChange={setInput('unNumber')} className={`${inputCls} font-mono ${errors.unNumber ? 'border-brick' : 'border-ink/30'}`} />
                 {errors.unNumber && <p className="mt-1 font-mono text-xs text-brick">{errors.unNumber}</p>}
               </div>
+            </div>
+          )}
+          {form.isDangerous && (
+            <div>
+              <label className={labelCls}>
+                MSDS <span className="normal-case text-muted/70">(PDF or image, up to {quotationApi.MSDS_MAX_FILES} files, 10 MB each)</span>
+              </label>
+              {(savedMsds.length > 0 || pendingMsds.length > 0) && (
+                <ul className="mb-2 divide-y divide-line border border-ink/25 bg-card text-sm">
+                  {savedMsds.map((f) => (
+                    <li key={f._id} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <button type="button" onClick={() => quotationApi.downloadMsds(quotation._id, f).catch((err) => toast(err.message, 'error'))} className="truncate text-left text-rust hover:text-rust-dark">
+                        {f.fileName}
+                      </button>
+                      <button type="button" disabled={msdsBusy} onClick={() => removeSavedMsds(f)} className="font-mono text-[10px] uppercase tracking-wide text-muted hover:text-brick disabled:opacity-40">
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                  {pendingMsds.map((f, i) => (
+                    <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <span className="truncate text-ink">{f.name} <span className="text-muted">(uploads on save)</span></span>
+                      <button type="button" onClick={() => setPendingMsds((p) => p.filter((_, idx) => idx !== i))} className="font-mono text-[10px] uppercase tracking-wide text-muted hover:text-brick">
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {msdsCount < quotationApi.MSDS_MAX_FILES ? (
+                <input
+                  type="file"
+                  multiple
+                  accept="application/pdf,image/jpeg,image/png,image/webp"
+                  onChange={addMsdsFiles}
+                  className={`${inputCls} border-ink/30 file:mr-3 file:border-0 file:bg-ink file:px-3 file:py-1 file:text-xs file:font-semibold file:text-paper`}
+                />
+              ) : (
+                <p className="font-mono text-xs text-muted">Maximum of {quotationApi.MSDS_MAX_FILES} MSDS files reached.</p>
+              )}
             </div>
           )}
 
@@ -630,10 +704,10 @@ export default function QuotationForm({
           </div>
         </div>
 
-        {/* 5. NVOCC */}
+        {/* 5. Carrier (NVOCC master data) */}
         <div className={sectionCls}>
-          <h2 className={sectionTitleCls}>5. NVOCC (Master Data)</h2>
-          <Select clearable label="Select NVOCC" placeholder="Choose an NVOCC" searchable options={nvoccOptions} value={form.nvocc} onChange={handleNvoccChange} />
+          <h2 className={sectionTitleCls}>5. Carrier (Master Data)</h2>
+          <Select clearable label="Select Carrier" placeholder="Choose a carrier" searchable options={nvoccOptions} value={form.nvocc} onChange={handleNvoccChange} />
           {rateNote && <p className="font-mono text-xs text-signal">{rateNote}</p>}
           {selectedNvocc && (
             <div className="grid grid-cols-1 gap-x-6 gap-y-3 border border-ink/20 bg-paper/60 p-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -650,12 +724,12 @@ export default function QuotationForm({
                 <p className="text-sm text-ink">{selectedNvocc.contractType || '-'}</p>
               </div>
               <div>
-                <span className={labelCls}>Contract Valid From</span>
-                <p className="font-mono text-sm text-ink">{selectedNvocc.contractValidFrom ? new Date(selectedNvocc.contractValidFrom).toLocaleDateString() : '-'}</p>
+                <span className={labelCls}>Country</span>
+                <p className="text-sm text-ink">{selectedNvocc.country || '-'}</p>
               </div>
               <div>
-                <span className={labelCls}>Contract Valid To</span>
-                <p className="font-mono text-sm text-ink">{selectedNvocc.contractValidTo ? new Date(selectedNvocc.contractValidTo).toLocaleDateString() : '-'}</p>
+                <span className={labelCls}>City</span>
+                <p className="text-sm text-ink">{selectedNvocc.city || '-'}</p>
               </div>
               <div>
                 <span className={labelCls}>Trade Lane</span>
@@ -726,7 +800,7 @@ export default function QuotationForm({
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
-              <label className={labelCls}>Free Time Buying (days)</label>
+              <label className={labelCls}>Free Time</label>
               <input type="number" min="0" value={form.freeTimeBuyingDays} onChange={setInput('freeTimeBuyingDays')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
             <div>
@@ -753,6 +827,7 @@ export default function QuotationForm({
             lines={DESTINATION_LINES}
             value={form.sellingDestination}
             onChange={set('sellingDestination')}
+            readOnly
             sizes={sizes}
             qtyBySize={qtyBySize}
           />

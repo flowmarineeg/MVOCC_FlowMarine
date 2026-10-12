@@ -60,7 +60,7 @@ export default function StockPage() {
     { value: '', label: 'All container types' },
     ...containerTypes.map((t) => ({ value: t._id, label: `${t.code} — ${t.label}` })),
   ]
-  const nvoccOptions = [{ value: '', label: 'All NVOCCs' }, ...nvoccs.map((n) => ({ value: n._id, label: n.name }))]
+  const nvoccOptions = [{ value: '', label: 'All carriers' }, ...nvoccs.map((n) => ({ value: n._id, label: n.name }))]
   const depotOptions = [{ value: '', label: 'All depots' }, ...depots.map((d) => ({ value: d._id, label: d.name }))]
 
   return (
@@ -69,7 +69,7 @@ export default function StockPage() {
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Reference Data</p>
           <h1 className="mt-1 font-display text-3xl font-bold uppercase tracking-wide text-ink">Stock</h1>
-          <p className="mt-1 text-sm text-muted">Container inventory by type and NVOCC</p>
+          <p className="mt-1 text-sm text-muted">Container inventory by type and carrier</p>
         </div>
         {canCreate && (
           <div className="flex flex-wrap gap-2 self-start">
@@ -90,7 +90,7 @@ export default function StockPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:max-w-3xl sm:grid-cols-3">
-        <Select label="NVOCC" options={nvoccOptions} value={filterNvocc} onChange={setFilterNvocc} placeholder="All NVOCCs" />
+        <Select label="Carrier" options={nvoccOptions} value={filterNvocc} onChange={setFilterNvocc} placeholder="All carriers" />
         <Select label="Depot" options={depotOptions} value={filterDepot} onChange={setFilterDepot} placeholder="All depots" />
         <Select label="Container Type" options={typeOptions} value={filterType} onChange={setFilterType} placeholder="All container types" />
       </div>

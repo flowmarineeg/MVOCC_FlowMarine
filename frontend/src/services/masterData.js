@@ -7,13 +7,6 @@ export const updateContainerType = (id, data) => api.put(`/master/container-type
 export const toggleContainerType = (id) => api.patch(`/master/container-types/${id}/toggle`).then((r) => r.data.data)
 export const deleteContainerType = (id) => api.delete(`/master/container-types/${id}`).then((r) => r.data)
 
-export const getCarriers = (activeOnly = true) =>
-  api.get('/master/carriers', { params: { active: activeOnly } }).then((r) => r.data.data)
-export const createCarrier = (data) => api.post('/master/carriers', data).then((r) => r.data.data)
-export const updateCarrier = (id, data) => api.put(`/master/carriers/${id}`, data).then((r) => r.data.data)
-export const toggleCarrier = (id) => api.patch(`/master/carriers/${id}/toggle`).then((r) => r.data.data)
-export const deleteCarrier = (id) => api.delete(`/master/carriers/${id}`).then((r) => r.data)
-
 export const getNvoccs = (activeOnly = true) =>
   api.get('/master/nvoccs', { params: { active: activeOnly } }).then((r) => r.data.data)
 export const createNvocc = (data) => api.post('/master/nvoccs', data).then((r) => r.data.data)
@@ -79,8 +72,57 @@ export const deleteParty = (id) => api.delete(`/master/parties/${id}`).then((r) 
 
 export const getCustomers = (activeOnly = true) =>
   api.get('/master/customers', { params: { active: activeOnly } }).then((r) => r.data.data)
-export const createCustomer = (data) => api.post('/master/customers', data).then((r) => r.data.data)
-export const updateCustomer = (id, data) => api.put(`/master/customers/${id}`, data).then((r) => r.data.data)
+// Customer certificates are separate multipart calls (JSON for the record, then
+// one upload per chosen file); the file keys are kept out of the JSON body.
+const CUSTOMER_FILE_KINDS = { taxCertificateFile: 'tax', registrationCertificateFile: 'registration' }
+
+const splitCustomerFiles = (data) => {
+  const json = { ...data }
+  const files = []
+  Object.entries(CUSTOMER_FILE_KINDS).forEach(([key, kind]) => {
+    if (json[key] instanceof File) files.push({ kind, file: json[key] })
+    delete json[key]
+  })
+  return { json, files }
+}
+
+const uploadCustomerFiles = async (id, files) => {
+  try {
+    for (const { kind, file } of files) {
+      const fd = new FormData()
+      fd.append('customerFile', file)
+      await api.post(`/master/customers/${id}/files/${kind}`, fd)
+    }
+  } catch (err) {
+    throw new Error(`Customer saved, but a certificate upload failed: ${err.message}. Edit the customer to attach it again.`)
+  }
+}
+
+export const createCustomer = async (data) => {
+  const { json, files } = splitCustomerFiles(data)
+  const customer = await api.post('/master/customers', json).then((r) => r.data.data)
+  await uploadCustomerFiles(customer._id, files)
+  return customer
+}
+export const updateCustomer = async (id, data) => {
+  const { json, files } = splitCustomerFiles(data)
+  const customer = await api.put(`/master/customers/${id}`, json).then((r) => r.data.data)
+  await uploadCustomerFiles(id, files)
+  return customer
+}
+export const downloadCustomerFile = async (customer, kind) => {
+  const file = customer[kind === 'tax' ? 'taxCertificateFile' : 'registrationCertificateFile']
+  const res = await api.get(`/master/customers/${customer._id}/files/${kind}`, { responseType: 'blob' })
+  const url = window.URL.createObjectURL(new Blob([res.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', file?.fileName || `${kind}-certificate`)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
+export const deleteCustomerFile = (customer, kind) => api.delete(`/master/customers/${customer._id}/files/${kind}`).then((r) => r.data.data)
 export const toggleCustomer = (id) => api.patch(`/master/customers/${id}/toggle`).then((r) => r.data.data)
 export const deleteCustomer = (id) => api.delete(`/master/customers/${id}`).then((r) => r.data)
 
@@ -89,26 +131,45 @@ export const deleteCustomer = (id) => api.delete(`/master/customers/${id}`).then
 export const CUSTOMER_FORM_FIELDS = [
   { key: 'date', label: 'Date', type: 'date', required: false },
   { key: 'name', label: 'Name' },
-  { key: 'address', label: 'Address', required: false, table: false },
   { key: 'country', label: 'Country', type: 'country', required: false },
   { key: 'governorate', label: 'Governorate', type: 'governorate', countryKey: 'country', required: false },
+  { key: 'address', label: 'Address', required: false, table: false },
+  { key: 'taxNumber', label: 'Tax Number', required: false },
+  { key: 'taxRegister', label: 'Registration Number', required: false },
   { key: 'phone', label: 'Phone', required: false },
   { key: 'email', label: 'Email', type: 'email', required: false },
-  { key: 'taxNumber', label: 'Tax Number', required: false },
-  { key: 'taxRegister', label: 'Tax Register', required: false },
+  {
+    key: 'taxCertificateFile', label: 'Tax Certification', type: 'file', required: false, table: false,
+    download: (customer) => downloadCustomerFile(customer, 'tax'), remove: (customer) => deleteCustomerFile(customer, 'tax'),
+  },
+  {
+    key: 'registrationCertificateFile', label: 'Registration Certification', type: 'file', required: false, table: false,
+    download: (customer) => downloadCustomerFile(customer, 'registration'), remove: (customer) => deleteCustomerFile(customer, 'registration'),
+  },
   { key: 'contacts', label: 'Contacts', type: 'contacts' },
 ]
 
-// Shared by NVOCC, VO, Depot, Agent and Parties: identity + tax/registration +
-// contract validity + contact rows. Mirrors backend _shared/party.shared.js.
-export const partyFormFields = ({ codeLabel = 'Code' } = {}) => [
+// Shared by Carrier (NVOCC), VO, Depot, Agent and Parties: identity + address +
+// tax/registration + contact rows. Mirrors backend _shared/party.shared.js.
+// Options trim it per entity:
+//   codeRequired:false → code stays but is optional (Agent)
+//   code:false         → no code field at all (Party)
+//   contractType:true  → a Contract Type select (Carrier, Depot, Agent; not VO / Party)
+//   location:true      → Country + City dropdowns right before Address
+//   country:true       → just a Country dropdown under the name (Party)
+export const partyFormFields = ({ codeLabel = 'Code', codeRequired = true, code = true, contractType = false, location = false, country = false } = {}) => [
   { key: 'name', label: 'Name' },
-  { key: 'code', label: codeLabel },
+  ...(country ? [{ key: 'country', label: 'Country', type: 'country', required: false }] : []),
+  ...(code ? [{ key: 'code', label: codeLabel, required: codeRequired }] : []),
+  ...(location
+    ? [
+        { key: 'country', label: 'Country', type: 'country', required: false },
+        { key: 'city', label: 'City', type: 'city', countryKey: 'country', required: false },
+      ]
+    : []),
   { key: 'address', label: 'Address', required: false, table: false },
   { key: 'taxNumber', label: 'Tax Number', required: false },
   { key: 'registrationNumber', label: 'Registration Number', required: false, table: false },
-  { key: 'contractType', label: 'Contract Type', type: 'select', options: ['Contract', 'Spot'], required: false },
-  { key: 'contractValidFrom', label: 'Valid From', type: 'date', required: false },
-  { key: 'contractValidTo', label: 'Valid To', type: 'date', required: false },
+  ...(contractType ? [{ key: 'contractType', label: 'Contract Type', type: 'select', options: ['Contract', 'Spot'], required: false }] : []),
   { key: 'contacts', label: 'Contacts', type: 'contacts' },
 ]

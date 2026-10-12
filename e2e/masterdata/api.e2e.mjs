@@ -53,7 +53,7 @@ try {
 
   // ─── NVOCC ───────────────────────────────────────────────────────────
   const nv = {
-    name: `${RUN} NVOCC`, code: `${RUN}-NV`, address: '1 Test St', taxNumber: 'TAX-1', registrationNumber: 'REG-1',
+    name: `${RUN} NVOCC`, code: `${RUN}-NV`, address: '1 Test St', country: 'Egypt', city: 'Cairo', taxNumber: 'TAX-1', registrationNumber: 'REG-1',
     contractType: 'Contract', contractValidFrom: '2026-01-01', contractValidTo: '2026-12-31', contacts: contactsIn,
     localAgentName: 'should be dropped', localAgentContact: 'should be dropped',
   }
@@ -64,8 +64,8 @@ try {
   check('NVOCC stores 2 contact rows (name/title/email/phone)', nvocc?.contacts?.length === 2 && nvocc.contacts[0].title === 'Ops Manager' && nvocc.contacts[1].phone === '+20100000002', JSON.stringify(nvocc?.contacts))
   check('NVOCC no longer stores localAgentName / localAgentContact', nvocc?.localAgentName === undefined && nvocc?.localAgentContact === undefined)
 
-  r = await call('POST', '/master/nvoccs', { ...nv, code: `${RUN}-NV2`, contractValidTo: '2025-01-01' })
-  check('NVOCC valid-to before valid-from -> 400', r.status === 400, r.status)
+  check('NVOCC stores country + city', nvocc?.country === 'Egypt' && nvocc?.city === 'Cairo', JSON.stringify(nvocc))
+  check('NVOCC no longer stores contract valid-from / valid-to (fields removed)', nvocc?.contractValidFrom === undefined && nvocc?.contractValidTo === undefined && nvocc?.contractType === 'Contract', JSON.stringify(nvocc))
   r = await call('POST', '/master/nvoccs', { ...nv, code: `${RUN}-NV3`, contacts: [{ name: '', email: 'x@y.com' }] })
   check('NVOCC contact row without a name -> 400', r.status === 400, r.status)
   r = await call('POST', '/master/nvoccs', { ...nv, code: `${RUN}-NV4`, contacts: [{ name: 'Z', email: 'not-an-email' }] })
@@ -78,7 +78,7 @@ try {
 
   // ─── Vessel Operator (VO) + Vessel ───────────────────────────────────
   r = await make('/master/vessel-operators', { name: `${RUN} VO`, code: `${RUN}-VO`, address: 'Port Said', taxNumber: 'T', registrationNumber: 'R', contractType: 'Spot', contacts: contactsIn })
-  check('VO create with NVOCC-style inputs -> 201', r.status === 201 && r.json.data.contacts.length === 2, msg(r))
+  check('VO create with NVOCC-style inputs -> 201; contract type + dates are not stored', r.status === 201 && r.json.data.contacts.length === 2 && r.json.data.contractType === undefined && r.json.data.contractValidFrom === undefined, msg(r))
   const vo = r.json?.data
   r = await call('POST', '/master/vessel-operators', { name: 'dup', code: `${RUN}-VO` })
   check('VO duplicate code -> 409', r.status === 409, `${r.status} ${msg(r)}`)
@@ -101,7 +101,7 @@ try {
 
   // ─── Depot ───────────────────────────────────────────────────────────
   r = await make('/master/depots', { name: `${RUN} Depot`, code: `${RUN}-DP`, address: 'Yard 1', taxNumber: 'T', registrationNumber: 'R', contractType: 'Contract', contractValidFrom: '2026-02-01', contractValidTo: '2026-03-01', contacts: contactsIn })
-  check('Depot create with NVOCC-style inputs + contact rows -> 201', r.status === 201 && r.json.data.contacts.length === 2 && r.json.data.registrationNumber === 'R', msg(r))
+  check('Depot create with contact rows -> 201; contract type kept, valid-from/to dropped', r.status === 201 && r.json.data.contacts.length === 2 && r.json.data.registrationNumber === 'R' && r.json.data.contractType === 'Contract' && r.json.data.contractValidFrom === undefined, msg(r))
   r = await call('GET', '/master/depots')
   check('existing depots still list (backward compatible, contacts default [])', r.status === 200 && r.json.data.every((d) => Array.isArray(d.contacts)), msg(r))
 
@@ -112,11 +112,45 @@ try {
   if (r.status === 201) created.push(['/master/customers', r.json.data._id])
   check('Customer without the new fields still creates (all optional)', r.status === 201, msg(r))
 
+  // ─── Customer certificates (tax + registration) ──────────────────────
+  const custId = created.find(([p]) => p === '/master/customers')?.[1]
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+  const certForm = (name, bytes = PNG, mime = 'image/png') => { const fd = new FormData(); fd.append('customerFile', new Blob([bytes], { type: mime }), name); return fd }
+  const upload = async (kind, fd) => {
+    const res = await fetch(API + `/master/customers/${custId}/files/${kind}`, { method: 'POST', headers: { cookie }, body: fd })
+    return { status: res.status, json: await res.json().catch(() => null) }
+  }
+  r = await upload('tax', certForm('tax.png'))
+  check('upload a tax certificate -> 201, stored on the customer', r.status === 201 && r.json.data.taxCertificateFile?.fileName === 'tax.png' && !r.json.data.registrationCertificateFile?.fileName, `${r.status} ${msg(r)}`)
+  r = await upload('registration', certForm('reg.png'))
+  check('upload a registration certificate -> 201, tax one untouched', r.status === 201 && r.json.data.registrationCertificateFile?.fileName === 'reg.png' && r.json.data.taxCertificateFile?.fileName === 'tax.png', `${r.status} ${msg(r)}`)
+  r = await upload('passport', certForm('x.png'))
+  check('unknown certificate kind -> 400', r.status === 400, r.status)
+  r = await upload('tax', certForm('fake.png', Buffer.from('plainly not an image')))
+  check('spoofed certificate (text sent as image/png) -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+  r = await upload('tax', certForm('note.txt', Buffer.from('hi'), 'text/plain'))
+  check('disallowed certificate type (text/plain) -> 400', r.status === 400, r.status)
+  const dl = await fetch(API + `/master/customers/${custId}/files/tax`, { headers: { cookie } })
+  check('certificate download streams the stored bytes (auth required)', dl.status === 200 && Buffer.from(await dl.arrayBuffer()).equals(PNG), dl.status)
+  check('certificate download without a session -> 401', (await fetch(API + `/master/customers/${custId}/files/tax`)).status === 401)
+  r = await call('PUT', `/master/customers/${custId}`, { name: `${RUN} Customer`, taxCertificateFile: { fileName: 'x', filePath: '../../../.env' } })
+  r = await call('GET', '/master/customers')
+  const cust = r.json.data.find((c) => c._id === custId)
+  check('certificate metadata cannot be injected through the JSON update', cust.taxCertificateFile.fileName === 'tax.png' && !cust.taxCertificateFile.filePath.includes('..'), JSON.stringify(cust.taxCertificateFile))
+  r = await upload('tax', certForm('tax2.png'))
+  check('uploading again replaces the certificate', r.status === 201 && r.json.data.taxCertificateFile.fileName === 'tax2.png', `${r.status} ${msg(r)}`)
+  r = await call('DELETE', `/master/customers/${custId}/files/tax`)
+  check('delete a certificate -> 200, registration one kept', r.status === 200 && !r.json.data.taxCertificateFile?.fileName && r.json.data.registrationCertificateFile?.fileName === 'reg.png', `${r.status} ${msg(r)}`)
+  r = await call('GET', `/master/customers/${custId}/files/tax`)
+  check('downloading a deleted certificate -> 404', r.status === 404, r.status)
+
   // ─── Agent ───────────────────────────────────────────────────────────
   r = await make('/master/agents', { name: `${RUN} Agent`, code: `${RUN}-AG`, country: 'China', address: 'Shanghai', taxNumber: 'T', registrationNumber: 'R', contractType: 'Spot', contacts: contactsIn })
   check('Agent create with NVOCC-style inputs + country -> 201', r.status === 201 && r.json.data.country === 'China' && r.json.data.contacts.length === 2, msg(r))
-  r = await call('POST', '/master/agents', { name: `${RUN} A2` })
-  check('Agent without a code -> 400', r.status === 400, r.status)
+  r = await make('/master/agents', { name: `${RUN} A2` })
+  check('Agent without a code -> 201 (code is optional)', r.status === 201 && !r.json.data.code, msg(r))
+  r = await make('/master/agents', { name: `${RUN} A3`, code: '  ' })
+  check('a second code-less (blank code) Agent is also fine (sparse unique index)', r.status === 201 && !r.json.data.code, msg(r))
   r = await call('POST', '/master/agents', { name: 'dup', code: `${RUN}-AG` })
   check('Agent duplicate code -> 409', r.status === 409, `${r.status} ${msg(r)}`)
   const agentId = created.find(([p]) => p === '/master/agents')?.[1]
@@ -124,15 +158,18 @@ try {
   check('Agent toggle -> inactive', r.status === 200 && r.json.data.isActive === false, msg(r))
 
   // ─── Party ───────────────────────────────────────────────────────────
-  const partyBody = (t, n) => ({ partyType: t, name: `${RUN} ${t}`, code: `${RUN}-P${n}`, address: 'A', contacts: [contactsIn[0]] })
-  r = await call('POST', '/master/parties', { ...partyBody('carrier', 0) })
+  const partyBody = (t) => ({ partyType: t, name: `${RUN} ${t}`, country: 'Egypt', address: 'A', contacts: [contactsIn[0]] })
+  r = await call('POST', '/master/parties', { ...partyBody('carrier') })
   check('Party with an invalid type -> 400', r.status === 400, r.status)
-  for (const [i, t] of ['shipper', 'consignee', 'notify'].entries()) {
-    r = await make('/master/parties', partyBody(t, i + 1))
-    check(`Party create (${t}) -> 201`, r.status === 201 && r.json.data.partyType === t, msg(r))
+  for (const t of ['shipper', 'consignee', 'notify']) {
+    r = await make('/master/parties', partyBody(t))
+    check(`Party create (${t}, no code, with country) -> 201`, r.status === 201 && r.json.data.partyType === t && r.json.data.country === 'Egypt' && !r.json.data.code, msg(r))
   }
+  r = await call('POST', '/master/parties', { ...partyBody('notify'), contractType: 'Contract', contractValidFrom: '2026-01-01' })
+  if (r.status === 201) created.push(['/master/parties', r.json.data._id])
+  check('Party ignores contract fields (not part of the schema)', r.status === 201 && !r.json.data.contractType && !r.json.data.contractValidFrom, msg(r))
   r = await call('GET', '/master/parties?partyType=notify')
-  check('GET /parties?partyType=notify filters by type', r.status === 200 && r.json.data.some((p) => p.code === `${RUN}-P3`) && r.json.data.every((p) => p.partyType === 'notify'), msg(r))
+  check('GET /parties?partyType=notify filters by type', r.status === 200 && r.json.data.some((p) => p.name === `${RUN} notify`) && r.json.data.every((p) => p.partyType === 'notify'), msg(r))
 
   // ─── Package ─────────────────────────────────────────────────────────
   r = await make('/master/packages', { name: `${RUN} Pallet` })
@@ -154,9 +191,9 @@ try {
   r = await call('GET', '/master/units?type=weight')
   check('GET /units?type=weight filters by type', r.status === 200 && r.json.data.some((u) => u.symbol === `${RUN}kg`) && r.json.data.every((u) => u.type === 'weight'), msg(r))
 
-  // ─── Carrier deliberately untouched ──────────────────────────────────
+  // ─── Old Carrier master data is gone ─────────────────────────────────
   r = await call('GET', '/master/carriers')
-  check('Carrier master data is unchanged and still served', r.status === 200 && Array.isArray(r.json.data), msg(r))
+  check('the old /master/carriers endpoint no longer exists', r.status === 404, r.status)
 
   // ─── Quotation's NVOCC populate still resolves ───────────────────────
   r = await call('GET', '/export/quotations?limit=1')

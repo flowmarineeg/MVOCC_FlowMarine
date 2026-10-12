@@ -96,7 +96,7 @@ export default function BookingDetailPage() {
     Promise.all([
       reload(),
       canReadBooking ? masterDataApi.getPorts() : Promise.resolve([]),
-      canReadBooking ? masterDataApi.getCarriers() : Promise.resolve([]),
+      canReadBooking ? masterDataApi.getVesselOperators() : Promise.resolve([]),
       canReadBooking ? masterDataApi.getNvoccs() : Promise.resolve([]),
       canReadBooking ? masterDataApi.getDepots() : Promise.resolve([]),
       canReadBooking ? masterDataApi.getContainerTypes() : Promise.resolve([]),

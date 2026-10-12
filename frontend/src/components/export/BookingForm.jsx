@@ -616,7 +616,7 @@ export default function BookingForm({
           <h2 className={sectionTitleCls}>Carrier Booking Confirmation</h2>
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            <Select label="Carrier" searchable placeholder="Select carrier" options={carrierOptions} value={form.carrier} onChange={set('carrier')} />
+            <Select label="Vessel Operator (VO)" searchable placeholder="Select vessel operator" options={carrierOptions} value={form.carrier} onChange={set('carrier')} />
             <div>
               <label className={labelCls}>Vessel Name</label>
               <input value={form.vesselName} onChange={setInput('vesselName')} className={`${inputCls} border-ink/30`} placeholder="e.g. MSC OSCAR" />
@@ -697,7 +697,7 @@ export default function BookingForm({
         <div className={`${sectionCls} ${visible(STEP.commercial) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Commercial</h2>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
-            <Select label="NVOCC" searchable placeholder="Select NVOCC" options={nvoccOptions} value={form.nvocc} onChange={set('nvocc')} />
+            <Select label="Carrier" searchable placeholder="Select carrier" options={nvoccOptions} value={form.nvocc} onChange={set('nvocc')} />
             <Select label="Currency" searchable options={CURRENCY_OPTIONS} value={form.currency} onChange={set('currency')} />
             <div>
               <label className={labelCls}>Price</label>

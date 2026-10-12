@@ -56,7 +56,7 @@ const sharedOptionalRules = [
   body('customsSubmitted').optional().isBoolean().withMessage('customsSubmitted must be true or false').toBoolean(),
   body('customsReferenceNo').optional().trim(),
 
-  body('carrier').optional({ checkFalsy: true }).isMongoId().withMessage('Valid carrier ID required'),
+  body('carrier').optional({ checkFalsy: true }).isMongoId().withMessage('Valid vessel operator ID required'),
   body('vesselName').optional().trim(),
   body('voyageNo').optional().trim(),
   body('etd').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid date for ETD'),

@@ -1,6 +1,16 @@
 import mongoose from 'mongoose'
 import { contactSchema } from '../_shared/party.shared.js'
 
+// Uploaded certificates: only ever written from a real multer upload (the
+// controller strips these keys from JSON bodies) and streamed back through an
+// authenticated route — same treatment as the Booking files.
+const fileSchema = {
+  fileName: { type: String },
+  filePath: { type: String },
+  mimeType: { type: String },
+  uploadedAt: { type: Date },
+}
+
 const customerSchema = new mongoose.Schema(
   {
     name: {
@@ -40,6 +50,8 @@ const customerSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    taxCertificateFile: fileSchema,
+    registrationCertificateFile: fileSchema,
     contacts: { type: [contactSchema], default: [] },
     isActive: {
       type: Boolean,

@@ -20,6 +20,8 @@ mkdirSync(SHOTS, { recursive: true })
 const shot = (page, name) => page.screenshot({ path: new URL(`${RUN}-${name}.png`, SHOTS).pathname.replace(/^\//, ''), fullPage: true })
 
 const results = []
+const tempRoleIds = []
+const tempUserIds = []
 const consoleErrors = []
 const check = (name, cond, detail = '') => {
   results.push({ name, pass: !!cond })
@@ -92,8 +94,8 @@ try {
   // ─── 2. New quotation form: empty state + client-side validation ────
   await page.goto(`${WEB}/export/quotations/new`)
   await page.getByText('1. Client Request Data').waitFor({ timeout: 90000 })
-  check('form renders all 8 sections, in order: Client, Ports, Containers & Cargo, Rate Request, NVOCC, Buying, Selling, Profitability',
-    (await page.locator('h2').allTextContents()).join('|') === '1. Client Request Data|2. Ports|3. Containers & Cargo|4. Rate Request|5. NVOCC (Master Data)|6. Buying Rate|7. Selling Price to Client|8. Profitability', (await page.locator('h2').allTextContents()).join('|'))
+  check('form renders all 8 sections, in order: Client, Ports, Containers & Cargo, Rate Request, Carrier, Buying, Selling, Profitability',
+    (await page.locator('h2').allTextContents()).join('|') === '1. Client Request Data|2. Ports|3. Containers & Cargo|4. Rate Request|5. Carrier (Master Data)|6. Buying Rate|7. Selling Price to Client|8. Profitability', (await page.locator('h2').allTextContents()).join('|'))
   const labelOrder = (await page.locator('label').allTextContents()).map((t) => t.trim())
   const labelTexts = labelOrder.join('|')
   check('UN Class / POR / FPD inputs are gone; Target Rate + Cargo Readiness Date are present',
@@ -101,7 +103,31 @@ try {
   check('Quotation No is read-only / auto-generated', await fieldInput(/Quotation No/).isDisabled())
   const iRep = labelOrder.findIndex((t) => /^Sales Representative/.test(t))
   check('Sales Representative sits above Client Type', iRep > -1 && iRep < labelOrder.findIndex((t) => /^Client Type/.test(t)))
-  check('Sales Representative auto-detects the logged-in user', (await selectText(/^Sales Representative/)).length > 3 && !/^Select/.test(await selectText(/^Sales Representative/)), await selectText(/^Sales Representative/))
+  // Sales Representative only lists users whose ROLE is a sales role. The admin
+  // is not one, so nothing is pre-selected and the admin is not offered.
+  const salesRole = await api('POST', '/roles', { name: `${RUN}-sales`.toLowerCase(), permissions: ['quotation:read', 'quotation:create'], description: 'E2E temp sales role' })
+  if (salesRole.json?.data?._id) tempRoleIds.push(salesRole.json.data._id)
+  await mongoose.connect(process.env.MONGO_URI)
+  const salesEmail = `e2e-sales-${RUN}@example.com`.toLowerCase()
+  const salesUser = await mongoose.connection.db.collection('users').insertOne({ name: 'E2E Sales Person', email: salesEmail, passwordHash: 'x', role: new mongoose.Types.ObjectId(salesRole.json.data._id), status: 'active', createdAt: new Date(), updatedAt: new Date() })
+  tempUserIds.push(salesUser.insertedId)
+  await page.reload()
+  await page.getByText('1. Client Request Data').waitFor({ timeout: 90000 })
+  check('Sales Representative is empty for a non-sales logged-in user (admin)', /^Select/.test(await selectText(/^Sales Representative/)), await selectText(/^Sales Representative/))
+  const repRoot = page.locator('label').filter({ hasText: /^Sales Representative/ }).first().locator('xpath=..')
+  await repRoot.locator('button').first().click()
+  const repOptions = await repRoot.locator('div.absolute button').allTextContents()
+  check('Sales Representative lists the sales-role user only (not admin / other roles)', repOptions.some((t) => t.includes(salesEmail)) && !repOptions.some((t) => t.includes(process.env.ADMIN_EMAIL)), repOptions.join(' | '))
+  await repRoot.locator('div.absolute button').filter({ hasText: salesEmail }).first().click()
+  check('Sales Representative can be set to the sales user', (await selectText(/^Sales Representative/)).includes(salesEmail), await selectText(/^Sales Representative/))
+
+  // Dangerous goods -> MSDS upload (max 5)
+  check('MSDS input is hidden while Dangerous Goods = No', (await page.locator('label', { hasText: /^MSDS/ }).count()) === 0)
+  await page.getByRole('button', { name: 'Yes', exact: true }).click()
+  check('Dangerous Goods = Yes shows the MSDS file input (multiple, PDF/image)', (await page.locator('label', { hasText: /^MSDS/ }).count()) === 1 && (await page.locator('input[type="file"][multiple]').count()) === 1)
+  await page.getByRole('button', { name: 'No', exact: true }).click()
+  check('...and hides it again when switched back to No', (await page.locator('label', { hasText: /^MSDS/ }).count()) === 0)
+  check('Buying Free Time label has no "Buying (days)" suffix', (await page.locator('label', { hasText: /^Free Time$/ }).count()) === 1 && (await page.locator('label', { hasText: /Free Time Buying/ }).count()) === 0)
   check('empty state: each rate table explains the 20/40ft detection', (await page.getByText(/20ft \/ 40ft columns are detected automatically/).count()) === 4)
   await page.getByRole('button', { name: 'Create quotation' }).click()
   check('submitting empty form shows required-field errors, no navigation',
@@ -109,15 +135,6 @@ try {
     (await page.getByText('Port of loading is required').count()) > 0 && page.url().endsWith('/new'), page.url())
 
   // ─── 3. Fill Section 1 (incl. the inline "New Client" modal) ────────
-  // Sales rep dropdown can switch to another team member (admin holds team:read)
-  const currentRep = await selectText(/^Sales Representative/)
-  const members = (await api('GET', '/team/members?status=active&limit=100')).json?.members || []
-  const other = members.find((m) => m.email && !currentRep.includes(m.email))
-  if (other) {
-    await pick(/^Sales Representative/, other.email)
-    check('Sales Representative can be switched to another team member', (await selectText(/^Sales Representative/)).includes(other.email), await selectText(/^Sales Representative/))
-  } else check('Sales Representative can be switched to another team member (only one active member, skipped)', true)
-
   // Contact Person is a dropdown of the selected client's contact rows (name + phone)
   const withContacts = await api('POST', '/master/customers', {
     name: `E2E UI Client ${RUN} Contacts`, phone: '+2000', email: 'co@example.com',
@@ -128,6 +145,7 @@ try {
   check('contact person is disabled until a client is chosen', await cpRoot.locator('button').first().isDisabled())
   await page.reload()
   await page.getByText('1. Client Request Data').waitFor({ timeout: 90000 })
+  await pick(/^Sales Representative/, salesEmail) // the reload above cleared it
   await pick(/^Client Name/, contactsCustomerName, { search: 'Contacts' })
   await cpRoot.locator('button').first().click()
   const cpOptions = await cpRoot.locator('div.absolute button').allTextContents()
@@ -161,6 +179,13 @@ try {
   check('20DC selected -> NO "40 ft" columns yet', (await page.locator('thead th', { hasText: /^40 ft$/ }).count()) === 0)
   check('QTY auto-detected: 20ft qty placeholder = 2', (await cell(T.bo, 'Ocean Freight', 1).getAttribute('placeholder')) === '2')
 
+  // Container rows: Qty first, then the type, then gross + net weight; the CBM input is gone
+  const row0 = await page.locator('label', { hasText: 'Container Type & Quantity' }).locator('xpath=..').locator('div.border.bg-paper\\/60').first()
+  const row0Inputs = await row0.locator('input, button').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label') || e.getAttribute('placeholder') || e.textContent.trim().slice(0, 20)).filter((t) => t !== 'Clear selection'))
+  check('container row order: Quantity, type select, Gross weight, Net weight', row0Inputs[0] === 'Quantity' && /20DC|Select container type/.test(row0Inputs[1]) && row0Inputs[2] === 'Gross weight (kg)' && row0Inputs[3] === 'Net weight (kg)', row0Inputs.join(' | '))
+  check('CBM input is gone from Containers & Cargo', (await page.locator('label', { hasText: /CBM/ }).count()) === 0)
+  await row0.getByLabel('Gross weight (kg)').fill('1200')
+  await row0.getByLabel('Net weight (kg)').fill('1000')
   await page.getByRole('button', { name: /Add another type/ }).click()
   await page.locator('button', { hasText: 'Select container type' }).first().click()
   await page.locator('div.absolute button', { hasText: '40HC' }).first().click()
@@ -174,9 +199,9 @@ try {
   for (const l of ['Admin Fee', 'DTHC', 'LOLO', 'Import Service Fee', 'DO']) if (!(await row(T.bd, l).count())) check(`destination line ${l}`, false)
 
   // ─── 5. NVOCC pick pre-fills the buying tables from the last quote ──
-  await pick(/^Select NVOCC/, nvocc.code)
+  await pick(/^Select Carrier/, nvocc.code)
   await page.getByText(new RegExp(`Prefilled from the last quotation \\(${seedNo}\\)`)).waitFor({ timeout: 15000 }).catch(() => {})
-  check('NVOCC suggestion note names the seed quotation', await page.getByText(new RegExp(`Prefilled from the last quotation \\(${seedNo}\\)`)).isVisible())
+  check('Carrier suggestion note names the seed quotation', await page.getByText(new RegExp(`Prefilled from the last quotation \\(${seedNo}\\)`)).isVisible())
   check('suggestion pre-filled buying Ocean Freight 111 / 222', (await cell(T.bo, 'Ocean Freight', 0).inputValue()) === '111' && (await cell(T.bo, 'Ocean Freight', 2).inputValue()) === '222')
   check('suggestion pre-filled buying DTHC 7 / 8', (await cell(T.bd, 'DTHC', 0).inputValue()) === '7' && (await cell(T.bd, 'DTHC', 2).inputValue()) === '8')
 
@@ -201,8 +226,11 @@ try {
   await put(T.so, 'Ocean Freight', 0, 200); await put(T.so, 'Ocean Freight', 2, 400)
   await put(T.so, 'THC', 0, 20); await put(T.so, 'THC', 2, 40)
   await put(T.so, 'BL', 0, 100); await put(T.so, 'BL', 1, 1)
-  await put(T.sd, 'DTHC', 0, 50); await put(T.sd, 'DTHC', 2, 100)
-  await put(T.sd, 'LOLO', 0, 20)
+  // Selling Destination is view-only: it just follows the Buying one.
+  check('Selling Destination table is view-only (every input + select disabled, no add/remove/restore)',
+    (await tbl(T.sd).locator('input:enabled, select:enabled').count()) === 0 && (await tbl(T.sd).getByRole('button', { name: /Remove|Add charge line/ }).count()) === 0 && (await tbl(T.sd).getByLabel('Restore a removed row').count()) === 0)
+  check('...and shows the Buying destination rates (DTHC 30 / 60)', (await cell(T.sd, 'DTHC', 0).inputValue()) === '30' && (await cell(T.sd, 'DTHC', 2).inputValue()) === '60')
+  check('Selling Origin stays editable', (await tbl(T.so).locator('input:enabled').count()) > 0)
   check('Selling edits do NOT flow back to Buying (buying OF still 100 / 200, THC 10 / 20)',
     (await cell(T.bo, 'Ocean Freight', 0).inputValue()) === '100' && (await cell(T.bo, 'Ocean Freight', 2).inputValue()) === '200' && (await cell(T.bo, 'THC', 0).inputValue()) === '10' && (await cell(T.bo, 'THC', 2).inputValue()) === '20')
 
@@ -214,9 +242,9 @@ try {
   check('buying origin table total = USD 500.00', (await tableTotal(T.bo)) === 'USD 500.00', await tableTotal(T.bo))
   check('buying destination table total = USD 120.00', (await tableTotal(T.bd)) === 'USD 120.00', await tableTotal(T.bd))
   check('selling origin table total = USD 980.00', (await tableTotal(T.so)) === 'USD 980.00', await tableTotal(T.so))
-  check('selling destination table total = USD 240.00', (await tableTotal(T.sd)) === 'USD 240.00', await tableTotal(T.sd))
+  check('selling destination table total = USD 120.00 (mirrors Buying)', (await tableTotal(T.sd)) === 'USD 120.00', await tableTotal(T.sd))
   const usd1 = await profitRow('USD')
-  check('profitability (USD): buying 620.00 / selling 1,220.00 / net 600.00 / 49.18%', usd1[1] === '620.00' && usd1[2] === '1,220.00' && usd1[3] === '600.00' && usd1[4] === '49.18%', usd1.join(' | '))
+  check('profitability (USD): buying 620.00 / selling 1,100.00 / net 480.00 / 43.64%', usd1[1] === '620.00' && usd1[2] === '1,100.00' && usd1[3] === '480.00' && usd1[4] === '43.64%', usd1.join(' | '))
   await shot(page, '1-filled-tables')
 
   // ─── 7. Per-row currency: totals grouped per currency, no conversion ─
@@ -225,7 +253,7 @@ try {
   check('buying origin total groups each currency together: USD 450.00 + EGP 50.00', (await tableTotal(T.bo)) === 'USD 450.00 + EGP 50.00', await tableTotal(T.bo))
   check('selling origin total groups each currency together: USD 880.00 + EGP 100.00', (await tableTotal(T.so)) === 'USD 880.00 + EGP 100.00', await tableTotal(T.so))
   const usd2 = await profitRow('USD'), egp2 = await profitRow('EGP')
-  check('profit per currency — USD: 570.00 / 1,120.00 / 550.00 / 49.11%', usd2[1] === '570.00' && usd2[2] === '1,120.00' && usd2[3] === '550.00' && usd2[4] === '49.11%', usd2.join(' | '))
+  check('profit per currency — USD: 570.00 / 1,000.00 / 430.00 / 43.00%', usd2[1] === '570.00' && usd2[2] === '1,000.00' && usd2[3] === '430.00' && usd2[4] === '43.00%', usd2.join(' | '))
   check('profit per currency — EGP: 50.00 / 100.00 / 50.00 / 50.00% (never converted into USD)', egp2[1] === '50.00' && egp2[2] === '100.00' && egp2[3] === '50.00' && egp2[4] === '50.00%', egp2.join(' | '))
   check('no exchange-rate / conversion inputs remain, and no Valid Until', (await page.locator('input[step="0.0001"]').count()) === 0 && (await page.locator('label', { hasText: /Exchange Rate|Valid Until/ }).count()) === 0)
   await currencyOf(T.so, 'BL').selectOption('USD')
@@ -242,7 +270,7 @@ try {
   page.once('dialog', (d) => d.accept())
   await row(T.so, 'DG Surcharge').getByRole('button', { name: 'Remove DG Surcharge row' }).click()
   check('a standard row (even with data) can be removed from each table independently', (await row(T.bo, 'DG Surcharge').count()) === 0 && (await row(T.so, 'DG Surcharge').count()) === 0 && (await rowCount(T.bo)) === 6 && (await rowCount(T.so)) === 5)
-  check('removed rows no longer count (profit unchanged: USD 570.00 / 1,120.00)', (await profitRow('USD'))[1] === '570.00' && (await profitRow('USD'))[2] === '1,120.00')
+  check('removed rows no longer count (profit unchanged: USD 570.00 / 1,000.00)', (await profitRow('USD'))[1] === '570.00' && (await profitRow('USD'))[2] === '1,000.00')
   await tbl(T.bo).getByLabel('Restore a removed row').selectOption({ label: 'DG Surcharge' })
   check('a removed standard row can be restored (empty), and comes back on Selling too', (await row(T.bo, 'DG Surcharge').count()) === 1 && (await cell(T.bo, 'DG Surcharge', 0).inputValue()) === '' && (await row(T.so, 'DG Surcharge').count()) === 1)
   await row(T.bo, 'Documentation').getByRole('button', { name: 'Remove Documentation row' }).click() // empty row -> no confirm; stays removed through save
@@ -256,7 +284,7 @@ try {
   check('create -> redirected to the quotation detail page', !!qId, page.url())
   const saved = (await api('GET', `/export/quotations/${qId}`)).json?.data
   const qNo = saved?.quotationNo
-  check('DB: per-currency totals computed by the server (primary USD 570 / 1120 / 550)', saved?.totalsCurrency === 'USD' && near(saved?.totalBuyingCost, 570) && near(saved?.totalSellingPrice, 1120) && near(saved?.netProfit, 550), `${saved?.totalsCurrency} ${saved?.totalBuyingCost}/${saved?.totalSellingPrice}/${saved?.netProfit}`)
+  check('DB: per-currency totals computed by the server (primary USD 570 / 1000 / 430)', saved?.totalsCurrency === 'USD' && near(saved?.totalBuyingCost, 570) && near(saved?.totalSellingPrice, 1000) && near(saved?.netProfit, 430), `${saved?.totalsCurrency} ${saved?.totalBuyingCost}/${saved?.totalSellingPrice}/${saved?.netProfit}`)
   check('DB: EGP kept as its own row (50 / 100), not converted', near(saved?.totalsByCurrency?.find((x) => x.currency === 'EGP')?.buying, 50) && near(saved?.totalsByCurrency?.find((x) => x.currency === 'EGP')?.selling, 100), JSON.stringify(saved?.totalsByCurrency))
   check('DB: tables stored (BL qty20 override + EGP on both sides, custom Seal with uid + currency, removed Documentation row)',
     saved?.buyingOrigin?.bl?.qty20 === 1 && saved?.buyingOrigin?.bl?.currency === 'EGP' && saved?.sellingOrigin?.bl?.currency === 'EGP' && saved?.buyingOrigin?.custom?.[0]?.label === 'Seal' && !!saved?.buyingOrigin?.custom?.[0]?.uid && saved?.buyingOrigin?.custom?.[0]?.currency === 'USD' && saved?.buyingOrigin?.hidden?.includes('documentation'),
@@ -271,7 +299,7 @@ try {
   check('detail: per-row EGP currency persisted on BL (buying + selling)', (await currencyOf(T.bo, 'BL').inputValue()) === 'EGP' && (await currencyOf(T.so, 'BL').inputValue()) === 'EGP')
   check('detail: the removed Documentation row stays removed, and can be restored', (await row(T.bo, 'Documentation').count()) === 0 && (await tbl(T.bo).getByLabel('Restore a removed row').count()) === 1)
   const usd3 = await profitRow('USD')
-  check('detail: live profit table matches the server (USD 570.00 / 1,120.00)', usd3[1] === '570.00' && usd3[2] === '1,120.00', usd3.join(' | '))
+  check('detail: live profit table matches the server (USD 570.00 / 1,000.00)', usd3[1] === '570.00' && usd3[2] === '1,000.00', usd3.join(' | '))
   await shot(page, '3-detail')
 
   // ─── 10. Edit: change a rate, drop the 40HC container ───────────────
@@ -282,7 +310,7 @@ try {
   await page.getByRole('button', { name: 'Save changes' }).click()
   check('save shows the success toast', await toastShown(/Quotation updated/))
   const edited = (await api('GET', `/export/quotations/${qId}`)).json?.data
-  check('DB after edit: USD buying 290 (200+20+10+60) / selling 680 (500+40+100+40); EGP BL unchanged', near(edited?.totalBuyingCost, 290) && near(edited?.totalSellingPrice, 680) && near(edited?.totalsByCurrency?.find((x) => x.currency === 'EGP')?.selling, 100), `${edited?.totalBuyingCost}/${edited?.totalSellingPrice} ${JSON.stringify(edited?.totalsByCurrency)}`)
+  check('DB after edit: USD buying 290 (200+20+10+60) / selling 600 (500+40+60); EGP BL unchanged', near(edited?.totalBuyingCost, 290) && near(edited?.totalSellingPrice, 600) && near(edited?.totalsByCurrency?.find((x) => x.currency === 'EGP')?.selling, 100), `${edited?.totalBuyingCost}/${edited?.totalSellingPrice} ${JSON.stringify(edited?.totalsByCurrency)}`)
   check('DB after edit: no stale 40ft rate/qty stored', edited?.buyingOrigin?.oceanFreight?.rate40 === undefined && edited?.sellingDestination?.dthc?.rate40 === undefined, JSON.stringify(edited?.buyingOrigin?.oceanFreight))
 
   // ─── 11. Status flow through the UI ─────────────────────────────────
@@ -305,7 +333,7 @@ try {
   check('convert navigates to /export/bookings/new?fromQuotation=<id>', page.url().includes(`fromQuotation=${qId}`), page.url())
   await hasValue('E2E UI Commodity', 90000)
   check('booking form pre-filled: commodity + client name', (await hasValue('E2E UI Commodity', 5000)) && (await hasValue(`E2E UI Client ${RUN}`, 5000)))
-  check('booking form pre-filled: price = 680, cost = 290 (primary currency USD)', (await hasValue('680', 5000)) && (await hasValue('290', 5000)))
+  check('booking form pre-filled: price = 600, cost = 290 (primary currency USD)', (await hasValue('600', 5000)) && (await hasValue('290', 5000)))
   await shot(page, '5-booking-prefill')
 
   // ─── 13. Reject flow through the modal ──────────────────────────────
@@ -369,7 +397,9 @@ check('DB: status rejected + reason saved', rejDoc?.status === 'rejected' && rej
       if (!res.modifiedCount) break
     }
     const dc = await db.collection('customers').deleteMany({ name: { $regex: `^E2E UI Client ${RUN}` } })
-    console.log(`cleanup: removed ${dq.deletedCount} quotation(s), ${dc.deletedCount} customer(s)`)
+    const du = await db.collection('users').deleteMany({ _id: { $in: tempUserIds } })
+    const dr = await db.collection('roles').deleteMany({ _id: { $in: tempRoleIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+    console.log(`cleanup: removed ${dq.deletedCount} quotation(s), ${dc.deletedCount} customer(s), ${du.deletedCount} user(s), ${dr.deletedCount} role(s)`)
     await mongoose.disconnect()
   } catch (e) { console.log('CLEANUP FAILED — remove E2E-UI data by hand:', e.message) }
   const failed = results.filter((x) => !x.pass)

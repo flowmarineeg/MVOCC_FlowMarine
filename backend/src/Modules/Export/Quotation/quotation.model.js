@@ -1,5 +1,7 @@
 import mongoose from 'mongoose'
 
+export const MSDS_MAX_FILES = 5
+
 const containerEntrySchema = new mongoose.Schema(
   {
     containerType: {
@@ -12,6 +14,9 @@ const containerEntrySchema = new mongoose.Schema(
       required: true,
       min: [1, 'Quantity must be at least 1'],
     },
+    // Estimated weights for this container line (kg).
+    grossWeight: { type: Number, min: [0, 'Gross weight must be a positive number'] },
+    netWeight: { type: Number, min: [0, 'Net weight must be a positive number'] },
   },
   { _id: false }
 )
@@ -131,6 +136,20 @@ const quotationSchema = new mongoose.Schema(
         },
         message: 'UN Number is required when cargo is marked dangerous',
       },
+    },
+    // MSDS (safety data sheet) uploads for dangerous cargo — max MSDS_MAX_FILES.
+    // Only ever written from real multer uploads (never from the JSON body, so
+    // it is not in EDITABLE_FIELDS) and streamed back through an auth'd route.
+    msdsFiles: {
+      type: [
+        {
+          fileName: { type: String },
+          filePath: { type: String },
+          mimeType: { type: String },
+          uploadedAt: { type: Date },
+        },
+      ],
+      default: [],
     },
     pol: { type: mongoose.Schema.Types.ObjectId, ref: 'Port', required: [true, 'Port of Loading is required'] },
     pod: { type: mongoose.Schema.Types.ObjectId, ref: 'Port', required: [true, 'Port of Discharge is required'] },

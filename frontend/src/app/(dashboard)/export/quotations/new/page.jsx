@@ -49,11 +49,15 @@ export default function NewQuotationPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const handleSubmit = async (data) => {
+  const handleSubmit = async (data, msdsFiles = []) => {
     setSubmitting(true)
     try {
       const res = await quotationApi.createQuotation(data)
       toast(`Quotation ${res.data.quotationNo} created`, 'success')
+      if (msdsFiles.length > 0) {
+        // The quotation exists now; a failed upload can be retried from its page.
+        await quotationApi.uploadMsds(res.data._id, msdsFiles).catch((err) => toast(`MSDS upload failed: ${err.message}`, 'error'))
+      }
       router.push(`/export/quotations/${res.data._id}`)
     } catch (err) {
       toast(err.message, 'error')
@@ -70,7 +74,7 @@ export default function NewQuotationPage() {
         </Link>
         <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Pre-Booking</p>
         <h1 className="mt-1 font-display text-2xl font-bold uppercase tracking-wide text-ink">New Quotation</h1>
-        <p className="mt-1 text-sm text-muted">Client request, NVOCC & pricing — before it becomes a job</p>
+        <p className="mt-1 text-sm text-muted">Client request, carrier & pricing — before it becomes a job</p>
       </div>
 
       {!canCreate ? (

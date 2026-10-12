@@ -187,7 +187,7 @@ const bookingSchema = new mongoose.Schema(
     // ─── Section 3 — Carrier Booking Confirmation ─────────────────────
     carrier: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Carrier',
+      ref: 'VesselOperator',
     },
     vesselName: { type: String, trim: true },
     voyageNo: { type: String, trim: true },

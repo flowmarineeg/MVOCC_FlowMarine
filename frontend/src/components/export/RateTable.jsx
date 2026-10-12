@@ -6,7 +6,7 @@ import { newUid } from '@/utils/quotationSync'
 
 const fmt = (n) => (Number.isFinite(n) ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00')
 
-const cellInputCls = 'w-24 border border-ink/30 bg-card px-2 py-1.5 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust'
+const cellInputCls = 'w-24 border border-ink/30 bg-card px-2 py-1.5 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust disabled:cursor-not-allowed disabled:bg-paper/60 disabled:text-ink'
 const thCls = 'px-2 py-2 text-right font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted'
 const tdCls = 'px-2 py-1.5 text-right font-mono text-sm text-ink'
 
@@ -23,7 +23,10 @@ const hasData = (line = {}) => ['rate20', 'rate40', 'qty20', 'qty40'].some((f) =
 // each currency separately — nothing is converted.
 // Any row — standard or added — can be removed when this quotation doesn't use
 // it; removed standard rows can be restored from the "Restore row" menu.
-export default function RateTable({ title, lines, value, onChange, sizes, qtyBySize }) {
+// `readOnly` shows the table without any way to edit it (inputs disabled, no
+// add / remove / restore) — used for the Selling Destination table, which just
+// follows the Buying one.
+export default function RateTable({ title, lines, value, onChange, sizes, qtyBySize, readOnly = false }) {
   const custom = value.custom || []
   const hidden = value.hidden || []
   const visibleLines = lines.filter(({ key }) => !hidden.includes(key))
@@ -52,13 +55,18 @@ export default function RateTable({ title, lines, value, onChange, sizes, qtyByS
       <SizeCells key={size} line={line} size={size} qtyBySize={qtyBySize} setField={setField} />
     ))
 
-  const removeBtn = (onClick, label) => (
+  const removeBtn = (onClick, label) =>
+    readOnly ? null : (
     <button type="button" onClick={onClick} className="px-2 py-1.5 text-muted transition-colors hover:text-brick" aria-label={label} title={label}>✕</button>
-  )
+    )
 
   return (
     <div className="space-y-3">
-      <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">{title}</h3>
+    <fieldset disabled={readOnly} className="min-w-0 space-y-3">
+      <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
+        {title}
+        {readOnly && <span className="ml-2 normal-case tracking-normal text-muted/80">(view only — follows the Buying rates)</span>}
+      </h3>
 
       {sizes.length === 0 ? (
         <p className="text-sm text-muted">
@@ -146,7 +154,7 @@ export default function RateTable({ title, lines, value, onChange, sizes, qtyByS
         </div>
       )}
 
-      {sizes.length > 0 && (
+      {sizes.length > 0 && !readOnly && (
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <button type="button" onClick={addCustom} className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-rust transition-colors hover:text-rust-dark">
             + Add charge line
@@ -166,6 +174,7 @@ export default function RateTable({ title, lines, value, onChange, sizes, qtyByS
           )}
         </div>
       )}
+    </fieldset>
     </div>
   )
 }
@@ -180,7 +189,7 @@ function CurrencyCell({ value, onChange, label }) {
       aria-label={`Currency for ${label}`}
       value={current}
       onChange={(e) => onChange(e.target.value)}
-      className="w-24 border border-ink/30 bg-card px-1.5 py-1.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+      className="w-24 border border-ink/30 bg-card px-1.5 py-1.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust disabled:cursor-not-allowed disabled:bg-paper/60"
     >
       <option value="">—</option>
       {!known && current && <option value={current}>{current}</option>}

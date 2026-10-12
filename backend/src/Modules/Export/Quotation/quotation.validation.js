@@ -6,6 +6,11 @@ import { ORIGIN_LINE_KEYS, DESTINATION_LINE_KEYS } from './quotation.model.js'
 // Same shape as booking.validation.js's validateContainerEntries — checks
 // for duplicate container types and confirms every referenced ContainerType
 // actually exists (isMongoId() only checks the format looks right).
+const containerWeightRules = [
+  body('containers.*.grossWeight').optional({ values: 'null' }).isFloat({ min: 0 }).withMessage('Container gross weight must be a positive number'),
+  body('containers.*.netWeight').optional({ values: 'null' }).isFloat({ min: 0 }).withMessage('Container net weight must be a positive number'),
+]
+
 const validateContainerEntries = async (containers) => {
   if (!Array.isArray(containers)) return true
   const ids = containers.map((c) => c?.containerType).filter(Boolean)
@@ -93,6 +98,7 @@ export const createQuotationRules = [
   body('containers').isArray({ min: 1 }).withMessage('At least one container entry is required'),
   body('containers.*.containerType').isMongoId().withMessage('Valid containerType ID required'),
   body('containers.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
+  ...containerWeightRules,
   body('containers').custom(validateContainerEntries),
   body('pol').isMongoId().withMessage('Valid POL ID required'),
   body('pod').isMongoId().withMessage('Valid POD ID required'),
@@ -107,6 +113,7 @@ export const updateQuotationRules = [
   body('containers').optional().isArray({ min: 1 }).withMessage('At least one container entry is required'),
   body('containers.*.containerType').optional().isMongoId().withMessage('Valid containerType ID required'),
   body('containers.*.quantity').optional().isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
+  ...containerWeightRules,
   body('containers').optional().custom(validateContainerEntries),
   body('pol').optional().isMongoId().withMessage('Valid POL ID required'),
   body('pod').optional().isMongoId().withMessage('Valid POD ID required'),

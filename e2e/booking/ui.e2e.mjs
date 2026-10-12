@@ -205,7 +205,7 @@ try {
   // ─── 4. Step 2: Booking — job identity, carrier, commercial, agents ───
   await gotoStep(1)
   check('step 2 shows Header/Client, Carrier Booking Confirmation, Commercial, Agents', await page.getByText('Carrier Booking Confirmation').isVisible() && await page.getByText('Commercial').isVisible() && await page.getByText('Agents').isVisible())
-  await pick(/^NVOCC$/, nvocc.code)
+  await pick(/^Carrier$/, nvocc.code)
   await fieldInput(/^Price$/).fill('500')
   await saveBooking()
 

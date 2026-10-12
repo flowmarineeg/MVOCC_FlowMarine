@@ -30,19 +30,6 @@ const ENTITIES = {
     toggle: masterDataApi.toggleContainerType,
     delete: masterDataApi.deleteContainerType,
   },
-  carriers: {
-    tabLabel: 'Carriers',
-    singular: 'Carrier',
-    fields: [
-      { key: 'name', label: 'Carrier Name' },
-      { key: 'code', label: 'Carrier Code' },
-    ],
-    get: () => masterDataApi.getCarriers(false),
-    create: masterDataApi.createCarrier,
-    update: masterDataApi.updateCarrier,
-    toggle: masterDataApi.toggleCarrier,
-    delete: masterDataApi.deleteCarrier,
-  },
   ports: {
     tabLabel: 'Ports (POL / POD)',
     singular: 'Port',
@@ -58,10 +45,10 @@ const ENTITIES = {
     delete: masterDataApi.deletePort,
   },
   nvoccs: {
-    tabLabel: 'NVOCC',
-    singular: 'NVOCC',
+    tabLabel: 'Carriers',
+    singular: 'Carrier',
     fields: [
-      ...masterDataApi.partyFormFields({ codeLabel: 'Code' }),
+      ...masterDataApi.partyFormFields({ codeLabel: 'Code', location: true, contractType: true }),
       { key: 'tradeLane', label: 'Trade Lane Covered', required: false, table: false },
     ],
     get: () => masterDataApi.getNvoccs(false),
@@ -101,7 +88,7 @@ const ENTITIES = {
   depots: {
     tabLabel: 'Depots',
     singular: 'Depot',
-    fields: masterDataApi.partyFormFields({ codeLabel: 'Depot Code' }),
+    fields: masterDataApi.partyFormFields({ codeLabel: 'Depot Code', location: true, contractType: true }),
     get: () => masterDataApi.getDepots(false),
     create: masterDataApi.createDepot,
     update: masterDataApi.updateDepot,
@@ -119,12 +106,9 @@ const ENTITIES = {
     delete: masterDataApi.deleteCustomer,
   },
   agents: {
-    tabLabel: 'Agents',
+    tabLabel: 'POD AGENTS',
     singular: 'Agent',
-    fields: [
-      ...masterDataApi.partyFormFields({ codeLabel: 'Agent Code' }),
-      { key: 'country', label: 'Country', type: 'country', required: false },
-    ],
+    fields: masterDataApi.partyFormFields({ codeLabel: 'Agent Code', codeRequired: false, location: true, contractType: true }),
     get: () => masterDataApi.getAgents(false),
     create: masterDataApi.createAgent,
     update: masterDataApi.updateAgent,
@@ -146,7 +130,7 @@ const ENTITIES = {
         ],
         format: (item) => capitalize(item.partyType),
       },
-      ...masterDataApi.partyFormFields({ codeLabel: 'Party Code' }),
+      ...masterDataApi.partyFormFields({ code: false, country: true }),
     ],
     get: () => masterDataApi.getParties(false),
     create: masterDataApi.createParty,
@@ -296,7 +280,7 @@ export default function MasterDataPage() {
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Reference Data</p>
           <h1 className="mt-1 font-display text-3xl font-bold uppercase tracking-wide text-ink">Master Data</h1>
-          <p className="mt-1 text-sm text-muted">Ports, NVOCCs, vessel operators, vessels, depots, customers, agents, parties, packages, and units</p>
+          <p className="mt-1 text-sm text-muted">Ports, carriers, vessel operators, vessels, depots, customers, agents, parties, packages, and units</p>
         </div>
         {canCreate && activeEntity && (
           <button
@@ -345,7 +329,11 @@ export default function MasterDataPage() {
         <MasterDataFormModal
           key={`${tab}-${editingItem?._id || 'new'}`}
           isOpen={modalOpen}
-          onClose={() => setModalOpen(false)}
+          onClose={() => {
+            setModalOpen(false)
+            // a certificate may have been removed from inside the dialog
+            if (tab === 'customers') reloadTab(tab)
+          }}
           onSave={handleSave}
           item={editingItem}
           fields={activeFields}

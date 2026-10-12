@@ -3,7 +3,10 @@
 import { FaPlus, FaTrash, FaExclamationTriangle } from 'react-icons/fa'
 import Select from '@/components/ui/Select'
 
-export default function ContainerSelector({ containerTypes = [], stockMap = {}, showStock = true, value = [], onChange, clearable = false }) {
+// `weights` switches to the Quotation row layout: Qty first, then the type, then
+// the estimated Gross Weight and Net Weight (kg) for that row. Booking keeps the
+// original type-then-qty row.
+export default function ContainerSelector({ containerTypes = [], stockMap = {}, showStock = true, value = [], onChange, clearable = false, weights = false }) {
   const rows = value.length ? value : [{ containerType: '', quantity: 1 }]
 
   const typeOptions = containerTypes.map((ct) => ({ value: ct._id, label: `${ct.code} — ${ct.label}` }))
@@ -30,6 +33,20 @@ export default function ContainerSelector({ containerTypes = [], stockMap = {}, 
     return acc
   }, {})
 
+  const qtyInput = (row, index, overStock) => (
+    <div className="w-full sm:w-28">
+      <input
+        type="number"
+        min={1}
+        value={row.quantity}
+        onChange={(e) => updateRow(index, { quantity: Number(e.target.value) })}
+        className={`w-full border bg-card px-3.5 py-2.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust ${overStock ? 'border-brick' : 'border-ink/30'}`}
+        placeholder="Qty"
+        aria-label="Quantity"
+      />
+    </div>
+  )
+
   return (
     <div className="space-y-2.5">
       {rows.map((row, index) => {
@@ -49,6 +66,7 @@ export default function ContainerSelector({ containerTypes = [], stockMap = {}, 
             key={index}
             className={`flex flex-col gap-2.5 border bg-paper/60 p-3 sm:flex-row sm:items-start ${overStock ? 'border-brick' : 'border-ink/25'}`}
           >
+            {weights && qtyInput(row, index, overStock)}
             <div className="flex-1">
               <Select
                 placeholder="Select container type"
@@ -58,16 +76,35 @@ export default function ContainerSelector({ containerTypes = [], stockMap = {}, 
                 onChange={(v) => updateRow(index, { containerType: v })}
               />
             </div>
-            <div className="w-full sm:w-28">
-              <input
-                type="number"
-                min={1}
-                value={row.quantity}
-                onChange={(e) => updateRow(index, { quantity: Number(e.target.value) })}
-                className={`w-full border bg-card px-3.5 py-2.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust ${overStock ? 'border-brick' : 'border-ink/30'}`}
-                placeholder="Qty"
-              />
-            </div>
+            {!weights && qtyInput(row, index, overStock)}
+            {weights && (
+              <>
+                <div className="w-full sm:w-36">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={row.grossWeight ?? ''}
+                    onChange={(e) => updateRow(index, { grossWeight: e.target.value })}
+                    className="w-full border border-ink/30 bg-card px-3.5 py-2.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+                    placeholder="Gross wt (kg)"
+                    aria-label="Gross weight (kg)"
+                  />
+                </div>
+                <div className="w-full sm:w-36">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={row.netWeight ?? ''}
+                    onChange={(e) => updateRow(index, { netWeight: e.target.value })}
+                    className="w-full border border-ink/30 bg-card px-3.5 py-2.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+                    placeholder="Net wt (kg)"
+                    aria-label="Net weight (kg)"
+                  />
+                </div>
+              </>
+            )}
             <div className="flex items-center gap-2 sm:pt-2.5">
               {showStock && row.containerType && (
                 <span className={`inline-flex items-center gap-1 whitespace-nowrap border px-2 py-1 font-mono text-[11px] font-medium ${overStock ? 'border-brick text-brick' : 'border-ink/25 text-muted'}`}>

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose'
-import { partyFields } from '../_shared/party.shared.js'
+import { basePartyFields } from '../_shared/party.shared.js'
 
 const vesselOperatorSchema = new mongoose.Schema(
   {
@@ -15,7 +15,7 @@ const vesselOperatorSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
-    ...partyFields,
+    ...basePartyFields,
     isActive: {
       type: Boolean,
       default: true,

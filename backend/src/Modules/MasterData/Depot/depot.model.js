@@ -1,5 +1,5 @@
 import mongoose from 'mongoose'
-import { partyFields } from '../_shared/party.shared.js'
+import { basePartyFields, contractTypeField } from '../_shared/party.shared.js'
 
 const depotSchema = new mongoose.Schema(
   {
@@ -15,7 +15,8 @@ const depotSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
-    ...partyFields,
+    ...basePartyFields,
+    ...contractTypeField,
     isActive: {
       type: Boolean,
       default: true,
