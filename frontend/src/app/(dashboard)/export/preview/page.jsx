@@ -73,8 +73,8 @@ export default function PreviewPage() {
   return (
     <div className="space-y-5 p-4 sm:p-6">
       <div className="border-b border-line pb-5">
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Export · Ledger 02</p>
-        <h1 className="mt-1 font-display text-3xl font-bold uppercase tracking-wide text-ink">Manifest Preview</h1>
+        <p className="text-xs font-medium text-muted">Export</p>
+        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-ink">Preview</h1>
         <p className="mt-1 text-sm text-muted">Aggregated totals and the full booking table, ready to export</p>
       </div>
 

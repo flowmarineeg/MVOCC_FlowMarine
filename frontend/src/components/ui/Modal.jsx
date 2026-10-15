@@ -19,7 +19,7 @@ export default function Modal({ isOpen, onClose, onConfirm, title, message, conf
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-ink/60"
+            className="absolute inset-0 bg-ink/40 backdrop-blur-[1px]"
             onClick={onClose}
           />
           <motion.div
@@ -27,14 +27,14 @@ export default function Modal({ isOpen, onClose, onConfirm, title, message, conf
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 10 }}
             transition={{ duration: 0.15 }}
-            className={`relative z-10 w-full max-w-md border bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)] ${danger ? 'border-brick/40' : 'border-ink/30'}`}
+            className={`relative z-10 w-full max-w-md rounded-xl border border-line bg-card p-6 shadow-xl`}
           >
             <div className="flex items-start gap-4">
-              <div className={`flex h-10 w-10 shrink-0 items-center justify-center border-2 ${danger ? 'border-brick text-brick' : 'border-rust text-rust'}`}>
+              <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${danger ? 'bg-brick/10 text-brick' : 'bg-rust/10 text-rust'}`}>
                 <FaExclamationTriangle />
               </div>
               <div className="flex-1 pt-1">
-                <h3 className="font-display text-lg font-bold uppercase tracking-wide text-ink">{title}</h3>
+                <h3 className="text-base font-semibold text-ink">{title}</h3>
                 <p className="mt-1.5 text-sm leading-relaxed text-muted">{message}</p>
               </div>
               <button onClick={onClose} className="text-muted transition-colors hover:text-ink">
@@ -45,7 +45,7 @@ export default function Modal({ isOpen, onClose, onConfirm, title, message, conf
               <button
                 onClick={onClose}
                 disabled={loading}
-                className="border border-ink/30 px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-ink/5 disabled:opacity-50"
+                className="border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-ink/5 disabled:opacity-50"
               >
                 Cancel
               </button>

@@ -1,17 +1,15 @@
-import { Alexandria, IBM_Plex_Mono } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
 
-const alexandria = Alexandria({
-  variable: "--font-alexandria",
+const geist = Geist({
+  variable: "--font-geist",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
 });
 
-const plexMono = IBM_Plex_Mono({
-  variable: "--font-plex-mono",
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata = {
@@ -23,7 +21,7 @@ export default function RootLayout({ children }) {
   return (
     <html
       lang="en"
-      className={`${alexandria.variable} ${plexMono.variable} h-full antialiased`}
+      className={`${geist.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <AuthProvider>{children}</AuthProvider>

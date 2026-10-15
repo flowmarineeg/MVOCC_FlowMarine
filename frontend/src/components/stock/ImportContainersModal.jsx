@@ -98,7 +98,7 @@ export default function ImportContainersModal({ isOpen, onClose, onImported }) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-ink/60"
+            className="absolute inset-0 bg-ink/40"
             onClick={handleClose}
           />
           <motion.div
@@ -106,7 +106,7 @@ export default function ImportContainersModal({ isOpen, onClose, onImported }) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 10 }}
             transition={{ duration: 0.15 }}
-            className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col border border-ink/30 bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)]"
+            className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col border border-ink/30 bg-card p-6 shadow-xl"
           >
             <div className="flex items-start justify-between gap-4">
               <div>

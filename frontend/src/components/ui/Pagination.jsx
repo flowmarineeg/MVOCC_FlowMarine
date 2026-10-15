@@ -5,7 +5,7 @@ import { FaChevronLeft, FaChevronRight } from 'react-icons/fa'
 export default function Pagination({ page, pages, total, limit, onPageChange, onLimitChange }) {
   if (pages <= 1 && total <= limit) return null
   return (
-    <div className="flex flex-col items-center justify-between gap-3 px-1 py-3 font-mono text-xs sm:flex-row">
+    <div className="flex flex-col items-center justify-between gap-3 px-1 py-3 text-sm sm:flex-row">
       <div className="flex items-center gap-2 text-muted">
         <span>Show</span>
         <select
@@ -21,7 +21,7 @@ export default function Pagination({ page, pages, total, limit, onPageChange, on
         <button
           onClick={() => onPageChange(page - 1)}
           disabled={page <= 1}
-          className="flex h-8 w-8 items-center justify-center border border-ink/30 text-muted transition-colors hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-30"
+          className="flex h-8 w-8 items-center justify-center border border-line text-muted transition-colors hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-30"
         >
           <FaChevronLeft size={11} />
         </button>
@@ -39,7 +39,7 @@ export default function Pagination({ page, pages, total, limit, onPageChange, on
               <button
                 key={item}
                 onClick={() => onPageChange(item)}
-                className={`flex h-8 w-8 items-center justify-center border text-sm font-semibold transition-colors ${page === item ? 'border-ink bg-ink text-paper' : 'border-ink/30 text-ink hover:bg-ink/5'}`}
+                className={`flex h-8 w-8 items-center justify-center border text-sm font-semibold transition-colors ${page === item ? 'border-rust bg-rust text-white' : 'border-line text-ink hover:bg-ink/5'}`}
               >
                 {item}
               </button>
@@ -48,7 +48,7 @@ export default function Pagination({ page, pages, total, limit, onPageChange, on
         <button
           onClick={() => onPageChange(page + 1)}
           disabled={page >= pages}
-          className="flex h-8 w-8 items-center justify-center border border-ink/30 text-muted transition-colors hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-30"
+          className="flex h-8 w-8 items-center justify-center border border-line text-muted transition-colors hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-30"
         >
           <FaChevronRight size={11} />
         </button>

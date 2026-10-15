@@ -41,13 +41,13 @@ export default function RolePermissionEditor({ isOpen, onClose, onSave, role, pe
     <AnimatePresence>
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-ink/60" onClick={onClose} />
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-ink/40" onClick={onClose} />
           <motion.div
             initial={{ opacity: 0, scale: 0.96, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 10 }}
             transition={{ duration: 0.15 }}
-            className="relative z-10 max-h-[85vh] w-full max-w-lg overflow-y-auto border border-ink/30 bg-card p-6 shadow-[4px_4px_0_0_var(--color-ink)]"
+            className="relative z-10 max-h-[85vh] w-full max-w-lg overflow-y-auto border border-ink/30 bg-card p-6 shadow-xl"
           >
             <div className="mb-4 flex items-center justify-between">
               <h3 className="font-display text-lg font-bold uppercase tracking-wide text-ink">

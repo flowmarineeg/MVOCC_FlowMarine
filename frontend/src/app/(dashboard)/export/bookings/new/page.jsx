@@ -149,8 +149,8 @@ function NewBookingPageInner() {
         <Link href="/export/bookings" className="mb-2 inline-flex items-center gap-2 text-sm text-muted transition-colors hover:text-ink">
           <FaArrowLeft className="text-xs" /> Back to bookings
         </Link>
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Booking &amp; Job</p>
-        <h1 className="mt-1 font-display text-2xl font-bold uppercase tracking-wide text-ink">New Job / Booking</h1>
+        <p className="text-xs font-medium text-muted">Booking &amp; Job</p>
+        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-ink">New Job / Booking</h1>
         <p className="mt-1 text-sm text-muted">
           {quotation ? `Converting quotation ${quotation.quotationNo} — review and file the job` : 'Client request through carrier booking, customs, and containers — one screen'}
         </p>

@@ -35,7 +35,7 @@ export default function Select({
   return (
     <div ref={rootRef} className="relative">
       {label && (
-        <label className="mb-1.5 block font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
+        <label className="mb-1.5 block text-xs font-medium text-muted">
           {label}
           {required && <span className="ml-0.5 text-rust">*</span>}
         </label>
@@ -72,7 +72,7 @@ export default function Select({
       </div>
 
       {open && (
-        <div className="absolute z-20 mt-1 w-full border border-ink/30 bg-card shadow-[3px_3px_0_0_var(--color-ink)]">
+        <div className="absolute z-20 mt-1 w-full rounded-lg border border-line bg-card shadow-lg">
           {searchable && (
             <div className="border-b border-ink/20 p-2">
               <div className="relative">

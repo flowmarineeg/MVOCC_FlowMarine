@@ -65,8 +65,8 @@ export default function AuditLogsPage() {
   return (
     <div className="space-y-5 p-4 sm:p-6">
       <div className="border-b border-line pb-5">
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Platform</p>
-        <h1 className="mt-1 font-display text-3xl font-bold uppercase tracking-wide text-ink">Audit Log</h1>
+        <p className="text-xs font-medium text-muted">Platform</p>
+        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-ink">Audit Log</h1>
         <p className="mt-1 text-sm text-muted">{total} recorded event{total === 1 ? '' : 's'}</p>
       </div>
 

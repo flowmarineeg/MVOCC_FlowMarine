@@ -29,7 +29,7 @@ export function ToastProvider({ children }) {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.18 }}
-              className={`flex items-start gap-3 border-l-4 bg-card p-4 shadow-[3px_3px_0_0_var(--color-ink)] ${
+              className={`flex items-start gap-3 rounded-lg border border-line border-l-4 bg-card p-4 shadow-lg ${
                 t.type === 'success' ? 'border-stamp' : 'border-brick'
               }`}
             >

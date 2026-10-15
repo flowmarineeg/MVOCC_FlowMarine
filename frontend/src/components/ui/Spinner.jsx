@@ -11,7 +11,7 @@ export function PageLoader() {
   return (
     <div className="flex min-h-[300px] flex-col items-center justify-center gap-3">
       <Spinner size="lg" />
-      <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">Loading…</p>
+      <p className="text-sm text-muted">Loading…</p>
     </div>
   )
 }

@@ -1,14 +1,13 @@
-// A container ID plate — used for job numbers and container codes so the
-// most load-bearing identifiers in the app read like the stenciled plates
-// bolted to a real shipping container, not plain table text.
+// An identifier chip — used for job numbers and container codes so the most load-bearing
+// identifiers stay easy to spot in a table without shouting.
 export default function Plate({ children, tone = 'ink', className = '' }) {
   const tones = {
-    ink: 'bg-ink text-paper',
-    outline: 'border border-ink/35 text-ink bg-transparent',
+    ink: 'bg-ink/[0.07] text-ink',
+    outline: 'border border-line text-ink bg-card',
   }
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 font-mono text-xs font-semibold tracking-[0.06em] ${tones[tone]} ${className}`}
+      className={`data-id inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium ${tones[tone]} ${className}`}
     >
       {children}
     </span>

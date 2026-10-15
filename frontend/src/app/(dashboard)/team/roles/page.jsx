@@ -86,8 +86,8 @@ export default function RolesPage() {
     <div className="space-y-5 p-4 sm:p-6">
       <div className="flex flex-col justify-between gap-4 border-b border-line pb-5 sm:flex-row sm:items-end">
         <div>
-          <p className="font-mono text-xs uppercase tracking-[0.18em] text-rust">Platform</p>
-          <h1 className="mt-1 font-display text-3xl font-bold uppercase tracking-wide text-ink">Roles</h1>
+          <p className="text-xs font-medium text-muted">Platform</p>
+          <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-ink">Roles</h1>
           <p className="mt-1 text-sm text-muted">Permission matrix for each role</p>
         </div>
         {canCreate && (
