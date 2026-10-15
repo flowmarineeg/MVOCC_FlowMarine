@@ -39,8 +39,8 @@ export const updateUnit = async (req, res, next) => {
   try {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() })
-    const data = await service.updateContainerUnit(req.params.id, req.body)
-    res.json({ success: true, data })
+    const { unit, warnings } = await service.updateContainerUnit(req.params.id, req.body)
+    res.json({ success: true, data: unit, ...(warnings.length > 0 && { warnings }) })
   } catch (err) { next(err) }
 }
 

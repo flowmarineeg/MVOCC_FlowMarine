@@ -2,6 +2,8 @@ import mongoose from 'mongoose'
 import crypto from 'crypto'
 import Container from './container.model.js'
 import ContainerType from '../ContainerType/containerType.model.js'
+import Booking from '../../Export/Booking/booking.model.js'
+import { isIssued, isStepComplete, checkUnit, calculatedVgm } from '../../Export/Booking/booking.steps.js'
 import Nvocc from '../Nvocc/nvocc.model.js'
 import Depot from '../Depot/depot.model.js'
 
@@ -104,7 +106,16 @@ export const deleteContainer = async (id) => {
 // Only allowed once a unit is actually allocated to a booking — these fields
 // (seal number, container status, gate-in date, VAS upload status, guarantee
 // receipt status) describe a specific job's fulfillment, not stock at rest.
-const UNIT_EDITABLE_FIELDS = ['sealNumber', 'guaranteeReceiptStatus', 'containerStatus', 'gateInDate', 'vasUploadStatus']
+const UNIT_EDITABLE_FIELDS = [
+  'sealNumber', 'guaranteeReceiptStatus', 'containerStatus', 'gateInDate', 'vasUploadStatus',
+  // Sprint 007 — Step 3 container grid
+  'customsSealNo', 'payloadWeightKg', 'cbm', 'packagesInContainer', 'vgmMethod', 'packingWeightKg', 'vgmWeightKg',
+  'weighbridgeTicket', 'vgmDeclaredBy', 'vgmSubmittedAt', 'conditionAtGateOut', 'conditionNotes', 'gateOutEirNo',
+  'gateInEirNo', 'gateOutDate', 'lateGateInReason',
+]
+
+// '' clears a field; everything else is stored as sent.
+const clearable = (v) => (v === '' ? null : v)
 
 export const updateContainerUnit = async (id, data) => {
   const container = await Container.findById(id)
@@ -112,17 +123,30 @@ export const updateContainerUnit = async (id, data) => {
   if (container.status !== 'allocated') {
     throw Object.assign(new Error('Only a container allocated to a booking can have its operational fields edited'), { statusCode: 400 })
   }
-  for (const field of UNIT_EDITABLE_FIELDS) {
-    if (data[field] !== undefined) container[field] = data[field]
+  // Step 3 locks the whole grid once completed, and the whole job is locked after the HBL (G5 / BR-5.3)
+  const booking = container.booking ? await Booking.findById(container.booking) : null
+  if (booking && (isIssued(booking) || isStepComplete(booking, 3))) {
+    throw Object.assign(new Error(isIssued(booking)
+      ? 'The HBL has been issued, so the job is locked — re-issue the HBL (Amend) to change it'
+      : 'Step 3 is complete and locked — Amend it first'), { statusCode: 409 })
   }
+  for (const field of UNIT_EDITABLE_FIELDS) {
+    if (data[field] !== undefined) container[field] = clearable(data[field])
+  }
+  const type = await ContainerType.findById(container.containerType).lean()
+  // method 2 is calculated: tare + payload + packing (only when the type carries a tare weight)
+  const calc = calculatedVgm(container, type)
+  if (calc !== null) container.vgmWeightKg = calc
+  const { errors, warnings } = checkUnit(container, type, booking)
+  if (errors.length) throw Object.assign(new Error(errors[0]), { statusCode: 400 })
   await container.save()
   await container.populate([
-    { path: 'containerType', select: 'code label' },
+    { path: 'containerType', select: 'code label maxPayloadKg capacityCbm tareWeightKg' },
     { path: 'nvocc', select: 'name code' },
     { path: 'depot', select: 'name code' },
     { path: 'booking', select: 'jobNo status' },
   ])
-  return container
+  return { unit: container, warnings }
 }
 
 // ─── Excel import — preview + commit ─────────────────────────────────────────
@@ -315,6 +339,10 @@ export const incrementStock = async (containerTypeId, qty, nvoccId, bookingId) =
       containerStatus: null,
       gateInDate: null,
       vasUploadStatus: null,
+      customsSealNo: null, payloadWeightKg: null, cbm: null, packagesInContainer: null, vgmMethod: null,
+      packingWeightKg: null, vgmWeightKg: null, weighbridgeTicket: null, vgmDeclaredBy: null, vgmSubmittedAt: null,
+      conditionAtGateOut: null, conditionNotes: null, gateOutEirNo: null, gateInEirNo: null, gateOutDate: null,
+      lateGateInReason: null,
     }
   )
 }

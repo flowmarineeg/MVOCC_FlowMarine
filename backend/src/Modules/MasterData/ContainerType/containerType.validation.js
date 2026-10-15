@@ -3,6 +3,7 @@ import { body } from 'express-validator'
 const capacityRules = [
   body('maxPayloadKg').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Max payload must be a positive number'),
   body('capacityCbm').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Capacity must be a positive number'),
+  body('tareWeightKg').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Tare weight must be a positive number'),
 ]
 
 export const createRules = [

@@ -18,19 +18,22 @@ export const BOOKING_STEPS = [
 // completed[step.index] -> boolean. active -> current step index. Desktop:
 // evenly spread left-to-right with connecting lines; small screens scroll
 // horizontally instead of wrapping (per the "not a vertical list" requirement).
-export default function BookingStepBar({ active, onChange, completed = {} }) {
+export default function BookingStepBar({ active, onChange, completed = {}, reconfirm = [] }) {
   return (
     <div className="overflow-x-auto border border-ink/25 bg-card">
       <div className="flex min-w-max">
         {BOOKING_STEPS.map((step, i) => {
           const isActive = step.index === active
-          const isDone = !!completed[step.index] && !isActive
+          const needsReconfirm = reconfirm.includes(step.index)
+          const isDone = !!completed[step.index] && !isActive && !needsReconfirm
           return (
             <button
               key={step.index}
               type="button"
               onClick={() => onChange(step.index)}
-              title={step.fullLabel}
+              title={needsReconfirm ? `${step.fullLabel} — re-confirm needed` : step.fullLabel}
+              data-complete={completed[step.index] ? 'true' : 'false'}
+              data-reconfirm={needsReconfirm ? 'true' : 'false'}
               className={`group flex flex-1 items-center gap-2.5 border-b-[3px] px-4 py-3.5 text-left transition-colors sm:px-5 ${
                 isActive
                   ? 'border-rust bg-paper/70'
@@ -41,9 +44,11 @@ export default function BookingStepBar({ active, onChange, completed = {} }) {
                 className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-[11px] font-bold ${
                   isActive
                     ? 'bg-rust text-card'
-                    : isDone
-                      ? 'bg-stamp text-card'
-                      : 'bg-ink/10 text-muted'
+                    : needsReconfirm
+                      ? 'bg-signal text-card'
+                      : isDone
+                        ? 'bg-stamp text-card'
+                        : 'bg-ink/10 text-muted'
                 }`}
               >
                 {isDone ? <FaCheck className="text-[9px]" /> : step.index}

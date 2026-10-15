@@ -57,6 +57,79 @@ const containerAssignmentSchema = new mongoose.Schema(
   { _id: false }
 )
 
+// Sprint 007 — Step 2: the equipment the VO actually confirmed (S2-53); it has to
+// cover the quantities the job needs before the Booking step can complete.
+const confirmedEquipmentSchema = new mongoose.Schema(
+  {
+    containerType: { type: mongoose.Schema.Types.ObjectId, ref: 'ContainerType', required: true },
+    quantity: { type: Number, required: true, min: [0, 'Quantity must be zero or more'] },
+  },
+  { _id: false }
+)
+
+// Sprint 007 — a numbered snapshot of the VO booking taken on roll-over / amend (BR-2.3, BR-2.4).
+const bookingVersionSchema = new mongoose.Schema(
+  {
+    version: { type: Number, required: true },
+    reason: { type: String, trim: true },
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    at: { type: Date, default: Date.now },
+    snapshot: { type: mongoose.Schema.Types.Mixed },
+  },
+  { _id: false }
+)
+
+const stepStampSchema = new mongoose.Schema(
+  {
+    step: { type: Number, required: true, min: 1, max: 5 },
+    completedAt: { type: Date, default: Date.now },
+    completedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+  { _id: false }
+)
+
+const amendmentSchema = new mongoose.Schema(
+  {
+    step: { type: Number, required: true, min: 1, max: 5 },
+    reason: { type: String, trim: true, required: true },
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+)
+
+const draftVersionSchema = new mongoose.Schema(
+  {
+    version: { type: Number, required: true },
+    sentAt: { type: Date, default: Date.now },
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    note: { type: String, trim: true },
+  },
+  { _id: false }
+)
+
+const preAlertSchema = new mongoose.Schema(
+  {
+    sentAt: { type: Date, default: Date.now },
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    recipients: { type: [String], default: [] },
+    acknowledgedAt: { type: Date, default: null },
+  },
+  { _id: false }
+)
+
+// Every generated document (loading list, DG manifest, draft / final HBL) is logged so a
+// document that was changed after it was sent can be flagged for re-sending (BR-5.4).
+const documentLogSchema = new mongoose.Schema(
+  {
+    kind: { type: String, enum: ['loading-list', 'dg-manifest', 'draft-hbl', 'hbl'], required: true },
+    version: { type: Number, required: true },
+    at: { type: Date, default: Date.now },
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+  { _id: false }
+)
+
 const bookingSchema = new mongoose.Schema(
   {
     // ─── Section 1 — Header & Job Info ────────────────────────────────
@@ -221,7 +294,7 @@ const bookingSchema = new mongoose.Schema(
     ata: { type: Date },
     spaceConfirmationStatus: {
       type: String,
-      enum: ['Requested', 'Confirmed', 'Rejected'],
+      enum: ['Requested', 'Confirmed', 'Rejected', 'Amended', 'Rolled', 'Cancelled'],
       default: 'Requested',
     },
     carrierBookingRef: { type: String, trim: true },
@@ -290,6 +363,69 @@ const bookingSchema = new mongoose.Schema(
     },
     notes: { type: String, trim: true },
 
+    // ══════════════════════════════════════════════════════════════════
+    // Sprint 007 — Booking & Job aligned with the Export PRD (docs/ref.md).
+    // Steps 1-3 are booking-owned (booking:* permissions); Steps 4-5 are
+    // B&L-owned and sit further down with the other bl:* fields.
+    // ══════════════════════════════════════════════════════════════════
+
+    // ─── Step 1 — Preliminary S/D ────────────────────────────────────
+    cargoReadinessDate: { type: Date },
+    proformaInvoiceNo: { type: String, trim: true },
+    proformaInvoiceDate: { type: Date },
+    acidNumber: { type: String, trim: true }, // 19 digits, only for Egypt PODs (C8)
+    cbm: { type: Number, min: [0, 'CBM must be a positive number'] },
+    shipperReference: { type: String, trim: true },
+    countryOfOrigin: { type: String, trim: true },
+    exporterLicenceNo: { type: String, trim: true },
+    stuffingLocationType: {
+      type: String,
+      enum: ['Shipper premises', 'Depot CFS', 'Third-party CFS', ''],
+    },
+    stuffingDate: { type: Date },
+    specialInstructions: { type: String, trim: true },
+    weightVarianceReason: { type: String, trim: true }, // D5 — needed above 5 % from the quoted figure
+    // dangerous-goods detail carried from the quotation (the VO and the DG manifest need it)
+    properShippingName: { type: String, trim: true },
+    subsidiaryRisk: { type: String, trim: true },
+    packingGroup: { type: String, trim: true },
+    flashPoint: { type: Number },
+    marinePollutant: { type: Boolean, default: false },
+    emergencyContact: { type: String, trim: true },
+    // reefer / out-of-gauge data carried from the quotation
+    setTemperature: { type: Number },
+    ventilationHumidity: { type: String, trim: true },
+    oogDimensions: { type: String, trim: true },
+
+    // ─── Step 2 — Booking (VO space confirmation) ────────────────────
+    polTerminal: { type: String, trim: true },
+    podTerminal: { type: String, trim: true }, // 'TBA' (to be advised) is allowed
+    serviceLoopCode: { type: String, trim: true },
+    bookingType: { type: String, enum: ['SOC'], default: 'SOC' }, // always shipper-owned boxes (C7)
+    vesselImo: { type: String, trim: true },
+    cyOpeningCutoff: { type: Date },
+    customsCutoff: { type: Date },
+    dgCutoff: { type: Date },
+    bookingRequestSentAt: { type: Date },
+    confirmedEquipment: { type: [confirmedEquipmentSchema], default: [] },
+    dgAcceptanceRef: { type: String, trim: true },
+    voFreeTimeDays: { type: Number, min: [0, 'Must be zero or more'] },
+    bookingVersions: { type: [bookingVersionSchema], default: [] },
+
+    // ─── Step 3 — Depot / Container: Release Order ───────────────────
+    croNumber: { type: String, trim: true },
+    croIssueDate: { type: Date },
+    croValidityDate: { type: Date },
+    croIssuedBy: { type: String, enum: ['Carrier', 'Agent', ''] },
+    releasedTo: { type: String, trim: true },
+    truckPlateDriver: { type: String, trim: true },
+    reconciliationReason: { type: String, trim: true }, // D16 — saved when the 2 % checks fail
+
+    // ─── Step gating, Amend, lifecycle (G4 / G5 / G6) ────────────────
+    stepsCompleted: { type: [stepStampSchema], default: [] },
+    reconfirmSteps: { type: [Number], default: [] },
+    amendments: { type: [amendmentSchema], default: [] },
+
     // ─── System Fields ───────────────────────────────────────────────
     status: {
       type: String,
@@ -330,9 +466,10 @@ const bookingSchema = new mongoose.Schema(
     consigneeToOrder: { type: Boolean, default: false },
     blDraftVersion: { type: String, trim: true },
     draftSentToClientDate: { type: Date },
+    // 'Confirmed' IS the PRD's "Approved" (S4-52, D9) — the stored value is kept so nothing migrates.
     clientConfirmationStatus: {
       type: String,
-      enum: ['Pending', 'Confirmed'],
+      enum: ['Pending', 'Confirmed', 'Amendments Requested'],
       default: 'Pending',
     },
 
@@ -348,7 +485,7 @@ const bookingSchema = new mongoose.Schema(
     numberOfOriginalBLs: { type: Number, min: [0, 'Must be a positive number'] },
     freightTermsOnBL: {
       type: String,
-      enum: ['Freight Prepaid', 'Freight Collect'],
+      enum: ['Freight Prepaid', 'Freight Collect', ''],
     },
     placeOfIssue: { type: String, trim: true },
     dateOfIssue: { type: Date },
@@ -394,6 +531,61 @@ const bookingSchema = new mongoose.Schema(
       default: [],
     },
     customerNotifiedDate: { type: Date },
+
+    // ─── Step 4 — Final S/D (PRD S4-10 .. S4-56) ─────────────────────
+    exactShipper: { type: String, trim: true },
+    exactConsignee: { type: String, trim: true },
+    exactNotify: { type: String, trim: true },
+    alsoNotify: { type: String, trim: true },
+    marksAndNumbers: { type: String, trim: true },
+    exactDescription: { type: String, trim: true },
+    finalTotalPackages: { type: Number, min: [0, 'Must be zero or more'] },
+    finalGrossWeight: { type: Number, min: [0, 'Must be zero or more'] },
+    finalCbm: { type: Number, min: [0, 'Must be zero or more'] },
+    finalPackageType: { type: String, trim: true },
+    placeOfReceipt: { type: String, trim: true },
+    placeOfDelivery: { type: String, trim: true },
+    shippersLoadStowCount: { type: Boolean, default: true }, // SLAC remark
+    lcDetails: { type: String, trim: true },
+    blRemarks: { type: String, trim: true },
+    commercialInvoiceNo: { type: String, trim: true },
+    commercialInvoiceDate: { type: Date },
+    certificateOfOriginNo: { type: String, trim: true },
+    customsReleaseDate: { type: Date },
+    siSubmittedToVoAt: { type: Date },
+    voSiReference: { type: String, trim: true },
+    approvedAt: { type: Date },
+    approvedBy: { type: String, trim: true },
+    amendmentNotes: { type: String, trim: true },
+    finalVarianceReason: { type: String, trim: true },
+    blDrafts: { type: [draftVersionSchema], default: [] },
+
+    // ─── Step 5 — Sailing, HBL issuance, MBL, pre-alert ──────────────
+    freightPayableAt: { type: String, enum: ['Origin', 'Destination', ''] },
+    freightPaymentStatus: { type: String, enum: ['Paid', 'Unpaid', 'Credit Approved', ''] },
+    holdOverrideReason: { type: String, trim: true },
+    freightTermsOverrideReason: { type: String, trim: true },
+    shippedOnBoardDate: { type: Date },
+    sobVarianceReason: { type: String, trim: true },
+    signatoryName: { type: String, trim: true },
+    signatoryTitle: { type: String, trim: true },
+    blReleaseDate: { type: Date },
+    courierAwb: { type: String, trim: true },
+    mblShipper: { type: String, trim: true },
+    mblConsignee: { type: String, trim: true },
+    mblNotify: { type: String, trim: true },
+    mblReleaseType: { type: String, enum: ['Original', 'Telex Release', 'Seaway Bill', ''] },
+    mblFreightTerms: { type: String, enum: ['Freight Prepaid', 'Freight Collect', ''] },
+    mblIssueDate: { type: Date },
+    hblIssuedAt: { type: Date, default: null },
+    hblIssuedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    hblVersion: { type: Number, default: 0 },
+    hblHistory: {
+      type: [{ number: String, version: Number, issuedAt: Date, replacedAt: Date, reason: String }],
+      default: [],
+    },
+    preAlerts: { type: [preAlertSchema], default: [] },
+    documents: { type: [documentLogSchema], default: [] },
   },
   { timestamps: true }
 )

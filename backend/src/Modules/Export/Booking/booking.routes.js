@@ -10,7 +10,7 @@ router.use(authenticate)
 
 // Object-valued fields arrive JSON-stringified over multipart (FormData has
 // no native nested-object encoding) — parsed back before validation runs.
-const JSON_FIELDS = ['containers', 'containerAssignments', 'shipper', 'consignee', 'notify', 'polAgent', 'podAgent']
+const JSON_FIELDS = ['containers', 'containerAssignments', 'confirmedEquipment', 'shipper', 'consignee', 'notify', 'polAgent', 'podAgent']
 
 // Special routes BEFORE /:id to avoid conflicts
 router.get('/preview', authorize('booking:export'), ctrl.getPreview)
@@ -38,6 +38,24 @@ router.get('/:id/msds/:fileId', authorize('booking:read'), ctrl.getQuotationMsds
 router.get('/:id/confirmation-file', authorize('booking:read'), ctrl.getConfirmationFile)
 router.get('/:id/bl/customs-certificate-file', authorize('bl:read'), ctrl.getCustomsCertificateFile)
 router.get('/:id/bl', authorize('bl:read'), ctrl.getBlById)
+
+// ─── Sprint 007 — step engine, Step 5 actions and documents ────────────────────
+// Steps 1-3 belong to the booking permissions, Steps 4-5 to the B&L permissions (no new RBAC keys).
+const authorizeStep = (req, res, next) => authorize(Number(req.params.n) >= 4 ? 'bl:update' : 'booking:update')(req, res, next)
+router.post('/:id/steps/:n/complete', authorizeStep, ctrl.completeStep)
+router.post('/:id/steps/:n/reopen', authorizeStep, ctrl.reopenStep)
+router.post('/:id/roll', authorize('booking:update'), ctrl.rollBooking)
+router.get('/:id/reconciliation', authorize('booking:read'), ctrl.getReconciliation)
+router.get('/:id/bl/actions', authorize('bl:read'), ctrl.getActionStates)
+router.post('/:id/bl/draft', authorize('bl:update'), ctrl.generateDraft)
+router.post('/:id/bl/issue', authorize('bl:update'), ctrl.issueHbl)
+router.post('/:id/bl/reissue', authorize('bl:update'), ctrl.reissueHbl)
+router.post('/:id/bl/pre-alert', authorize('bl:update'), ctrl.sendPreAlert)
+router.post('/:id/bl/pre-alert/ack', authorize('bl:update'), ctrl.ackPreAlert)
+router.get('/:id/bl/loading-list.xlsx', authorize('bl:read'), ctrl.downloadLoadingList)
+router.get('/:id/bl/dg-manifest.pdf', authorize('bl:read'), ctrl.downloadDgManifest)
+router.get('/:id/bl/hbl.pdf', authorize('bl:read'), ctrl.downloadHbl)
+router.get('/:id/bl/draft.pdf', authorize('bl:read'), ctrl.downloadDraftHbl)
 router.put(
   '/:id/bl',
   authorize('bl:update'),

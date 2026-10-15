@@ -7,6 +7,7 @@ import JobCounter from './jobCounter.model.js'
 import { checkStock, decrementStock, incrementStock, applySeals } from '../../MasterData/Container/container.service.js'
 import { getMsdsFile } from '../Quotation/quotation.service.js'
 import ExcelJS from 'exceljs'
+import { assertNotLocked, BL_STEP_FIELDS, APPROVAL_FIELDS, isIssued } from './booking.steps.js'
 
 const POPULATE_FIELDS = [
   { path: 'pol', select: 'name code country' },
@@ -17,7 +18,7 @@ const POPULATE_FIELDS = [
   { path: 'depot', select: 'name code' },
   { path: 'jobOpenedBy', select: 'name email' },
   // what the Job form shows read-only from its quotation (DG attachments, free time, container lines)
-  { path: 'quotation', select: 'quotationNo freeTimeBuyingDays isDangerous unNumber msdsFiles._id msdsFiles.fileName' },
+  { path: 'quotation', select: 'quotationNo freeTimeBuyingDays detentionFreeTimeDays isDangerous unNumber paymentTerms grossWeight cbm commodity targetEtd msdsFiles._id msdsFiles.fileName' },
 ]
 
 const BOOKING_STATUSES = ['pending', 'confirmed', 'cancelled']
@@ -49,6 +50,14 @@ const clearDangerousFieldsIfNotDangerous = (booking) => {
   if (!booking.isDangerous) {
     booking.dangerousClass = undefined
     booking.unNumber = undefined
+    booking.properShippingName = undefined
+    booking.subsidiaryRisk = undefined
+    booking.packingGroup = undefined
+    booking.flashPoint = undefined
+    booking.marinePollutant = false
+    booking.emergencyContact = undefined
+    booking.dgCutoff = undefined
+    booking.dgAcceptanceRef = undefined
   }
 }
 
@@ -110,6 +119,14 @@ const EDITABLE_FIELDS = [
   'shipper', 'consignee', 'notify', 'notifySameAsConsignee', 'shipperParty', 'consigneeParty', 'notifyParty',
   'polAgent', 'podAgent', 'podAgentRef',
   'manifestStatus', 'notes',
+  // Sprint 007 — Steps 1-3
+  'cargoReadinessDate', 'proformaInvoiceNo', 'proformaInvoiceDate', 'acidNumber', 'cbm', 'shipperReference',
+  'countryOfOrigin', 'exporterLicenceNo', 'stuffingLocationType', 'stuffingDate', 'specialInstructions',
+  'weightVarianceReason', 'properShippingName', 'subsidiaryRisk', 'packingGroup', 'flashPoint', 'marinePollutant',
+  'emergencyContact', 'setTemperature', 'ventilationHumidity', 'oogDimensions',
+  'polTerminal', 'podTerminal', 'serviceLoopCode', 'vesselImo', 'cyOpeningCutoff', 'customsCutoff', 'dgCutoff',
+  'bookingRequestSentAt', 'confirmedEquipment', 'dgAcceptanceRef', 'voFreeTimeDays',
+  'croNumber', 'croIssueDate', 'croValidityDate', 'croIssuedBy', 'releasedTo', 'truckPlateDriver', 'reconciliationReason',
 ]
 
 // Master-data picks that the form clears by sending an empty string.
@@ -168,6 +185,8 @@ export const updateBooking = async (id, data) => {
   clearDangerousFieldsIfNotDangerous(booking)
   stampCustomsSubmittedAt(booking, wasCustomsSubmitted)
   await assertAssignments(booking)
+  // G5 / BR-5.3 — a completed step (or an issued HBL) only accepts follow-up data
+  assertNotLocked(booking, booking.modifiedPaths())
 
   await booking.save()
   await booking.populate(POPULATE_FIELDS)
@@ -182,6 +201,11 @@ const BL_CONTEXT_FIELDS = [
   'jobNo', 'clientName', 'clientPhone', 'clientEmail', 'pol', 'pod',
   'shipper', 'consignee', 'exportTaxNumber', 'importTaxNumber', 'atd', 'eta', 'etd', 'ata',
   'jobStatus', 'quotation', 'createdAt', 'updatedAt', 'status',
+  // Sprint 007 — Step 4/5 read-only context (everything the Final S/D and HBL blocks echo)
+  'commodity', 'hsCode', 'packagesCount', 'packageType', 'grossWeight', 'netWeight', 'cbm', 'isDangerous', 'dangerousClass',
+  'unNumber', 'properShippingName', 'vesselName', 'voyageNo', 'carrierBookingRef', 'siCutoff', 'vgmCutoff',
+  'cyGateInCutoff', 'podAgent', 'notify', 'bookingConfirmationStatus', 'stepsCompleted', 'reconfirmSteps',
+  'amendments', 'hblIssuedAt', 'hblVersion', 'hblHistory', 'blDrafts', 'preAlerts', 'documents',
 ]
 
 const BL_EDITABLE_FIELDS = [
@@ -192,6 +216,16 @@ const BL_EDITABLE_FIELDS = [
   'finalLoadListStatus', 'dgManifestRequired', 'dgManifestStatus', 'reeferManifestRequired', 'reeferManifestStatus',
   'paymentRequestSent', 'invoiceStatus', 'preAlertSent', 'subManifestNafezaSubmitted', 'subManifestIssuedSent',
   'podAgentUpdateLog', 'customerNotifiedDate',
+  // Sprint 007 — Step 4 / Step 5 (approval handshake included)
+  ...BL_STEP_FIELDS[4], ...BL_STEP_FIELDS[5], ...APPROVAL_FIELDS,
+]
+
+// What actually prints on the B/L — only a change here (not a reason, SI reference, customs data ...)
+// sends an approved draft back to Pending (BR-4.4).
+const BL_PRINTED_CONTENT = [
+  'exactShipper', 'exactConsignee', 'exactNotify', 'alsoNotify', 'marksAndNumbers', 'exactDescription',
+  'finalTotalPackages', 'finalGrossWeight', 'finalCbm', 'finalPackageType', 'placeOfReceipt', 'placeOfDelivery',
+  'shippersLoadStowCount', 'lcDetails', 'blRemarks', 'consigneeToOrder', 'notifyPartyName', 'notifyPartyAddress',
 ]
 
 const BL_PROJECTION = [...BL_CONTEXT_FIELDS, ...BL_EDITABLE_FIELDS].join(' ')
@@ -199,7 +233,7 @@ const BL_PROJECTION = [...BL_CONTEXT_FIELDS, ...BL_EDITABLE_FIELDS].join(' ')
 const BL_POPULATE_FIELDS = [
   { path: 'pol', select: 'name code country' },
   { path: 'pod', select: 'name code country' },
-  { path: 'quotation', select: 'quotationNo' },
+  { path: 'quotation', select: 'quotationNo paymentTerms' },
 ]
 
 export const getBlJobs = async ({ page = 1, limit = 20, search } = {}) => {
@@ -228,9 +262,20 @@ export const updateBl = async (id, data) => {
     throw Object.assign(new Error('Cannot update a cancelled booking'), { statusCode: 400 })
   }
 
+  const wasApproved = booking.clientConfirmationStatus === 'Confirmed'
   for (const field of BL_EDITABLE_FIELDS) {
     if (data[field] !== undefined) booking[field] = data[field]
   }
+  // Approval locks the B/L content (BR-4.3); changing content that is still open after an approval
+  // sends the draft back to Pending (BR-4.4).
+  const changed = booking.modifiedPaths().map((p) => p.split('.')[0])
+  const contentChanged = changed.some((f) => BL_PRINTED_CONTENT.includes(f))
+  if (wasApproved && contentChanged && booking.clientConfirmationStatus === 'Confirmed' && !booking.isModified('clientConfirmationStatus')) {
+    booking.clientConfirmationStatus = 'Pending'
+    booking.approvedAt = undefined
+    booking.approvedBy = undefined
+  }
+  assertNotLocked(booking, booking.modifiedPaths())
   await booking.save()
 
   return Booking.findById(id).select(BL_PROJECTION).populate(BL_POPULATE_FIELDS)
@@ -280,6 +325,9 @@ export const cancelBooking = async (id) => {
   if (!booking) throw Object.assign(new Error('Booking not found'), { statusCode: 404 })
   if (booking.status === 'cancelled') {
     throw Object.assign(new Error('Booking is already cancelled'), { statusCode: 400 })
+  }
+  if (isIssued(booking)) {
+    throw Object.assign(new Error('The HBL has been issued — re-issue it (Amend) before cancelling the job'), { statusCode: 409 })
   }
 
   const wasConfirmed = booking.status === 'confirmed'

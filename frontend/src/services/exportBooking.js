@@ -55,3 +55,21 @@ export const downloadMsds = async (bookingId, file) => {
   link.remove()
   window.URL.revokeObjectURL(url)
 }
+
+// ─── Sprint 007 — step engine, roll-over, reconciliation ─────────────────────
+// The booking / B&L responses carry `state` next to `data` (per-step issues, warnings,
+// reconciliation, lifecycle stage). These helpers return both.
+export const getJob = (id) =>
+  api.get(`/export/bookings/${id}`).then((r) => ({ data: r.data.data, state: r.data.state }))
+
+export const completeStep = (id, step) =>
+  api.post(`/export/bookings/${id}/steps/${step}/complete`).then((r) => r.data)
+
+export const reopenStep = (id, step, reason) =>
+  api.post(`/export/bookings/${id}/steps/${step}/reopen`, { reason }).then((r) => r.data)
+
+export const rollBooking = (id, reason) =>
+  api.post(`/export/bookings/${id}/roll`, { reason }).then((r) => r.data)
+
+export const getReconciliation = (id) =>
+  api.get(`/export/bookings/${id}/reconciliation`).then((r) => r.data.data)

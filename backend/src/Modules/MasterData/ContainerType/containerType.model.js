@@ -18,6 +18,8 @@ const containerTypeSchema = new mongoose.Schema(
     // against Σ(quantity × capacity); a type without them is simply not checked.
     maxPayloadKg: { type: Number, min: [0, 'Max payload must be a positive number'] },
     capacityCbm: { type: Number, min: [0, 'Capacity must be a positive number'] },
+    // Sprint 007 — empty weight of the box; the VGM check (tare + payload) runs only when it is set
+    tareWeightKg: { type: Number, min: [0, 'Tare weight must be a positive number'] },
     isActive: {
       type: Boolean,
       default: true,

@@ -62,6 +62,24 @@ const containerSchema = new mongoose.Schema(
       enum: ['Not Uploaded', 'Uploaded', null],
       default: null,
     },
+
+    // ─── Sprint 007 — Step 3 container grid (PRD S3-24 .. S3-44) ──────────
+    customsSealNo: { type: String, trim: true, default: null },
+    payloadWeightKg: { type: Number, min: 0, default: null },
+    cbm: { type: Number, min: 0, default: null },
+    packagesInContainer: { type: Number, min: 0, default: null },
+    vgmMethod: { type: Number, enum: [1, 2, null], default: null },
+    packingWeightKg: { type: Number, min: 0, default: null },
+    vgmWeightKg: { type: Number, min: 0, default: null },
+    weighbridgeTicket: { type: String, trim: true, default: null },
+    vgmDeclaredBy: { type: String, trim: true, default: null },
+    vgmSubmittedAt: { type: Date, default: null },
+    conditionAtGateOut: { type: String, enum: ['Sound', 'Damaged', null], default: null },
+    conditionNotes: { type: String, trim: true, default: null },
+    gateOutEirNo: { type: String, trim: true, default: null },
+    gateInEirNo: { type: String, trim: true, default: null },
+    gateOutDate: { type: Date, default: null },
+    lateGateInReason: { type: String, trim: true, default: null },
   },
   { timestamps: true }
 )

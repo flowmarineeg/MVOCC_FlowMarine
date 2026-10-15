@@ -8,6 +8,7 @@ const optionalFields = [
   body('portsServed').optional().isArray().withMessage('Ports served must be a list'),
   body('portsServed.*').isMongoId().withMessage('Invalid port in ports served'),
   body('acceptsDg').optional().isBoolean().withMessage('Accepts DG must be true or false').toBoolean(),
+  body('hblPrefix').optional().trim().isLength({ max: 10 }).withMessage('HBL prefix is at most 10 characters'),
   body('defaultFreeTimeDays').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Default free time must be a positive number'),
 ]
 

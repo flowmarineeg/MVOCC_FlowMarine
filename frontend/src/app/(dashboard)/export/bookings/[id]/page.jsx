@@ -18,6 +18,9 @@ import { useAuth } from '@/context/AuthContext'
 import BookingForm from '@/components/export/BookingForm'
 import BLForm from '@/components/export/BLForm'
 import BookingStepBar from '@/components/export/BookingStepBar'
+import JobStepPanel from '@/components/export/JobStepPanel'
+import ReasonModal from '@/components/export/ReasonModal'
+import { lockedSteps as computeLockedSteps } from '@/constants/jobSteps'
 
 // Small inline notice for a step that mixes Booking-owned and B&L-owned
 // content (Steps 4 & 5) when the viewer only holds one of the two
@@ -29,6 +32,14 @@ function MissingAccess({ label, permission }) {
       <code className="font-mono text-xs text-ink">{permission}</code> permission.
     </div>
   )
+}
+
+const STEP_TITLES = {
+  1: 'Preliminary Shipping Declaration',
+  2: 'Booking (VO space confirmation)',
+  3: 'Depot / Container',
+  4: 'Final Shipping Declaration',
+  5: 'BL & Loading List',
 }
 
 export default function BookingDetailPage() {
@@ -44,6 +55,8 @@ export default function BookingDetailPage() {
 
   const [bookingData, setBookingData] = useState(null)
   const [blData, setBlData] = useState(null)
+  const [jobState, setJobState] = useState(null) // Sprint 007 — computed step state from the server
+  const [actionStates, setActionStates] = useState(null)
   const [ports, setPorts] = useState([])
   const [carriers, setCarriers] = useState([])
   // vessels / parties / POD agents / packages — the master-data picks on the Job form
@@ -67,6 +80,10 @@ export default function BookingDetailPage() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [stepBusy, setStepBusy] = useState(false)
+  const [busyAction, setBusyAction] = useState(null)
+  const [rollOpen, setRollOpen] = useState(false)
+  const [reissueOpen, setReissueOpen] = useState(false)
 
   // Drive BookingForm/BLForm's remount-on-save `key`s from two INDEPENDENT
   // counters, not from bookingData.updatedAt/blData.updatedAt — Booking and
@@ -85,11 +102,14 @@ export default function BookingDetailPage() {
   // (one extra GET) and avoids any staleness.
   const reload = () =>
     Promise.all([
-      canReadBooking ? bookingApi.getBookingById(id) : Promise.resolve(null),
-      canReadBl ? blApi.getBlById(id) : Promise.resolve(null),
-    ]).then(([b, bl]) => {
-      setBookingData(b)
-      setBlData(bl)
+      canReadBooking ? bookingApi.getJob(id) : Promise.resolve(null),
+      canReadBl ? blApi.getBl(id) : Promise.resolve(null),
+      canReadBl ? blApi.getActionStates(id).catch(() => null) : Promise.resolve(null),
+    ]).then(([b, bl, actions]) => {
+      setBookingData(b?.data || null)
+      setBlData(bl?.data || null)
+      setJobState(b?.state || bl?.state || null)
+      setActionStates(actions)
       return { b, bl }
     })
 
@@ -138,7 +158,7 @@ export default function BookingDetailPage() {
   const handleSaveBl = async (data) => {
     setSavingBl(true)
     try {
-      await blApi.updateBl(id, data)
+      await blApi.saveBl(id, data)
       toast('B&L data saved', 'success')
       await reload()
       setBlGen((g) => g + 1)
@@ -191,6 +211,88 @@ export default function BookingDetailPage() {
     }
   }
 
+  // ── Sprint 007 — step engine actions ──────────────────────────────────
+  const refreshAll = async () => {
+    await reload()
+    setBookingGen((g) => g + 1)
+    setBlGen((g) => g + 1)
+  }
+
+  const handleCompleteStep = async (n) => {
+    setStepBusy(true)
+    try {
+      await bookingApi.completeStep(id, n)
+      toast(`Step ${n} completed`, 'success')
+      await refreshAll()
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setStepBusy(false)
+    }
+  }
+
+  const handleAmendStep = async (n, reason) => {
+    setStepBusy(true)
+    try {
+      await bookingApi.reopenStep(id, n, reason)
+      toast(`Step ${n} reopened for amendment`, 'success')
+      await refreshAll()
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setStepBusy(false)
+    }
+  }
+
+  const handleRoll = async (reason) => {
+    setRollOpen(false)
+    setStepBusy(true)
+    try {
+      await bookingApi.rollBooking(id, reason)
+      toast('Booking rolled — Step 2 is open for the new vessel / voyage', 'success')
+      await refreshAll()
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setStepBusy(false)
+    }
+  }
+
+  const handleBlAction = async (name) => {
+    if (name === 'reissue') { setReissueOpen(true); return }
+    setBusyAction(name)
+    try {
+      if (name === 'draft') { await blApi.generateDraft(id); toast('Draft B/L generated — approval restarted', 'success') }
+      else if (name === 'issue') { await blApi.issueHbl(id); toast('HBL issued — the job is now locked', 'success') }
+      else if (name === 'pre-alert') { await blApi.sendPreAlert(id); toast('Pre-alert sent to the POD agent', 'success') }
+      else if (name === 'pre-alert-ack') { await blApi.ackPreAlert(id); toast('Pre-alert acknowledged', 'success') }
+      else if (name === 'loading-list') await blApi.downloadLoadingList(id)
+      else if (name === 'dg-manifest') await blApi.downloadDgManifest(id)
+      else if (name === 'download-hbl') await blApi.downloadHbl(id)
+      else if (name === 'download-draft') await blApi.downloadDraftHbl(id)
+      if (!name.startsWith('download') && name !== 'loading-list' && name !== 'dg-manifest') await refreshAll()
+      else await reload()
+    } catch (err) {
+      toast(err.response?.data?.issues?.length ? `${err.message}` : err.message, 'error')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  const handleReissue = async (reason) => {
+    setReissueOpen(false)
+    setBusyAction('reissue')
+    try {
+      await blApi.reissueHbl(id, reason)
+      toast('HBL re-opened — amend Step 5 and issue it again', 'success')
+      await refreshAll()
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
   if (!canReadBooking && !canReadBl) {
     return (
       <div className="p-4 sm:p-6">
@@ -207,15 +309,37 @@ export default function BookingDetailPage() {
   const header = bookingData || blData
   const depotMissingForConfirm = bookingData && !bookingData.depot
 
-  // Purely cosmetic per-step "completed" signal (see BookingStepBar) — never
-  // gates navigation.
-  const completed = {
-    1: !!bookingData?.shippingDeclaration?.fileName,
-    2: bookingData?.bookingConfirmationStatus === 'Issued',
-    3: bookingData?.status === 'confirmed',
-    4: !!blData?.certificateReceivedDate,
-    5: !!blData?.dateOfIssue,
-  }
+  const stamps = header.stepsCompleted || []
+  const stampOf = (n) => stamps.find((s) => s.step === n) || null
+  const reconfirm = jobState?.reconfirmSteps || []
+  const hblIssued = !!jobState?.hblIssued
+  const locks = computeLockedSteps(jobState?.stepsCompleted || [], hblIssued).filter((n) => !reconfirm.includes(n) || hblIssued)
+  const issuesOf = (n) => jobState?.stepIssues?.[n] || []
+  const lifecycle = jobState?.lifecycle
+  const bookingSteps = [1, 2, 3]
+  const canActOn = (n) => (bookingSteps.includes(n) ? canUpdateBooking : canUpdateBl)
+
+  // Step bar: the checkmark is now the real "step complete" stamp (G5); navigation is still free.
+  const completed = { 1: !!stampOf(1), 2: !!stampOf(2), 3: !!stampOf(3), 4: !!stampOf(4), 5: !!stampOf(5) }
+
+  const panel = (n, extra = {}) => (
+    <JobStepPanel
+      key={`panel-${n}`}
+      step={n}
+      title={`Step ${n} — ${STEP_TITLES[n]}`}
+      stamp={stampOf(n)}
+      reconfirm={reconfirm.includes(n)}
+      issues={issuesOf(n)}
+      warnings={(jobState?.warnings || []).filter((w) => w.step === n).map((w) => w.message)}
+      canAct={canActOn(n)}
+      busy={stepBusy}
+      previousDone={n === 1 || !!stampOf(n - 1)}
+      hblIssued={hblIssued}
+      onComplete={() => handleCompleteStep(n)}
+      onAmend={(reason) => handleAmendStep(n, reason)}
+      {...extra}
+    />
+  )
 
   return (
     <div className="space-y-5 p-4 sm:p-6">
@@ -224,9 +348,14 @@ export default function BookingDetailPage() {
           <Link href="/export/bookings" className="mb-2 inline-flex items-center gap-2 text-sm text-muted transition-colors hover:text-ink">
             <FaArrowLeft className="text-xs" /> Back to bookings
           </Link>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Plate className="text-sm">{header.jobNo}</Plate>
             <Badge value={header.jobStatus} />
+            {lifecycle && (
+              <span className="border border-ink/30 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-ink" data-testid="lifecycle-stage">
+                {lifecycle.stage}{lifecycle.exception ? ` · ${lifecycle.exception}` : ''}
+              </span>
+            )}
           </div>
           <p className="mt-1.5 text-sm text-muted">{header.clientName}</p>
         </div>
@@ -276,9 +405,44 @@ export default function BookingDetailPage() {
         </p>
       )}
 
-      <BookingStepBar active={step} onChange={setStep} completed={completed} />
+      <BookingStepBar active={step} onChange={setStep} completed={completed} reconfirm={reconfirm} />
 
       <div className="space-y-6">
+        {/* the status strip of the current step: what is missing, Complete / Amend */}
+        {step === 2 &&
+          panel(2, {
+            children: (
+              <div className="space-y-2 border-t border-line pt-3" data-testid="booking-versions">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-mono text-xs font-bold uppercase tracking-[0.14em] text-rust">VO booking versions</p>
+                  {canUpdateBooking && !hblIssued && bookingData?.status !== 'cancelled' && (
+                    <button type="button" onClick={() => setRollOpen(true)} disabled={stepBusy} className="border border-ink/30 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink transition-colors hover:bg-ink/5 disabled:opacity-50">
+                      Roll over / change vessel
+                    </button>
+                  )}
+                </div>
+                {(bookingData?.bookingVersions || []).length === 0 ? (
+                  <p className="font-mono text-xs text-muted">No roll-overs yet.</p>
+                ) : (
+                  <ul className="space-y-0.5 font-mono text-xs text-muted">
+                    {bookingData.bookingVersions.map((v) => (
+                      <li key={v.version}>v{v.version} · {new Date(v.at).toLocaleString()} · was {v.snapshot?.vesselName || '-'} / {v.snapshot?.voyageNo || '-'} — {v.reason}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ),
+          })}
+        {(step === 1 || step === 3 || step === 4) && panel(step)}
+        {step === 5 &&
+          panel(5, {
+            hideComplete: true,
+            issues: issuesOf(5),
+            children: (
+              <p className="font-mono text-[11px] text-muted">Step 5 completes when the HBL is issued (Documents &amp; Actions below). Issuing locks the whole job.</p>
+            ),
+          })}
+
         {bookingData ? (
           <BookingForm
             key={`booking-${bookingGen}`}
@@ -298,6 +462,9 @@ export default function BookingDetailPage() {
             submitting={savingBooking}
             canUpdate={canUpdateBooking}
             onSubmit={handleSaveBooking}
+            jobState={jobState}
+            lockedSteps={locks}
+            onJobChanged={reload}
           />
         ) : [1, 2, 3].includes(step) ? (
           <EmptyState title="Not authorized" message="You don't have permission to view Booking data." />
@@ -314,11 +481,35 @@ export default function BookingDetailPage() {
               canUpdate={canUpdateBl}
               submitting={savingBl}
               onSubmit={handleSaveBl}
+              jobState={jobState}
+              lockedSteps={locks}
+              actionStates={actionStates}
+              busyAction={busyAction}
+              onAction={handleBlAction}
             />
           ) : (
             <MissingAccess label={step === 4 ? 'Customs Certificate' : 'BL & Loading List'} permission="bl:read" />
           ))}
       </div>
+
+      <ReasonModal
+        isOpen={rollOpen}
+        onClose={() => setRollOpen(false)}
+        onConfirm={handleRoll}
+        title="Roll the VO booking?"
+        message="The current vessel, voyage, ETD / ETA and cut-offs are saved as a numbered version and the status becomes Rolled. Step 2 is reopened so you can enter the new sailing."
+        confirmLabel="Roll over"
+        loading={stepBusy}
+      />
+      <ReasonModal
+        isOpen={reissueOpen}
+        onClose={() => setReissueOpen(false)}
+        onConfirm={handleReissue}
+        title="Re-issue the HBL?"
+        message="The issued HBL is kept in the history and Step 5 is reopened. The new version will be marked 'Replaces HBL'. Steps 1–4 need their own Amend if they have to change."
+        confirmLabel="Re-open for re-issue"
+        loading={busyAction === 'reissue'}
+      />
 
       {bookingData && (
         <>

@@ -44,7 +44,12 @@ export const sendPasswordResetEmail = async ({ to, name, resetLink }) => {
   })
 }
 
-export const sendInvitationEmail = async ({ to, inviteeName, roleName, invitedByName, inviteLink }) => {
+// Sprint 007 — Step 5 pre-alert to the POD agent (logs to the console when SMTP is not configured)
+export const sendPreAlertEmail = async ({ to, subject, html }) => {
+  await send({ to, subject, html })
+}
+
+export const sendInvitationEmail =async ({ to, inviteeName, roleName, invitedByName, inviteLink }) => {
   await send({
     to,
     subject: 'You’ve been invited to NVOCC Ops',

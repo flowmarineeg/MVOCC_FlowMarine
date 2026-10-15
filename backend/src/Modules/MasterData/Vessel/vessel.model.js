@@ -12,6 +12,8 @@ const vesselSchema = new mongoose.Schema(
       required: [true, 'Vessel name is required'],
       trim: true,
     },
+    // Sprint 007 — fills Booking step 2's Vessel IMO (S2-30)
+    imoNumber: { type: String, trim: true },
     isActive: {
       type: Boolean,
       default: true,

@@ -48,3 +48,7 @@ export const downloadImportTemplate = async () => {
   link.remove()
   window.URL.revokeObjectURL(url)
 }
+
+// Sprint 007 — Step 3 container grid: returns the saved unit plus any soft warnings (late VGM / gate-in ...).
+export const saveContainerUnit = (id, data) =>
+  api.put(`/master/containers/${id}`, data).then((r) => ({ unit: r.data.data, warnings: r.data.warnings || [] }))

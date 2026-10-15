@@ -26,6 +26,8 @@ const nvoccSchema = new mongoose.Schema(
     portsServed: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Port' }],
     acceptsDg: { type: Boolean, default: true },
     defaultFreeTimeDays: { type: Number, min: [0, 'Free time must be a positive number'] },
+    // Sprint 007 — prefix of this carrier's HBL number series (S5-10); blank -> 'HBL'
+    hblPrefix: { type: String, trim: true, uppercase: true, maxlength: [10, 'HBL prefix is at most 10 characters'] },
     isActive: {
       type: Boolean,
       default: true,

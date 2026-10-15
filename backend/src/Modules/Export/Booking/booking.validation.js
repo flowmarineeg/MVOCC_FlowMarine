@@ -84,7 +84,7 @@ const sharedOptionalRules = [
   body('atd').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid date for ATD'),
   body('eta').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid date for ETA'),
   body('ata').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid date for ATA'),
-  body('spaceConfirmationStatus').optional({ checkFalsy: true }).isIn(['Requested', 'Confirmed', 'Rejected']).withMessage('Invalid space confirmation status'),
+  body('spaceConfirmationStatus').optional({ checkFalsy: true }).isIn(['Requested', 'Confirmed', 'Rejected', 'Amended', 'Rolled', 'Cancelled']).withMessage('Invalid space confirmation status'),
   body('carrierBookingRef').optional().trim(),
   body('voContactPerson').optional().trim(),
   body('siCutoff').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid SI cut-off date'),
@@ -123,6 +123,58 @@ const sharedOptionalRules = [
 
   body('manifestStatus').optional().isIn(['PENDING', 'SUBMITTED', 'CONFIRMED']).withMessage('Invalid manifest status'),
   body('notes').optional().trim(),
+
+  // ─── Sprint 007 — Step 1 (Preliminary S/D) ───────────────────────
+  body('cargoReadinessDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid cargo readiness date'),
+  body('proformaInvoiceNo').optional().trim(),
+  body('proformaInvoiceDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid proforma invoice date'),
+  body('acidNumber').optional({ checkFalsy: true }).trim().matches(/^\d{19}$/).withMessage('ACID number must be exactly 19 digits'),
+  body('cbm').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Total CBM must be a positive number'),
+  body('shipperReference').optional().trim(),
+  body('countryOfOrigin').optional().trim(),
+  body('exporterLicenceNo').optional().trim(),
+  body('stuffingLocationType').optional({ checkFalsy: true }).isIn(['Shipper premises', 'Depot CFS', 'Third-party CFS']).withMessage('Invalid stuffing location type'),
+  body('stuffingDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid stuffing date'),
+  body('specialInstructions').optional().trim(),
+  body('weightVarianceReason').optional().trim(),
+  body('properShippingName').optional().trim(),
+  body('subsidiaryRisk').optional().trim(),
+  body('packingGroup').optional().trim(),
+  body('flashPoint').optional({ checkFalsy: true }).isFloat().withMessage('Flash point must be a number'),
+  body('marinePollutant').optional().isBoolean().withMessage('marinePollutant must be true or false').toBoolean(),
+  body('emergencyContact').optional().trim(),
+  body('setTemperature').optional({ checkFalsy: true }).isFloat().withMessage('Set temperature must be a number'),
+  body('ventilationHumidity').optional().trim(),
+  body('oogDimensions').optional().trim(),
+  body('netWeight').custom((value, { req }) => {
+    const gross = Number(req.body.grossWeight)
+    if (value && gross && Number(value) > gross) throw new Error('Net weight cannot exceed gross weight')
+    return true
+  }),
+
+  // ─── Sprint 007 — Step 2 (Booking) ───────────────────────────────
+  body('polTerminal').optional().trim(),
+  body('podTerminal').optional().trim(),
+  body('serviceLoopCode').optional().trim(),
+  body('vesselImo').optional().trim(),
+  body('cyOpeningCutoff').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid CY opening date'),
+  body('customsCutoff').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid customs cut-off date'),
+  body('dgCutoff').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid DG cut-off date'),
+  body('bookingRequestSentAt').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid booking request sent time'),
+  body('confirmedEquipment').optional().isArray().withMessage('confirmedEquipment must be a list'),
+  body('confirmedEquipment.*.containerType').isMongoId().withMessage('Valid container type required for confirmed equipment'),
+  body('confirmedEquipment.*.quantity').isInt({ min: 0 }).withMessage('Confirmed quantity must be zero or more'),
+  body('dgAcceptanceRef').optional().trim(),
+  body('voFreeTimeDays').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('VO free time must be zero or more'),
+
+  // ─── Sprint 007 — Step 3 (Release Order) ─────────────────────────
+  body('croNumber').optional().trim(),
+  body('croIssueDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid CRO issue date'),
+  body('croValidityDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid CRO validity date'),
+  body('croIssuedBy').optional({ checkFalsy: true }).isIn(['Carrier', 'Agent']).withMessage('CRO issued by must be Carrier or Agent'),
+  body('releasedTo').optional().trim(),
+  body('truckPlateDriver').optional().trim(),
+  body('reconciliationReason').optional().trim(),
 ]
 
 export const createBookingRules = [
@@ -170,7 +222,7 @@ export const blUpdateRules = [
   body('consigneeToOrder').optional().isBoolean().withMessage('consigneeToOrder must be true or false').toBoolean(),
   body('blDraftVersion').optional().trim(),
   body('draftSentToClientDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid draft-sent date'),
-  body('clientConfirmationStatus').optional({ checkFalsy: true }).isIn(['Pending', 'Confirmed']).withMessage('Invalid client confirmation status'),
+  body('clientConfirmationStatus').optional({ checkFalsy: true }).isIn(['Pending', 'Confirmed', 'Amendments Requested']).withMessage('Invalid shipper approval status'),
 
   body('blType').optional({ checkFalsy: true }).isIn(['Original 3/3', 'Seaway Bill', 'Express Release', 'Telex Release']).withMessage('Invalid B/L type'),
   body('telexReleaseSentDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid telex release date'),
@@ -194,4 +246,48 @@ export const blUpdateRules = [
   body('podAgentUpdateLog.*.date').isISO8601().withMessage('Each POD agent update needs a valid date'),
   body('podAgentUpdateLog.*.note').optional().trim(),
   body('customerNotifiedDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid customer-notified date'),
+
+  // ─── Sprint 007 — Step 4 (Final S/D) ─────────────────────────────
+  // the 5 x 35 character EDI limit of the exact party texts is checked when Step 4 completes (not on every save)
+  ...['exactShipper', 'exactConsignee', 'exactNotify', 'alsoNotify'].map((f) => body(f).optional()),
+  body('marksAndNumbers').optional().trim(),
+  body('exactDescription').optional().trim(),
+  body('finalTotalPackages').optional({ checkFalsy: true }).isInt({ min: 0 }).withMessage('Final total packages must be a whole number'),
+  body('finalGrossWeight').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Final gross weight must be a positive number'),
+  body('finalCbm').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Final CBM must be a positive number'),
+  body('finalPackageType').optional().trim(),
+  body('placeOfReceipt').optional().trim(),
+  body('placeOfDelivery').optional().trim(),
+  body('shippersLoadStowCount').optional().isBoolean().withMessage('shippersLoadStowCount must be true or false').toBoolean(),
+  body('lcDetails').optional().trim(),
+  body('blRemarks').optional().trim(),
+  body('commercialInvoiceNo').optional().trim(),
+  body('commercialInvoiceDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid commercial invoice date'),
+  body('certificateOfOriginNo').optional().trim(),
+  body('customsReleaseDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid customs release date'),
+  body('siSubmittedToVoAt').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid SI submitted time'),
+  body('voSiReference').optional().trim(),
+  body('approvedAt').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid approval date'),
+  body('approvedBy').optional().trim(),
+  body('amendmentNotes').optional().trim(),
+  body('finalVarianceReason').optional().trim(),
+
+  // ─── Sprint 007 — Step 5 (sailing, HBL, MBL) ─────────────────────
+  body('freightPayableAt').optional({ checkFalsy: true }).isIn(['Origin', 'Destination']).withMessage('Freight payable at must be Origin or Destination'),
+  body('freightPaymentStatus').optional({ checkFalsy: true }).isIn(['Paid', 'Unpaid', 'Credit Approved']).withMessage('Invalid freight payment status'),
+  body('holdOverrideReason').optional().trim(),
+  body('freightTermsOverrideReason').optional().trim(),
+  body('atd').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid date for ATD'),
+  body('shippedOnBoardDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid shipped on board date'),
+  body('sobVarianceReason').optional().trim(),
+  body('signatoryName').optional().trim(),
+  body('signatoryTitle').optional().trim(),
+  body('blReleaseDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid B/L release date'),
+  body('courierAwb').optional().trim(),
+  body('mblShipper').optional().trim(),
+  body('mblConsignee').optional().trim(),
+  body('mblNotify').optional().trim(),
+  body('mblReleaseType').optional({ checkFalsy: true }).isIn(['Original', 'Telex Release', 'Seaway Bill']).withMessage('Invalid MBL release type'),
+  body('mblFreightTerms').optional({ checkFalsy: true }).isIn(['Freight Prepaid', 'Freight Collect']).withMessage('Invalid MBL freight terms'),
+  body('mblIssueDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid MBL issue date'),
 ]

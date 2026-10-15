@@ -40,8 +40,25 @@ function prefillFromQuotation(quotation) {
     isDangerous: !!quotation.isDangerous,
     unNumber: quotation.isDangerous ? quotation.unNumber || '' : '',
     dangerousClass: quotation.isDangerous ? quotation.imoClass || '' : '',
-    // the quotation holds estimated weights per container line; the job's totals start as their sum
+    // the quotation's total weight / CBM win; otherwise the job's totals start as the sum of the container lines
     ...sumWeights(quotation.containers),
+    ...(quotation.grossWeight > 0 && { grossWeight: quotation.grossWeight }),
+    ...(quotation.cbm > 0 && { cbm: quotation.cbm }),
+    cargoReadinessDate: quotation.cargoReadinessDate ? String(quotation.cargoReadinessDate).slice(0, 10) : '',
+    // dangerous-goods detail, reefer and out-of-gauge data travel with the job (the VO and the DG manifest need them)
+    ...(quotation.isDangerous && {
+      properShippingName: quotation.properShippingName || '',
+      subsidiaryRisk: quotation.subsidiaryRisk || '',
+      packingGroup: quotation.packingGroup || '',
+      flashPoint: quotation.flashPoint ?? '',
+      marinePollutant: !!quotation.marinePollutant,
+      emergencyContact: quotation.emergencyContact || '',
+    }),
+    setTemperature: quotation.setTemperature ?? '',
+    ventilationHumidity: quotation.ventilationHumidity || '',
+    oogDimensions: quotation.oogDimensions || '',
+    // the quotation's planned VO is only an estimate, but it is the natural default for Step 2
+    carrier: quotation.plannedVesselOperator?._id || quotation.plannedVesselOperator || '',
     containers: (quotation.containers || []).map((c) => ({
       containerType: c.containerType?._id || c.containerType,
       quantity: c.quantity,

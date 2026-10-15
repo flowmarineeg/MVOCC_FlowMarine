@@ -292,15 +292,15 @@ try {
   await page.reload()
   await gotoStep(2)
   await vis(page.getByText('Allocated Containers — Fulfillment'))
-  // AllocatedContainersPanel fetches its rows via its own separate effect
+  // ContainerGrid fetches its rows via its own separate effect
   // (stockApi.getContainers), a beat after the "Allocated Containers —
   // Fulfillment" heading itself renders — poll rather than a one-shot read.
-  check('Allocated Containers panel shows 2 units after confirm', await waitUntil(async () => (await page.locator('table tbody tr').count()) === 2))
+  check('Allocated Containers grid shows 2 container cards after confirm', await waitUntil(async () => (await page.locator('[data-testid="unit-card"]').count()) === 2))
   const heldNow = ((await api('GET', `/master/containers?booking=${jobId}`)).json?.data || []).sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt))
   check('confirm allocated exactly the displayed oldest units, with the seals in order', heldNow.length === 2 && heldNow[0].containerNumber === freeAsc[0].containerNumber && heldNow[0].sealNumber === 'SEAL-PICK-1' && heldNow[1].sealNumber === 'SEAL-PICK-2', JSON.stringify(heldNow.map((x) => [x.containerNumber, x.sealNumber])))
   // Edit one unit's fulfillment fields inline and save
-  await page.locator('table tbody tr').first().locator('input').first().fill('SEAL-UI-1')
-  await page.locator('table tbody tr').first().getByRole('button', { name: 'Save' }).click()
+  await page.locator('[data-testid="unit-card"]').first().getByLabel('Seal No').fill('SEAL-UI-1')
+  await page.locator('[data-testid="unit-card"]').first().getByRole('button', { name: /^Save / }).click()
   await page.waitForTimeout(500)
   const allocated = (await api('GET', `/master/containers?booking=${jobId}`)).json?.data || []
   check('per-unit fulfillment field saved from the UI', allocated.some((u) => u.sealNumber === 'SEAL-UI-1'), JSON.stringify(allocated.map((u) => u.sealNumber)))
@@ -322,7 +322,7 @@ try {
 
   // ─── 8. Step 5: Status & Notes (booking) + BL Parties/Release/Closure/FollowUp ─
   await gotoStep(4)
-  check('step 5 shows Status & Notes plus every BL section', await page.getByText('Status & Notes').isVisible() && await page.getByText('BL Parties & Draft BL').isVisible() && await page.getByText('BL Release').isVisible() && await page.getByText('Sea/Customs Closure').isVisible() && await page.getByText('Final Follow-up & Closing').isVisible())
+  check('step 5 shows Status & Notes plus every BL section', await page.getByText('Status & Notes').isVisible() && await page.getByText('HBL / MBL Numbers').first().isVisible() && await page.getByText('BL Release', { exact: true }).isVisible() && await page.getByText('Sea/Customs Closure').isVisible() && await page.getByText('Final Follow-up & Closing').isVisible())
   check('Sea/Customs Closure is locked (no ATD set yet)', (await page.getByText(/unlocks once the Actual Time of Departure/).count()) > 0)
 
   await fieldInput(/^Notes$/).fill('E2E step-5 note')
@@ -399,7 +399,7 @@ try {
 
   await page.goto(`${WEB}/export/bookings/new?fromQuotation=${qId}`)
   await page.getByText('Shipment & Cargo').waitFor({ timeout: 90000 })
-  check('container types come from the quotation, as text', await page.getByText('20DC × 2').isVisible() && (await page.locator('label', { hasText: /^Container Type/ }).count()) === 0)
+  check('container types come from the quotation, as text', await page.getByText('20DC × 2').first().isVisible() && (await page.locator('label', { hasText: /^Container Type/ }).count()) === 0)
   check('commodity + HS code + gross/net weights are pre-filled from the quotation', (await hasValue(page, `${RUN} QCommodity`)) && (await hasValue(page, '1234.56')) && (await hasValue(page, '2000')) && (await hasValue(page, '1800')))
   check('Dangerous Goods is shown read-only with the quotation\'s UN number', await page.getByText('UN1203').first().isVisible() && (await page.locator('label', { hasText: /^UN Number/ }).count()) === 0)
   check('DG attachment (MSDS) from the quotation is listed', await page.getByRole('button', { name: 'msds-sheet.png' }).isVisible())
@@ -411,7 +411,7 @@ try {
   check('client name / phone / email are view-only (no inputs) and show the quotation\'s client',
     (await page.locator('label', { hasText: /^Client (Name|Phone|Email)/ }).count()) === 0 && (await page.getByText(`${RUN} QClient`).first().isVisible()) && (await page.getByText('qclient@example.com').first().isVisible()))
   check('Commercial is view-only: carrier, currency, price, cost and free time (7 days) from the quotation',
-    (await page.locator('label', { hasText: /^(Price|Cost|Currency)$/ }).count()) === 0 && (await page.getByText('7 days').isVisible()) && (await page.getByText('300', { exact: true }).count()) > 0)
+    (await page.locator('label', { hasText: /^(Price|Cost|Currency)$/ }).count()) === 0 && (await page.getByText('7 days', { exact: true }).isVisible()) && (await page.getByText('300', { exact: true }).count()) > 0)
   check('ETD/ETA labels carry the quotation\'s POL / POD', (await page.locator('label', { hasText: /^ETD/ }).first().textContent()).includes(ports[0].code) && (await page.locator('label', { hasText: /^ETA/ }).first().textContent()).includes(ports[1].code))
   check('no B/L No input on the Carrier Booking Confirmation section', (await page.locator('label', { hasText: /^B\/L No/ }).count()) === 0)
 

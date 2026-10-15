@@ -8,6 +8,10 @@ import * as bookingApi from '@/services/exportBooking'
 import * as quotationApi from '@/services/quotation'
 import { useToast } from '@/components/ui/Toast'
 import { CURRENCY_OPTIONS } from '@/constants/currencies'
+import { COUNTRY_OPTIONS } from '@/constants/countries'
+import { BOOKING_STEP_FIELDS, dropLockedFields } from '@/constants/jobSteps'
+import SummaryCard from './SummaryCard'
+import ContainerGrid, { ReconciliationPanel } from './ContainerGrid'
 
 // `d` is either a Date instance or an ISO date string from the API —
 // String(Date) is NOT yyyy-mm-dd, so a plain Date must go through
@@ -41,16 +45,16 @@ const JOB_STATUS_OPTIONS = [
   { value: 'completed', label: 'Completed' },
   { value: 'closed_invoiced', label: 'Closed - Invoiced' },
 ]
-const SPACE_CONFIRMATION_OPTIONS = ['Requested', 'Confirmed', 'Rejected'].map((v) => ({ value: v, label: v }))
+const SPACE_CONFIRMATION_OPTIONS = ['Requested', 'Confirmed', 'Rejected', 'Amended', 'Rolled', 'Cancelled'].map((v) => ({ value: v, label: v }))
+const STUFFING_OPTIONS = ['Shipper premises', 'Depot CFS', 'Third-party CFS'].map((v) => ({ value: v, label: v }))
+const CRO_ISSUER_OPTIONS = ['Carrier', 'Agent'].map((v) => ({ value: v, label: v }))
+const PACKING_GROUP_OPTIONS = ['I', 'II', 'III', 'N/A'].map((v) => ({ value: v, label: v }))
 const BOOKING_CONFIRMATION_OPTIONS = ['Not Issued', 'Issued'].map((v) => ({ value: v, label: v }))
 const MANIFEST_OPTIONS = [
   { value: 'PENDING', label: 'Pending' },
   { value: 'SUBMITTED', label: 'Submitted' },
   { value: 'CONFIRMED', label: 'Confirmed' },
 ]
-const GUARANTEE_OPTIONS = ['Received', 'Pending'].map((v) => ({ value: v, label: v }))
-const CONTAINER_STATUS_OPTIONS = ['Empty Assigned', 'Gated-In', 'Loaded', 'Departed'].map((v) => ({ value: v, label: v }))
-const VAS_OPTIONS = ['Not Uploaded', 'Uploaded'].map((v) => ({ value: v, label: v }))
 
 // The backend rejects the same containerType appearing twice in one booking
 // (one row per type is the persisted invariant) — the UI still lets someone
@@ -133,6 +137,16 @@ function emptyForm() {
     shipperParty: '', consigneeParty: '', notifyParty: '', notifySameAsConsignee: false,
     podAgent: { ...emptyAgent }, podAgentRef: '',
     manifestStatus: 'PENDING', notes: '',
+    // Sprint 007 — Step 1
+    cargoReadinessDate: '', proformaInvoiceNo: '', proformaInvoiceDate: '', acidNumber: '', cbm: '', shipperReference: '',
+    countryOfOrigin: '', exporterLicenceNo: '', stuffingLocationType: '', stuffingDate: '', specialInstructions: '', weightVarianceReason: '',
+    properShippingName: '', subsidiaryRisk: '', packingGroup: '', flashPoint: '', marinePollutant: false, emergencyContact: '',
+    setTemperature: '', ventilationHumidity: '', oogDimensions: '',
+    // Step 2
+    polTerminal: '', podTerminal: '', serviceLoopCode: '', vesselImo: '', cyOpeningCutoff: '', customsCutoff: '', dgCutoff: '',
+    bookingRequestSentAt: '', confirmedEquipment: {}, dgAcceptanceRef: '', voFreeTimeDays: '',
+    // Step 3
+    croNumber: '', croIssueDate: '', croValidityDate: '', croIssuedBy: '', releasedTo: '', truckPlateDriver: '', reconciliationReason: '',
   }
 }
 
@@ -200,6 +214,45 @@ function buildInitialForm(booking, prefill) {
     podAgentRef: booking.podAgentRef?._id || booking.podAgentRef || '',
     manifestStatus: booking.manifestStatus || 'PENDING',
     notes: booking.notes || '',
+    cargoReadinessDate: toDateInput(booking.cargoReadinessDate),
+    proformaInvoiceNo: booking.proformaInvoiceNo || '',
+    proformaInvoiceDate: toDateInput(booking.proformaInvoiceDate),
+    acidNumber: booking.acidNumber || '',
+    cbm: booking.cbm ?? '',
+    shipperReference: booking.shipperReference || '',
+    countryOfOrigin: booking.countryOfOrigin || '',
+    exporterLicenceNo: booking.exporterLicenceNo || '',
+    stuffingLocationType: booking.stuffingLocationType || '',
+    stuffingDate: toDateInput(booking.stuffingDate),
+    specialInstructions: booking.specialInstructions || '',
+    weightVarianceReason: booking.weightVarianceReason || '',
+    properShippingName: booking.properShippingName || '',
+    subsidiaryRisk: booking.subsidiaryRisk || '',
+    packingGroup: booking.packingGroup || '',
+    flashPoint: booking.flashPoint ?? '',
+    marinePollutant: !!booking.marinePollutant,
+    emergencyContact: booking.emergencyContact || '',
+    setTemperature: booking.setTemperature ?? '',
+    ventilationHumidity: booking.ventilationHumidity || '',
+    oogDimensions: booking.oogDimensions || '',
+    polTerminal: booking.polTerminal || '',
+    podTerminal: booking.podTerminal || '',
+    serviceLoopCode: booking.serviceLoopCode || '',
+    vesselImo: booking.vesselImo || '',
+    cyOpeningCutoff: toDateTimeInput(booking.cyOpeningCutoff),
+    customsCutoff: toDateTimeInput(booking.customsCutoff),
+    dgCutoff: toDateTimeInput(booking.dgCutoff),
+    bookingRequestSentAt: toDateTimeInput(booking.bookingRequestSentAt),
+    confirmedEquipment: Object.fromEntries((booking.confirmedEquipment || []).map((e) => [e.containerType?._id || e.containerType, e.quantity])),
+    dgAcceptanceRef: booking.dgAcceptanceRef || '',
+    voFreeTimeDays: booking.voFreeTimeDays ?? '',
+    croNumber: booking.croNumber || '',
+    croIssueDate: toDateInput(booking.croIssueDate) || toDateInput(new Date()),
+    croValidityDate: toDateInput(booking.croValidityDate),
+    croIssuedBy: booking.croIssuedBy || '',
+    releasedTo: booking.releasedTo || '',
+    truckPlateDriver: booking.truckPlateDriver || '',
+    reconciliationReason: booking.reconciliationReason || '',
   }
 }
 
@@ -232,116 +285,6 @@ function PartyDetails({ data }) {
       {'phone2' in data && <ReadOnly label="Phone 2">{data.phone2}</ReadOnly>}
       <ReadOnly label="Address">{data.address}</ReadOnly>
       {'taxNumber' in data && <ReadOnly label="Tax Number">{data.taxNumber}</ReadOnly>}
-    </div>
-  )
-}
-
-// Per-unit operational fields for the containers actually allocated to a
-// confirmed booking (Section 5's fulfillment table) — separate from the
-// request/summary quantities in ContainerSelector above it.
-function AllocatedContainersPanel({ bookingId, canUpdate }) {
-  const [containers, setContainers] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [drafts, setDrafts] = useState({})
-  const [savingId, setSavingId] = useState(null)
-
-  const load = () => {
-    stockApi.getContainers({ booking: bookingId })
-      .then((rows) => {
-        setContainers(rows)
-        setDrafts(Object.fromEntries(rows.map((c) => [c._id, {
-          sealNumber: c.sealNumber || '',
-          guaranteeReceiptStatus: c.guaranteeReceiptStatus || '',
-          containerStatus: c.containerStatus || '',
-          gateInDate: toDateInput(c.gateInDate),
-          vasUploadStatus: c.vasUploadStatus || '',
-        }])))
-      })
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => {
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookingId])
-
-  const setDraft = (id, field) => (v) =>
-    setDrafts((d) => ({ ...d, [id]: { ...d[id], [field]: v } }))
-
-  const handleSave = async (id) => {
-    setSavingId(id)
-    try {
-      const draft = drafts[id]
-      await stockApi.updateContainerUnit(id, {
-        sealNumber: draft.sealNumber || undefined,
-        guaranteeReceiptStatus: draft.guaranteeReceiptStatus || undefined,
-        containerStatus: draft.containerStatus || undefined,
-        gateInDate: draft.gateInDate || undefined,
-        vasUploadStatus: draft.vasUploadStatus || undefined,
-      })
-      load()
-    } finally {
-      setSavingId(null)
-    }
-  }
-
-  if (loading) return <p className="text-sm text-muted">Loading allocated containers…</p>
-  if (containers.length === 0) return <p className="text-sm text-muted">No containers allocated yet.</p>
-
-  return (
-    <div className="overflow-x-auto border border-ink/25">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b-2 border-ink text-left font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
-            <th className="px-3 py-2">Type</th>
-            <th className="px-3 py-2">Container No.</th>
-            <th className="px-3 py-2">Seal Number</th>
-            <th className="px-3 py-2">Guarantee Receipt</th>
-            <th className="px-3 py-2">Container Status</th>
-            <th className="px-3 py-2">Gate-In Date</th>
-            <th className="px-3 py-2">VAS Upload</th>
-            {canUpdate && <th className="px-3 py-2 text-right">Actions</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {containers.map((c) => {
-            const d = drafts[c._id] || {}
-            return (
-              <tr key={c._id} className="border-b border-line last:border-0">
-                <td className="px-3 py-2 font-mono text-ink">{c.containerType?.code}</td>
-                <td className="px-3 py-2 font-mono text-ink">{c.containerNumber}</td>
-                <td className="px-3 py-2">
-                  <input value={d.sealNumber} onChange={(e) => setDraft(c._id, 'sealNumber')(e.target.value)} disabled={!canUpdate} className={`${inputCls} border-ink/30 font-mono`} />
-                </td>
-                <td className="px-3 py-2">
-                  <Select options={GUARANTEE_OPTIONS} value={d.guaranteeReceiptStatus} onChange={setDraft(c._id, 'guaranteeReceiptStatus')} placeholder="—" disabled={!canUpdate} />
-                </td>
-                <td className="px-3 py-2">
-                  <Select options={CONTAINER_STATUS_OPTIONS} value={d.containerStatus} onChange={setDraft(c._id, 'containerStatus')} placeholder="—" disabled={!canUpdate} />
-                </td>
-                <td className="px-3 py-2">
-                  <input type="date" value={d.gateInDate} onChange={(e) => setDraft(c._id, 'gateInDate')(e.target.value)} disabled={!canUpdate} className={`${inputCls} border-ink/30 font-mono`} />
-                </td>
-                <td className="px-3 py-2">
-                  <Select options={VAS_OPTIONS} value={d.vasUploadStatus} onChange={setDraft(c._id, 'vasUploadStatus')} placeholder="—" disabled={!canUpdate} />
-                </td>
-                {canUpdate && (
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => handleSave(c._id)}
-                      disabled={savingId === c._id}
-                      className="font-mono text-[10px] font-semibold uppercase tracking-wide text-rust transition-colors hover:text-rust-dark disabled:opacity-50"
-                    >
-                      {savingId === c._id ? 'Saving…' : 'Save'}
-                    </button>
-                  </td>
-                )}
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
     </div>
   )
 }
@@ -467,6 +410,9 @@ export default function BookingForm({
   canUpdate = true,
   onSubmit,
   onInvalidStep,
+  jobState = null, // Sprint 007 — computed step state from the server (issues, warnings, reconciliation ...)
+  lockedSteps = [],
+  onJobChanged,
 }) {
   const toast = useToast()
   const isEdit = !!booking
@@ -487,6 +433,7 @@ export default function BookingForm({
 
   // undefined activeStep (the create page) -> every section always shown.
   const visible = (step) => activeStep === undefined || activeStep === step
+  const locked = (step) => lockedSteps.includes(step)
 
   const portOptions = ports.map((p) => ({ value: p._id, label: `${p.code} — ${p.name}` }))
   const carrierOptions = carriers.map((c) => ({ value: c._id, label: `${c.code} — ${c.name}` }))
@@ -540,6 +487,12 @@ export default function BookingForm({
   const selectedVo = carriers.find((c) => c._id === form.carrier)
   const voContactOptions = (selectedVo?.contacts || []).map((c) => ({ value: c.name, label: c.phone ? `${c.name} — ${c.phone}` : c.name }))
   if (form.voContactPerson && !voContactOptions.some((o) => o.value === form.voContactPerson)) voContactOptions.unshift({ value: form.voContactPerson, label: form.voContactPerson })
+
+  const changeVessel = (name) =>
+    setForm((f) => {
+      const v = vessels.find((x) => x.name === name && (!f.carrier || (x.vesselOperator?._id || x.vesselOperator) === f.carrier))
+      return { ...f, vesselName: name || '', ...(v?.imoNumber ? { vesselImo: v.imoNumber } : {}) }
+    })
 
   const changeVo = (id) =>
     setForm((f) => {
@@ -609,7 +562,7 @@ export default function BookingForm({
     ;['packagesCount', 'grossWeight', 'netWeight', 'price', 'cost'].forEach((k) => {
       if (form[k] !== '') fd.append(k, form[k])
     })
-    ;['etd', 'atd', 'eta', 'ata', 'siCutoff', 'vgmCutoff', 'cyGateInCutoff', 'gateInDate', 'gateOutDate', 'freeTime'].forEach((k) => {
+    ;['etd', 'eta', 'ata', 'siCutoff', 'vgmCutoff', 'cyGateInCutoff', 'gateInDate', 'gateOutDate', 'freeTime'].forEach((k) => {
       if (form[k]) fd.append(k, form[k])
     })
     fd.append('isDangerous', String(form.isDangerous))
@@ -622,6 +575,18 @@ export default function BookingForm({
     fd.append('bookingConfirmationStatus', form.bookingConfirmationStatus)
     fd.append('customsSubmitted', String(form.customsSubmitted))
     fd.append('manifestStatus', form.manifestStatus)
+    // Sprint 007 — PRD fields of Steps 1-3 ('' clears a previously saved value)
+    ;['cargoReadinessDate', 'proformaInvoiceDate', 'stuffingDate', 'cyOpeningCutoff', 'customsCutoff', 'dgCutoff', 'bookingRequestSentAt', 'croIssueDate', 'croValidityDate'].forEach((k) => fd.append(k, form[k] || ''))
+    ;['proformaInvoiceNo', 'shipperReference', 'countryOfOrigin', 'exporterLicenceNo', 'specialInstructions', 'weightVarianceReason', 'polTerminal', 'podTerminal', 'serviceLoopCode', 'vesselImo', 'dgAcceptanceRef', 'croNumber', 'releasedTo', 'truckPlateDriver', 'reconciliationReason', 'stuffingLocationType', 'croIssuedBy'].forEach((k) => fd.append(k, String(form[k] ?? '').trim()))
+    fd.append('acidNumber', isEgypt ? form.acidNumber.trim() : '')
+    ;['cbm', 'voFreeTimeDays', 'setTemperature', 'flashPoint'].forEach((k) => fd.append(k, form[k] === '' ? '' : String(form[k])))
+    if (form.isDangerous) {
+      ;['properShippingName', 'subsidiaryRisk', 'packingGroup', 'emergencyContact'].forEach((k) => fd.append(k, String(form[k] ?? '').trim()))
+      fd.append('marinePollutant', String(form.marinePollutant))
+    }
+    fd.append('ventilationHumidity', hasType(/RF$/i) ? form.ventilationHumidity.trim() : '')
+    fd.append('oogDimensions', hasType(/(OT|FR)$/i) ? form.oogDimensions.trim() : '')
+    fd.append('confirmedEquipment', JSON.stringify(containerRows.filter((r) => form.confirmedEquipment[r.containerType] !== undefined && form.confirmedEquipment[r.containerType] !== '').map((r) => ({ containerType: r.containerType, quantity: Number(form.confirmedEquipment[r.containerType]) }))))
     if (form.carrier) fd.append('carrier', form.carrier)
     if (form.depot) fd.append('depot', form.depot)
     if (form.nvocc) fd.append('nvocc', form.nvocc)
@@ -650,12 +615,20 @@ export default function BookingForm({
     if (form.shippingDeclaration) fd.append('shippingDeclaration', form.shippingDeclaration)
     if (form.bookingConfirmationFile) fd.append('bookingConfirmationFile', form.bookingConfirmationFile)
     if (quotationId) fd.append('quotation', quotationId)
+    // a completed step is locked on the server — never re-send its fields
+    dropLockedFields(fd, lockedSteps, BOOKING_STEP_FIELDS)
 
     onSubmit(fd)
   }
 
   const containerRows = mergeContainerRows(form.containers)
   const typeCode = (id) => containerTypes.find((t) => t._id === id)?.code || '—'
+  const hasType = (re) => containerRows.some((r) => re.test(typeCode(r.containerType)))
+  const isEgypt = /egypt/i.test(ports.find((p) => p._id === form.pod)?.country || '')
+  const nvoccLabel = (() => { const n = nvoccs.find((x) => x._id === form.nvocc); return n ? `${n.code} — ${n.name}` : '' })()
+  const equipmentText = containerRows.map((r) => `${typeCode(r.containerType)} × ${r.quantity}`).join('  ·  ')
+  const moved = (v, q) => v !== '' && Number(q) > 0 && Math.abs(Number(v) - Number(q)) / Number(q) > 0.05
+  const weightMoved = !!quotation && (moved(form.grossWeight, quotation.grossWeight) || moved(form.cbm, quotation.cbm))
   const msdsFiles = quotation?.msdsFiles || []
   const freeTimeShown = quotation?.freeTimeBuyingDays != null ? `${quotation.freeTimeBuyingDays} days` : form.freeTime ? new Date(form.freeTime).toLocaleDateString() : ''
 
@@ -723,17 +696,17 @@ export default function BookingForm({
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
               <div>
                 <label className={labelCls}>Client Name <span className="text-rust">*</span></label>
-                <input value={form.clientName} onChange={setInput('clientName')} className={`${inputCls} ${errors.clientName ? 'border-brick' : 'border-ink/30'}`} />
+                <input value={form.clientName} disabled={locked(1)} onChange={setInput('clientName')} className={`${inputCls} ${errors.clientName ? 'border-brick' : 'border-ink/30'}`} />
                 {errors.clientName && <p className="mt-1 font-mono text-xs text-brick">{errors.clientName}</p>}
               </div>
               <div>
                 <label className={labelCls}>Client Phone <span className="text-rust">*</span></label>
-                <input value={form.clientPhone} onChange={setInput('clientPhone')} className={`${inputCls} ${errors.clientPhone ? 'border-brick' : 'border-ink/30'}`} />
+                <input value={form.clientPhone} disabled={locked(1)} onChange={setInput('clientPhone')} className={`${inputCls} ${errors.clientPhone ? 'border-brick' : 'border-ink/30'}`} />
                 {errors.clientPhone && <p className="mt-1 font-mono text-xs text-brick">{errors.clientPhone}</p>}
               </div>
               <div>
                 <label className={labelCls}>Client Email <span className="text-rust">*</span></label>
-                <input type="email" value={form.clientEmail} onChange={setInput('clientEmail')} className={`${inputCls} ${errors.clientEmail ? 'border-brick' : 'border-ink/30'}`} />
+                <input type="email" value={form.clientEmail} disabled={locked(1)} onChange={setInput('clientEmail')} className={`${inputCls} ${errors.clientEmail ? 'border-brick' : 'border-ink/30'}`} />
                 {errors.clientEmail && <p className="mt-1 font-mono text-xs text-brick">{errors.clientEmail}</p>}
               </div>
             </div>
@@ -741,8 +714,24 @@ export default function BookingForm({
         </div>
 
         {/* Shipment & Cargo — Step 1 */}
-        <div className={`${sectionCls} ${visible(STEP.shipmentCargo) ? '' : 'hidden'}`}>
+        <fieldset disabled={locked(1)} className={`${sectionCls} min-w-0 ${visible(STEP.shipmentCargo) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Shipment &amp; Cargo</h2>
+
+          {hasQuotation && quotation && (
+            <SummaryCard
+              testId="quotation-summary"
+              title="Quotation Summary (read-only)"
+              items={[
+                { label: 'Quotation', value: quotation.quotationNo },
+                { label: 'POL', value: portLabel(form.pol) },
+                { label: 'POD', value: portLabel(form.pod) },
+                { label: 'Container types & quantity', value: equipmentText },
+                { label: 'Carrier', value: nvoccLabel },
+                { label: 'Payment term', value: quotation.paymentTerms },
+                { label: 'Dangerous goods', value: form.isDangerous ? `Yes — UN ${String(form.unNumber || '').replace(/^UN/i, '')}${form.dangerousClass ? `, class ${form.dangerousClass}` : ''}` : 'No' },
+              ]}
+            />
+          )}
 
           <div>
             <label className={labelCls}>Shipping Declaration <span className="normal-case text-muted/70">(optional, PDF or image)</span></label>
@@ -793,6 +782,53 @@ export default function BookingForm({
             <input value={form.ucrNumber} onChange={setInput('ucrNumber')} className={`${inputCls} border-ink/30 font-mono`} />
           </div>
 
+          {/* Sprint 007 — customs & documents (PRD S1-12 .. S1-28) */}
+          <div className="space-y-5 border-t border-line pt-4">
+            <p className={subTitleCls}>Customs &amp; Documents</p>
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              <div>
+                <label className={labelCls}>Cargo Readiness Date <span className="text-rust">*</span></label>
+                <input type="date" aria-label="Cargo readiness date" value={form.cargoReadinessDate} onChange={setInput('cargoReadinessDate')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <div>
+                <label className={labelCls}>Proforma Invoice No <span className="text-rust">*</span></label>
+                <input aria-label="Proforma invoice number" value={form.proformaInvoiceNo} onChange={setInput('proformaInvoiceNo')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <div>
+                <label className={labelCls}>Proforma Invoice Date <span className="text-rust">*</span></label>
+                <input type="date" aria-label="Proforma invoice date" value={form.proformaInvoiceDate} onChange={setInput('proformaInvoiceDate')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+            </div>
+            {isEgypt && (
+              <div className="sm:w-1/2 sm:pr-2.5">
+                <label className={labelCls}>ACID Number <span className="text-rust">*</span> <span className="normal-case text-muted/70">(19 digits, Egypt destinations)</span></label>
+                <input aria-label="ACID number" inputMode="numeric" maxLength={19} value={form.acidNumber} onChange={setInput('acidNumber')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              <Select label="Country of Origin *" searchable clearable placeholder="Select country" options={COUNTRY_OPTIONS} value={form.countryOfOrigin} onChange={set('countryOfOrigin')} />
+              <div>
+                <label className={labelCls}>Shipper Reference / PO No</label>
+                <input aria-label="Shipper reference" value={form.shipperReference} onChange={setInput('shipperReference')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <div>
+                <label className={labelCls}>Exporter Licence No</label>
+                <input aria-label="Exporter licence" value={form.exporterLicenceNo} onChange={setInput('exporterLicenceNo')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              <Select label="Stuffing Location *" clearable placeholder="Select location type" options={STUFFING_OPTIONS} value={form.stuffingLocationType} onChange={set('stuffingLocationType')} />
+              <div>
+                <label className={labelCls}>Stuffing Date</label>
+                <input type="date" aria-label="Stuffing date" value={form.stuffingDate} onChange={setInput('stuffingDate')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <div>
+                <label className={labelCls}>Special Instructions</label>
+                <input aria-label="Special instructions" value={form.specialInstructions} onChange={setInput('specialInstructions')} className={`${inputCls} border-ink/30`} />
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
               <label className={labelCls}>No. of Packages</label>
@@ -811,6 +847,44 @@ export default function BookingForm({
               <input type="number" min="0" value={form.netWeight} onChange={setInput('netWeight')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
           </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>Total CBM <span className="text-rust">*</span></label>
+              <input type="number" min="0" aria-label="Total CBM" value={form.cbm} onChange={setInput('cbm')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            {weightMoved && (
+              <div>
+                <label className={labelCls}>Reason for the change <span className="text-rust">*</span> <span className="normal-case text-brick">(more than 5% from the quotation)</span></label>
+                <input aria-label="Weight variance reason" value={form.weightVarianceReason} onChange={setInput('weightVarianceReason')} className={`${inputCls} border-ink/30`} />
+              </div>
+            )}
+          </div>
+          {quotation && (quotation.grossWeight || quotation.cbm) && (
+            <p className="font-mono text-[11px] text-muted">Quoted: {quotation.grossWeight ? `${quotation.grossWeight} kg` : '-'} · {quotation.cbm ? `${quotation.cbm} CBM` : '-'}</p>
+          )}
+          {quotation?.commodity && form.commodity.trim() !== quotation.commodity.trim() && (
+            <p className="font-mono text-[11px] text-signal" data-testid="commodity-variance">Commodity differs from the quotation (&quot;{quotation.commodity}&quot;) — allowed, shown for the record.</p>
+          )}
+
+          {hasType(/RF$/i) && (
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <div>
+                <label className={labelCls}>Set Temperature (°C) <span className="text-rust">*</span></label>
+                <input type="number" aria-label="Set temperature" value={form.setTemperature} onChange={setInput('setTemperature')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <div>
+                <label className={labelCls}>Ventilation / Humidity</label>
+                <input aria-label="Ventilation" value={form.ventilationHumidity} onChange={setInput('ventilationHumidity')} className={`${inputCls} border-ink/30`} />
+              </div>
+            </div>
+          )}
+          {hasType(/(OT|FR)$/i) && (
+            <div>
+              <label className={labelCls}>Out-of-gauge Dimensions</label>
+              <input aria-label="OOG dimensions" value={form.oogDimensions} onChange={setInput('oogDimensions')} className={`${inputCls} border-ink/30`} />
+            </div>
+          )}
 
           {/* Dangerous goods: the flag, UN number and attachments come from the quotation */}
           <div className="space-y-4 border-t border-line pt-4">
@@ -846,6 +920,31 @@ export default function BookingForm({
               </div>
             )}
             {form.isDangerous && (
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-3" data-testid="dg-detail">
+                <div className="sm:col-span-2">
+                  <label className={labelCls}>Proper Shipping Name <span className="text-rust">*</span></label>
+                  <input aria-label="Proper shipping name" value={form.properShippingName} onChange={setInput('properShippingName')} className={`${inputCls} border-ink/30`} />
+                </div>
+                <div>
+                  <label className={labelCls}>Subsidiary Risk</label>
+                  <input aria-label="Subsidiary risk" value={form.subsidiaryRisk} onChange={setInput('subsidiaryRisk')} className={`${inputCls} border-ink/30 font-mono`} />
+                </div>
+                <Select label="Packing Group *" clearable placeholder="Select" options={PACKING_GROUP_OPTIONS} value={form.packingGroup} onChange={set('packingGroup')} />
+                <div>
+                  <label className={labelCls}>Flash Point (°C)</label>
+                  <input type="number" aria-label="Flash point" value={form.flashPoint} onChange={setInput('flashPoint')} className={`${inputCls} border-ink/30 font-mono`} />
+                </div>
+                <div>
+                  <label className={labelCls}>Emergency Contact <span className="text-rust">*</span></label>
+                  <input aria-label="Emergency contact" value={form.emergencyContact} onChange={setInput('emergencyContact')} className={`${inputCls} border-ink/30`} />
+                </div>
+                <label className="flex items-center gap-2 text-sm text-ink sm:col-span-3">
+                  <input type="checkbox" checked={form.marinePollutant} onChange={(e) => set('marinePollutant')(e.target.checked)} className="h-4 w-4" />
+                  Marine pollutant
+                </label>
+              </div>
+            )}
+            {form.isDangerous && (
               <div>
                 <span className={labelCls}>DG Attachments (MSDS{hasQuotation ? ', from the quotation' : ''})</span>
                 {msdsFiles.length > 0 ? (
@@ -862,10 +961,10 @@ export default function BookingForm({
               </div>
             )}
           </div>
-        </div>
+        </fieldset>
 
         {/* Parties — Step 1 (master-data picks; required source info for the shipping declaration) */}
-        <div className={`${sectionCls} ${visible(STEP.parties) ? '' : 'hidden'}`}>
+        <fieldset disabled={locked(1)} className={`${sectionCls} min-w-0 ${visible(STEP.parties) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Parties</h2>
 
           <div className="space-y-3">
@@ -897,11 +996,32 @@ export default function BookingForm({
             <ReadOnly label="Importer Tax Number (consignee)">{form.importTaxNumber}</ReadOnly>
             <ReadOnly label="Importer Country (consignee)">{form.importCountry}</ReadOnly>
           </div>
-        </div>
+        </fieldset>
 
         {/* Carrier Booking Confirmation — Step 2 */}
-        <div className={`${sectionCls} ${visible(STEP.carrierBooking) ? '' : 'hidden'}`}>
+        <fieldset disabled={locked(2)} className={`${sectionCls} min-w-0 ${visible(STEP.carrierBooking) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Carrier Booking Confirmation</h2>
+
+          {isEdit && (
+            <SummaryCard
+              testId="job-summary"
+              title="Job Summary (read-only)"
+              items={[
+                { label: 'Job No', value: booking.jobNo },
+                { label: 'Shipper', value: form.shipper.name },
+                { label: 'Consignee', value: form.consignee.name },
+                { label: 'POL', value: portLabel(form.pol) },
+                { label: 'POD', value: portLabel(form.pod) },
+                { label: 'Commodity', value: form.commodity },
+                { label: 'Gross weight', value: form.grossWeight !== '' ? `${form.grossWeight} kg` : '' },
+                { label: 'CBM', value: form.cbm },
+                { label: 'Carrier (container owner)', value: nvoccLabel },
+                { label: 'Container types & quantity', value: equipmentText },
+                { label: 'Dangerous goods', value: form.isDangerous ? `Yes — UN ${String(form.unNumber || '').replace(/^UN/i, '')}` : 'No' },
+                { label: 'Cargo readiness / target ETD', value: `${form.cargoReadinessDate || '-'} / ${quotation?.targetEtd ? String(quotation.targetEtd).slice(0, 10) : '-'}` },
+              ]}
+            />
+          )}
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
             <Select label="Vessel Operator (VO)" searchable clearable placeholder="Select vessel operator" options={carrierOptions} value={form.carrier} onChange={changeVo} />
@@ -912,11 +1032,34 @@ export default function BookingForm({
               placeholder={vesselOptions.length ? 'Select vessel' : 'No vessels for this VO'}
               options={vesselOptions}
               value={form.vesselName}
-              onChange={set('vesselName')}
+              onChange={changeVessel}
             />
             <div>
               <label className={labelCls}>Voyage No</label>
               <input value={form.voyageNo} onChange={setInput('voyageNo')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
+            <div>
+              <label className={labelCls}>POL Terminal <span className="text-rust">*</span></label>
+              <input aria-label="POL terminal" value={form.polTerminal} onChange={setInput('polTerminal')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>POD Terminal <span className="text-rust">*</span> <span className="normal-case text-muted/70">(TBA allowed)</span></label>
+              <input aria-label="POD terminal" value={form.podTerminal} onChange={setInput('podTerminal')} className={`${inputCls} border-ink/30`} />
+            </div>
+            <div>
+              <label className={labelCls}>Service / Loop Code</label>
+              <input aria-label="Service code" value={form.serviceLoopCode} onChange={setInput('serviceLoopCode')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>Vessel IMO</label>
+              <input aria-label="Vessel IMO" value={form.vesselImo} onChange={setInput('vesselImo')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <span className={labelCls}>Booking Type</span>
+              <p className="min-h-[42px] border border-ink/20 bg-paper/60 px-3.5 py-2.5 text-sm font-semibold text-ink" title="Shipper-owned containers — always SOC">SOC</p>
             </div>
           </div>
 
@@ -925,10 +1068,7 @@ export default function BookingForm({
               <label className={labelCls}>ETD <span className="normal-case text-rust">· POL: {portLabel(form.pol) || '-'}</span></label>
               <input type="date" value={form.etd} onChange={setInput('etd')} className={`${inputCls} border-ink/30 font-mono`} />
             </div>
-            <div>
-              <label className={labelCls}>ATD</label>
-              <input type="date" value={form.atd} onChange={setInput('atd')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
+            <ReadOnly label="ATD (recorded in Step 5)">{form.atd}</ReadOnly>
             <div>
               <label className={labelCls}>ETA <span className="normal-case text-rust">· POD: {portLabel(form.pod) || '-'}</span></label>
               <input type="date" value={form.eta} onChange={setInput('eta')} className={`${inputCls} border-ink/30 font-mono`} />
@@ -972,6 +1112,70 @@ export default function BookingForm({
             </div>
           </div>
 
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+            <div>
+              <label className={labelCls}>CY Opening (early gate-in)</label>
+              <input type="datetime-local" aria-label="CY opening" value={form.cyOpeningCutoff} onChange={setInput('cyOpeningCutoff')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>Customs Cut-off</label>
+              <input type="datetime-local" aria-label="Customs cut-off" value={form.customsCutoff} onChange={setInput('customsCutoff')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            {form.isDangerous && (
+              <div>
+                <label className={labelCls}>DG Cut-off <span className="text-rust">*</span></label>
+                <input type="datetime-local" aria-label="DG cut-off" value={form.dgCutoff} onChange={setInput('dgCutoff')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+            <div>
+              <label className={labelCls}>Booking Request Sent</label>
+              <input type="datetime-local" aria-label="Booking request sent" value={form.bookingRequestSentAt} onChange={setInput('bookingRequestSentAt')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>VO Free Time at POD (days)</label>
+              <input type="number" min="0" aria-label="VO free time" value={form.voFreeTimeDays} onChange={setInput('voFreeTimeDays')} className={`${inputCls} border-ink/30 font-mono`} />
+              {quotation?.freeTimeBuyingDays != null && <p className="mt-1 font-mono text-[10px] text-muted">Client was quoted {quotation.freeTimeBuyingDays} days</p>}
+            </div>
+            {form.isDangerous && (
+              <div>
+                <label className={labelCls}>DG Acceptance Ref <span className="text-rust">*</span></label>
+                <input aria-label="DG acceptance ref" value={form.dgAcceptanceRef} onChange={setInput('dgAcceptanceRef')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+            )}
+          </div>
+
+          <div data-testid="confirmed-equipment">
+            <label className={labelCls}>Confirmed Equipment <span className="text-rust">*</span> <span className="normal-case text-muted/70">(what the VO accepted — must cover the quantities required)</span></label>
+            <div className="flex flex-wrap items-center gap-4">
+              {containerRows.map((r) => (
+                <label key={r.containerType} className="flex items-center gap-2 text-sm text-ink">
+                  <span className="font-mono">{typeCode(r.containerType)}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    aria-label={`Confirmed ${typeCode(r.containerType)}`}
+                    value={form.confirmedEquipment[r.containerType] ?? ''}
+                    onChange={(e) => set('confirmedEquipment')({ ...form.confirmedEquipment, [r.containerType]: e.target.value })}
+                    className={`${inputCls} w-24 border-ink/30 font-mono`}
+                  />
+                  <span className="font-mono text-xs text-muted">of {r.quantity}</span>
+                </label>
+              ))}
+              {containerRows.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => set('confirmedEquipment')(Object.fromEntries(containerRows.map((r) => [r.containerType, r.quantity])))}
+                  className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-rust transition-colors hover:text-rust-dark"
+                >
+                  Same as requested
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <Select label="Booking Confirmation Status" options={BOOKING_CONFIRMATION_OPTIONS} value={form.bookingConfirmationStatus} onChange={set('bookingConfirmationStatus')} />
             <div>
@@ -986,10 +1190,10 @@ export default function BookingForm({
               {errors.bookingConfirmationFile && <p className="mt-1 font-mono text-xs text-brick">{errors.bookingConfirmationFile}</p>}
             </div>
           </div>
-        </div>
+        </fieldset>
 
         {/* Commercial — Step 2 (view only for a job that came from a quotation) */}
-        <div className={`${sectionCls} ${visible(STEP.commercial) ? '' : 'hidden'}`}>
+        <fieldset disabled={locked(2)} className={`${sectionCls} min-w-0 ${visible(STEP.commercial) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Commercial</h2>
           {hasQuotation ? (
             <div className="space-y-2">
@@ -1020,14 +1224,59 @@ export default function BookingForm({
               </div>
             </div>
           )}
-        </div>
+        </fieldset>
 
         {/* Containers — Step 3 (Depot / Container) */}
-        <div className={`${sectionCls} ${visible(STEP.containers) ? '' : 'hidden'}`}>
+        <fieldset disabled={locked(3)} className={`${sectionCls} min-w-0 ${visible(STEP.containers) ? '' : 'hidden'}`}>
           <h2 className={sectionTitleCls}>Containers</h2>
+
+          {isEdit && (
+            <SummaryCard
+              testId="requirement"
+              title="Requirement (read-only)"
+              items={[
+                { label: 'Carrier (container owner)', value: nvoccLabel },
+                { label: 'Container types & quantity required', value: equipmentText },
+                { label: 'Vessel / voyage / ETD', value: `${form.vesselName || '-'} / ${form.voyageNo || '-'} / ${form.etd || '-'}` },
+                { label: 'CY cut-off / VGM cut-off', value: `${form.cyGateInCutoff ? form.cyGateInCutoff.replace('T', ' ') : '-'} / ${form.vgmCutoff ? form.vgmCutoff.replace('T', ' ') : '-'}` },
+                { label: 'Declared packages / gross / CBM', value: `${form.packagesCount || '-'} / ${form.grossWeight !== '' ? form.grossWeight + ' kg' : '-'} / ${form.cbm !== '' ? form.cbm : '-'}` },
+                { label: 'Deliver full container to', value: form.polTerminal },
+              ]}
+            />
+          )}
 
           <Select label="Depot" searchable placeholder="Select depot" options={depotOptions} value={form.depot} onChange={set('depot')} />
           <p className="font-mono text-xs text-muted">Required before this booking can be confirmed.</p>
+
+          {/* Sprint 007 — Release Order (PRD S3-10 .. S3-16) */}
+          <div className="space-y-5 border-t border-line pt-4" data-testid="release-order">
+            <p className={subTitleCls}>Release Order (CRO)</p>
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-4">
+              <div>
+                <label className={labelCls}>CRO Number <span className="text-rust">*</span></label>
+                <input aria-label="CRO number" value={form.croNumber} onChange={setInput('croNumber')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <div>
+                <label className={labelCls}>CRO Issue Date <span className="text-rust">*</span></label>
+                <input type="date" aria-label="CRO issue date" value={form.croIssueDate} onChange={setInput('croIssueDate')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <div>
+                <label className={labelCls}>CRO Validity Date <span className="text-rust">*</span></label>
+                <input type="date" aria-label="CRO validity date" value={form.croValidityDate} onChange={setInput('croValidityDate')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <Select label="CRO Issued By *" clearable placeholder="Select" options={CRO_ISSUER_OPTIONS} value={form.croIssuedBy} onChange={set('croIssuedBy')} />
+            </div>
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <div>
+                <label className={labelCls}>Released To (trucker / shipper)</label>
+                <input aria-label="Released to" value={form.releasedTo} onChange={setInput('releasedTo')} className={`${inputCls} border-ink/30`} />
+              </div>
+              <div>
+                <label className={labelCls}>Truck Plate &amp; Driver</label>
+                <input aria-label="Truck plate and driver" value={form.truckPlateDriver} onChange={setInput('truckPlateDriver')} className={`${inputCls} border-ink/30`} />
+              </div>
+            </div>
+          </div>
 
           {!isConfirmed && (
             <div>
@@ -1061,12 +1310,17 @@ export default function BookingForm({
           </div>
 
           {isConfirmed && (
-            <div>
+            <div className="space-y-3">
               <label className={labelCls}>Allocated Containers — Fulfillment</label>
-              <AllocatedContainersPanel bookingId={booking._id} canUpdate={canUpdate} />
+              <ContainerGrid booking={booking} containerTypes={containerTypes} locked={locked(3)} canUpdate={canUpdate} onChanged={onJobChanged} />
+              <ReconciliationPanel reconciliation={jobState?.reconciliation} />
+              <div>
+                <label className={labelCls}>Variance Reason <span className="normal-case text-muted/70">(only needed when a reconciliation check fails)</span></label>
+                <input aria-label="Reconciliation reason" value={form.reconciliationReason} onChange={setInput('reconciliationReason')} className={`${inputCls} border-ink/30`} />
+              </div>
             </div>
           )}
-        </div>
+        </fieldset>
 
         {/* Customs (Nafeza) — Step 4 (Final Shipping Declaration), booking-owned sub-block */}
         <div className={`${sectionCls} ${visible(STEP.customsNafeza) ? '' : 'hidden'}`}>
