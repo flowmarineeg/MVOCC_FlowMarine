@@ -2,13 +2,18 @@
 
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { FaEye, FaEdit, FaExclamationTriangle } from 'react-icons/fa'
+import { FaEye, FaEdit, FaTrash, FaExclamationTriangle } from 'react-icons/fa'
 import Badge from '@/components/ui/Badge'
 import Plate from '@/components/ui/Plate'
 
-const LOCKED_STATUSES = ['sent', 'approved', 'rejected']
+const LOCKED_STATUSES = ['sent', 'approved', 'rejected', 'expired']
 
-export default function QuotationTable({ quotations = [], canUpdate = false, canOverrideLock = false }) {
+const DAY = 24 * 3600 * 1000
+// Whole days left until the validity date (inclusive); null when not applicable.
+const daysLeft = (q) =>
+  q.validityDate && ['sent', 'negotiation'].includes(q.status) ? Math.ceil((new Date(q.validityDate).getTime() + DAY - Date.now()) / DAY) : null
+
+export default function QuotationTable({ quotations = [], canUpdate = false, canOverrideLock = false, onDeleteRequest }) {
   return (
     <div className="overflow-x-auto border border-ink/25 bg-card">
       <table className="w-full text-sm">
@@ -19,6 +24,7 @@ export default function QuotationTable({ quotations = [], canUpdate = false, can
             <th className="px-4 py-3">POL</th>
             <th className="px-4 py-3">POD</th>
             <th className="px-4 py-3">Carrier</th>
+            <th className="px-4 py-3">Valid Until</th>
             <th className="px-4 py-3">Margin</th>
             <th className="px-4 py-3">Status</th>
             <th className="px-4 py-3 text-right">Actions</th>
@@ -38,6 +44,12 @@ export default function QuotationTable({ quotations = [], canUpdate = false, can
               <td className="px-4 py-3 font-mono text-xs text-muted">{q.pol?.code || '-'}</td>
               <td className="px-4 py-3 font-mono text-xs text-muted">{q.pod?.code || '-'}</td>
               <td className="px-4 py-3 font-mono text-xs text-muted">{q.nvocc?.code || '-'}</td>
+              <td className="px-4 py-3 font-mono text-xs text-muted">
+                {q.validityDate ? new Date(q.validityDate).toISOString().slice(0, 10) : '-'}
+                {daysLeft(q) !== null && daysLeft(q) <= 2 && (
+                  <span data-testid="expiring-soon" className="ml-2 text-signal">{daysLeft(q) <= 0 ? 'today' : `in ${daysLeft(q)}d`}</span>
+                )}
+              </td>
               <td className="px-4 py-3 font-mono text-xs">
                 <span className={q.belowMinMargin ? 'inline-flex items-center gap-1 text-brick' : 'text-muted'}>
                   {q.belowMinMargin && <FaExclamationTriangle className="text-[10px]" />}
@@ -62,6 +74,15 @@ export default function QuotationTable({ quotations = [], canUpdate = false, can
                     >
                       <FaEdit className="text-xs" />
                     </Link>
+                  )}
+                  {canUpdate && onDeleteRequest && (
+                    <button
+                      onClick={() => onDeleteRequest(q)}
+                      className="flex h-8 w-8 items-center justify-center text-muted transition-colors hover:bg-brick/10 hover:text-brick"
+                      title="Delete"
+                    >
+                      <FaTrash className="text-xs" />
+                    </button>
                   )}
                 </div>
               </td>

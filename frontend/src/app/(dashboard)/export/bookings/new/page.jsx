@@ -39,6 +39,7 @@ function prefillFromQuotation(quotation) {
     hsCode: quotation.hsCode || '',
     isDangerous: !!quotation.isDangerous,
     unNumber: quotation.isDangerous ? quotation.unNumber || '' : '',
+    dangerousClass: quotation.isDangerous ? quotation.imoClass || '' : '',
     // the quotation holds estimated weights per container line; the job's totals start as their sum
     ...sumWeights(quotation.containers),
     containers: (quotation.containers || []).map((c) => ({

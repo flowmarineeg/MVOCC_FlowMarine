@@ -1,7 +1,7 @@
 import { body } from 'express-validator'
 import mongoose from 'mongoose'
 import ContainerType from '../../MasterData/ContainerType/containerType.model.js'
-import { ORIGIN_LINE_KEYS, DESTINATION_LINE_KEYS } from './quotation.model.js'
+import { ORIGIN_LINE_KEYS, DESTINATION_LINE_KEYS, IMO_CLASSES, PACKING_GROUPS, PAYABLE_TYPES, BILL_TO_TYPES, PAYMENT_RESPONSIBILITIES } from './quotation.model.js'
 
 // Same shape as booking.validation.js's validateContainerEntries — checks
 // for duplicate container types and confirms every referenced ContainerType
@@ -30,6 +30,14 @@ const validateContainerEntries = async (containers) => {
 
 const RATE_LINE_FIELDS = ['rate20', 'rate40', 'qty20', 'qty40']
 
+// PRD Q-60..Q-62 per-line metadata (who is paid / who is billed). Blank is allowed.
+const lineMetaRules = (path) => [
+  body(`${path}.payableType`).optional({ checkFalsy: true }).isIn(PAYABLE_TYPES).withMessage('Invalid payable-to type'),
+  body(`${path}.payableTo`).optional().trim(),
+  body(`${path}.billTo`).optional({ checkFalsy: true }).isIn(BILL_TO_TYPES).withMessage('Invalid bill-to'),
+  body(`${path}.paymentResponsibility`).optional({ checkFalsy: true }).isIn(PAYMENT_RESPONSIBILITIES).withMessage('Invalid payment responsibility'),
+]
+
 // Rules for one rate table (Origin or Destination, Buying or Selling):
 // every fixed line and every free-form custom line carries the same four
 // optional non-negative numbers. `prefix` is e.g. 'buyingOrigin'.
@@ -41,10 +49,12 @@ const rateTableRules = (prefix, lineKeys) => [
     )
   ),
   ...lineKeys.map((key) => body(`${prefix}.${key}.currency`).optional().trim()),
+  ...lineKeys.flatMap((key) => lineMetaRules(`${prefix}.${key}`)),
   body(`${prefix}.hidden`).optional().isArray().withMessage(`${prefix}.hidden must be a list`),
   body(`${prefix}.hidden.*`).isIn(lineKeys).withMessage('Unknown charge line'),
   body(`${prefix}.custom`).optional().isArray(),
   body(`${prefix}.custom.*.currency`).optional().trim(),
+  ...lineMetaRules(`${prefix}.custom.*`),
   body(`${prefix}.custom.*.uid`).optional().trim(),
   body(`${prefix}.custom.*.label`).optional().trim().notEmpty().withMessage('Custom charge label is required'),
   ...RATE_LINE_FIELDS.map((field) =>
@@ -52,13 +62,36 @@ const rateTableRules = (prefix, lineKeys) => [
   ),
 ]
 
+// Save-time checks stay lenient (a draft can be incomplete); what must be filled
+// before a quotation can be sent / approved / converted lives in the service's
+// getReadinessIssues(). Here: the UN number is required, formats are checked,
+// and N/A packing group is only valid for the classes that have none.
+const NO_PACKING_GROUP = (cls) => /^(1|2)\./.test(cls) || cls === '6.2' || cls === '7'
+const isDangerousBody = (req) => req.body.isDangerous === true || req.body.isDangerous === 'true'
+
 const dangerousGoodsRules = [
   body('isDangerous').optional().isBoolean().withMessage('isDangerous must be true or false').toBoolean(),
   body('unNumber').custom((value, { req }) => {
-    const isDangerous = req.body.isDangerous === true || req.body.isDangerous === 'true'
-    if (isDangerous && !(value && value.trim())) throw new Error('UN Number is required when cargo is marked dangerous')
+    if (!isDangerousBody(req)) return true
+    const v = String(value || '').trim()
+    if (!v) throw new Error('UN Number is required when cargo is marked dangerous')
+    if (!/^(UN)?\d{4}$/i.test(v)) throw new Error('UN Number must be 4 digits (e.g. 1203)')
     return true
   }),
+  body('properShippingName').optional().trim(),
+  body('imoClass').optional({ checkFalsy: true }).isIn(IMO_CLASSES).withMessage('Invalid IMO class'),
+  body('subsidiaryRisk').optional({ checkFalsy: true }).isIn(IMO_CLASSES).withMessage('Invalid subsidiary risk class'),
+  body('packingGroup')
+    .optional({ checkFalsy: true })
+    .isIn(PACKING_GROUPS).withMessage('Invalid packing group')
+    .custom((pg, { req }) => {
+      const cls = String(req.body.imoClass || '')
+      if (pg === 'N/A' && cls && !NO_PACKING_GROUP(cls)) throw new Error('Packing group is required for IMO class ' + cls + ' (N/A is only for classes 1, 2, 6.2 and 7)')
+      return true
+    }),
+  body('flashPoint').optional({ checkFalsy: true }).isFloat().withMessage('Flash point must be a number'),
+  body('marinePollutant').optional().isBoolean().withMessage('Marine pollutant must be true or false').toBoolean(),
+  body('emergencyContact').optional().trim(),
 ]
 
 const sharedOptionalRules = [
@@ -77,6 +110,28 @@ const sharedOptionalRules = [
   body('targetRate').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Target rate must be a positive number'),
   body('cargoReadinessDate').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid cargo readiness date'),
   body('specialNotes').optional().trim(),
+  body('validityDate')
+    .optional({ checkFalsy: true })
+    .isISO8601().withMessage('Invalid validity date')
+    .custom((validity, { req }) => {
+      const from = req.body.inquiryDate
+      if (from && new Date(validity) < new Date(from)) throw new Error('Validity date must not be before the quotation date')
+      return true
+    }),
+  body('finalDestination').optional({ checkFalsy: true }).isMongoId().withMessage('Valid final destination required'),
+  body('transshipmentPort')
+    .optional({ checkFalsy: true })
+    .isMongoId().withMessage('Valid transshipment port required')
+    .custom((port, { req }) => {
+      if (String(port) === String(req.body.pol) || String(port) === String(req.body.pod)) throw new Error('Transshipment port must differ from POL and POD')
+      return true
+    }),
+  body('plannedVesselOperator').optional({ checkFalsy: true }).isMongoId().withMessage('Valid vessel operator required'),
+  body('detentionFreeTimeDays').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('Detention free time must be a positive number'),
+  body('termsRemarks').optional().trim(),
+  body('setTemperature').optional({ checkFalsy: true }).isFloat().withMessage('Set temperature must be a number'),
+  body('ventilationHumidity').optional().trim(),
+  body('oogDimensions').optional().trim(),
   body('nvocc').optional({ checkFalsy: true }).isMongoId().withMessage('Valid NVOCC ID required'),
 
   body('rateValidFrom').optional({ checkFalsy: true }).isISO8601().withMessage('Invalid rate validity from date'),

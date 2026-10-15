@@ -9,6 +9,7 @@ import { PageLoader } from '@/components/ui/Spinner'
 import EmptyState from '@/components/ui/EmptyState'
 import Pagination from '@/components/ui/Pagination'
 import QuotationTable from '@/components/export/QuotationTable'
+import DeleteQuotationModal from '@/components/export/DeleteQuotationModal'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
 
@@ -19,6 +20,7 @@ const statusOptions = [
   { value: 'negotiation', label: 'Negotiation' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
+  { value: 'expired', label: 'Expired' },
 ]
 
 export default function QuotationsListPage() {
@@ -36,6 +38,7 @@ export default function QuotationsListPage() {
   const [limit, setLimit] = useState(20)
   const [pages, setPages] = useState(1)
   const [total, setTotal] = useState(0)
+  const [deleteTarget, setDeleteTarget] = useState(null)
 
   const fetchQuotations = () => {
     setLoading(true)
@@ -108,10 +111,19 @@ export default function QuotationsListPage() {
         />
       ) : (
         <>
-          <QuotationTable quotations={quotations} canUpdate={canUpdate} canOverrideLock={canOverrideLock} />
+          <QuotationTable quotations={quotations} canUpdate={canUpdate} canOverrideLock={canOverrideLock} onDeleteRequest={setDeleteTarget} />
           <Pagination page={page} pages={pages} total={total} limit={limit} onPageChange={setPage} onLimitChange={setLimit} />
         </>
       )}
+
+      <DeleteQuotationModal
+        quotation={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null)
+          fetchQuotations()
+        }}
+      />
     </div>
   )
 }

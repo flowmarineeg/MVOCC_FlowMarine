@@ -23,6 +23,8 @@ const ENTITIES = {
     fields: [
       { key: 'code', label: 'Code' },
       { key: 'label', label: 'Label' },
+      { key: 'maxPayloadKg', label: 'Max Payload (kg)', type: 'number', required: false },
+      { key: 'capacityCbm', label: 'Capacity (CBM)', type: 'number', required: false },
     ],
     get: () => masterDataApi.getContainerTypes(false),
     create: masterDataApi.createContainerType,
@@ -47,9 +49,20 @@ const ENTITIES = {
   nvoccs: {
     tabLabel: 'Carriers',
     singular: 'Carrier',
-    fields: [
+    fields: (data) => [
       ...masterDataApi.partyFormFields({ codeLabel: 'Code', location: true, contractType: true }),
       { key: 'tradeLane', label: 'Trade Lane Covered', required: false, table: false },
+      {
+        key: 'portsServed', label: 'Ports Served (POD)', type: 'multiselect', required: false, table: false,
+        options: (data.ports || []).map((p) => ({ value: p._id, label: `${p.code} — ${p.name}` })),
+        hint: 'Leave all unticked if this carrier serves every port. A quotation only offers the carrier for the ports ticked here.',
+      },
+      {
+        key: 'acceptsDg', label: 'Accepts Dangerous Goods', type: 'select', default: 'true', required: false,
+        options: [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }],
+        format: (item) => (item.acceptsDg === false ? 'No' : 'Yes'),
+      },
+      { key: 'defaultFreeTimeDays', label: 'Default Free Time (days)', type: 'number', required: false, table: false },
     ],
     get: () => masterDataApi.getNvoccs(false),
     create: masterDataApi.createNvocc,

@@ -1,6 +1,9 @@
 import mongoose from 'mongoose'
 
 export const MSDS_MAX_FILES = 5
+export const IMO_CLASSES = ['1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '2.1', '2.2', '2.3', '3', '4.1', '4.2', '4.3', '5.1', '5.2', '6.1', '6.2', '7', '8', '9']
+export const PACKING_GROUPS = ['I', 'II', 'III', 'N/A']
+export const QUOTATION_STATUSES = ['draft', 'sent', 'negotiation', 'approved', 'rejected', 'expired']
 
 const containerEntrySchema = new mongoose.Schema(
   {
@@ -32,7 +35,21 @@ const amount = { type: Number, min: [0, 'Must be a positive number'] }
 // Every line carries its OWN currency (blank = "no currency" group). Lines saved
 // before per-row currencies existed have none; the service then falls back to
 // the legacy side/table currency fields below.
-const rateLineFields = { rate20: amount, rate40: amount, qty20: amount, qty40: amount, currency: { type: String, trim: true, uppercase: true } }
+export const PAYABLE_TYPES = ['Carrier', 'VO', 'Depot', 'Terminal', 'Trucker', 'Other']
+export const BILL_TO_TYPES = ['Shipper', 'Consignee', 'Other']
+export const PAYMENT_RESPONSIBILITIES = ['Prepaid', 'Collect']
+
+// payableType/payableTo (buying side) and billTo/paymentResponsibility (selling
+// side) are PRD Q-60..Q-62 metadata: who the agent pays / who is billed. They
+// never take part in the profitability maths.
+const rateLineFields = {
+  rate20: amount, rate40: amount, qty20: amount, qty40: amount,
+  currency: { type: String, trim: true, uppercase: true },
+  payableType: { type: String, enum: [...PAYABLE_TYPES, ''] },
+  payableTo: { type: String, trim: true },
+  billTo: { type: String, enum: [...BILL_TO_TYPES, ''] },
+  paymentResponsibility: { type: String, enum: [...PAYMENT_RESPONSIBILITIES, ''] },
+}
 const rateLineSchema = new mongoose.Schema(rateLineFields, { _id: false })
 // uid is a client-generated id that links a custom row in a Buying table to its
 // mirrored row in the Selling table (buying -> selling sync); never shown.
@@ -80,6 +97,14 @@ const quotationSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
+
+    // Revisions keep the base number and add -R1, -R2 ... (quotationNo stays unique).
+    baseNo: { type: String, trim: true },
+    revision: { type: Number, default: 0, min: 0 },
+    revisedFrom: { type: mongoose.Schema.Types.ObjectId, ref: 'Quotation', default: null },
+    revisedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Quotation', default: null },
+    // Q-03 — a sent/negotiation quote past this date becomes 'expired' (lazily).
+    validityDate: { type: Date },
 
     // ─── 1) Client Request ────────────────────────────────────────────
     customerType: {
@@ -137,6 +162,18 @@ const quotationSchema = new mongoose.Schema(
         message: 'UN Number is required when cargo is marked dangerous',
       },
     },
+    // Dangerous-goods detail (PRD Q-32..Q-39) — only kept while isDangerous.
+    properShippingName: { type: String, trim: true },
+    imoClass: { type: String, enum: [...IMO_CLASSES, ''] },
+    subsidiaryRisk: { type: String, enum: [...IMO_CLASSES, ''] },
+    packingGroup: { type: String, enum: [...PACKING_GROUPS, ''] },
+    flashPoint: { type: Number },
+    marinePollutant: { type: Boolean, default: false },
+    emergencyContact: { type: String, trim: true },
+    // Reefer (Q-26/27) and out-of-gauge (Q-28) data — only kept for matching container types.
+    setTemperature: { type: Number },
+    ventilationHumidity: { type: String, trim: true },
+    oogDimensions: { type: String, trim: true },
     // MSDS (safety data sheet) uploads for dangerous cargo — max MSDS_MAX_FILES.
     // Only ever written from real multer uploads (never from the JSON body, so
     // it is not in EDITABLE_FIELDS) and streamed back through an auth'd route.
@@ -153,6 +190,8 @@ const quotationSchema = new mongoose.Schema(
     },
     pol: { type: mongoose.Schema.Types.ObjectId, ref: 'Port', required: [true, 'Port of Loading is required'] },
     pod: { type: mongoose.Schema.Types.ObjectId, ref: 'Port', required: [true, 'Port of Discharge is required'] },
+    finalDestination: { type: mongoose.Schema.Types.ObjectId, ref: 'Port', default: null },
+    transshipmentPort: { type: mongoose.Schema.Types.ObjectId, ref: 'Port', default: null },
     incoterms: {
       type: String,
       enum: ['EXW', 'FCA', 'FOB', 'CPT', 'CIP', 'CFR', 'CIF', 'DAP', 'DPU', 'DDP'],
@@ -164,6 +203,8 @@ const quotationSchema = new mongoose.Schema(
 
     // ─── 2) NVOCC ──────────────────────────────────────────────────────
     nvocc: { type: mongoose.Schema.Types.ObjectId, ref: 'Nvocc' },
+    // Estimate only (PRD Q-41) — the confirmed VO is chosen on the booking.
+    plannedVesselOperator: { type: mongoose.Schema.Types.ObjectId, ref: 'VesselOperator', default: null },
 
     // ─── 3) Buying ─────────────────────────────────────────────────────
     // buyingCurrency / buyingDestinationCurrency (and the selling pair below) are
@@ -175,7 +216,10 @@ const quotationSchema = new mongoose.Schema(
     buyingOrigin: { type: originTableSchema, default: () => ({}) },
     buyingDestinationCurrency: { type: String, trim: true, default: 'USD' },
     buyingDestination: { type: destinationTableSchema, default: () => ({}) },
+    // Client demurrage free time (Q-43) — the field was always called "buying"
+    // days; the form label is "Free Time (demurrage, days)".
     freeTimeBuyingDays: { type: Number, min: [0, 'Must be a positive number'] },
+    detentionFreeTimeDays: { type: Number, min: [0, 'Must be a positive number'] },
     rateSourceReference: { type: String, trim: true },
 
     // ─── 4) Selling ────────────────────────────────────────────────────
@@ -187,6 +231,7 @@ const quotationSchema = new mongoose.Schema(
       type: String,
       enum: ['Freight Prepaid', 'Freight Collect'],
     },
+    termsRemarks: { type: String, trim: true },
 
     // ─── 5) Profitability (server-computed — see quotation.service.js) ──
     // Profit is computed PER CURRENCY (no conversion between currencies).
@@ -204,7 +249,7 @@ const quotationSchema = new mongoose.Schema(
     // ─── 6) Status & Decision ────────────────────────────────────────
     status: {
       type: String,
-      enum: ['draft', 'sent', 'negotiation', 'approved', 'rejected'],
+      enum: QUOTATION_STATUSES,
       default: 'draft',
     },
     rejectionReason: { type: String, trim: true },
@@ -221,6 +266,8 @@ const quotationSchema = new mongoose.Schema(
 )
 
 quotationSchema.index({ status: 1 })
+quotationSchema.index({ baseNo: 1 })
+quotationSchema.index({ validityDate: 1 })
 quotationSchema.index({ nvocc: 1 })
 quotationSchema.index({ customer: 1 })
 quotationSchema.index({ salesRep: 1 })

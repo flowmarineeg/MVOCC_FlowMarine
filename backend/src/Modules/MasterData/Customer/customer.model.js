@@ -53,6 +53,8 @@ const customerSchema = new mongoose.Schema(
     taxCertificateFile: fileSchema,
     registrationCertificateFile: fileSchema,
     contacts: { type: [contactSchema], default: [] },
+    // PRD Q-10: a customer on credit hold cannot be quoted.
+    creditHold: { type: Boolean, default: false },
     isActive: {
       type: Boolean,
       default: true,

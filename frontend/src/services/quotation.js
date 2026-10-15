@@ -41,3 +41,26 @@ export const downloadMsds = async (id, file) => {
   link.remove()
   window.URL.revokeObjectURL(url)
 }
+
+export const deleteQuotation = (id) =>
+  api.delete(`/export/quotations/${id}`).then((r) => r.data)
+
+// Revise (new -R<n> draft that supersedes this one) / Duplicate (new FQ number).
+export const reviseQuotation = (id) =>
+  api.post(`/export/quotations/${id}/revise`).then((r) => r.data.data)
+
+export const duplicateQuotation = (id) =>
+  api.post(`/export/quotations/${id}/duplicate`).then((r) => r.data.data)
+
+// Client-facing PDF (selling side only).
+export const downloadPdf = async (quotation) => {
+  const res = await api.get(`/export/quotations/${quotation._id}/pdf`, { responseType: 'blob' })
+  const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', `${quotation.quotationNo}.pdf`)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}

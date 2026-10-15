@@ -139,6 +139,11 @@ export const CUSTOMER_FORM_FIELDS = [
   { key: 'phone', label: 'Phone', required: false },
   { key: 'email', label: 'Email', type: 'email', required: false },
   {
+    key: 'creditHold', label: 'Credit Hold', type: 'select', default: 'false', required: false,
+    options: [{ value: 'false', label: 'No' }, { value: 'true', label: 'Yes — block new quotations' }],
+    format: (item) => (item.creditHold ? 'On hold' : ''),
+  },
+  {
     key: 'taxCertificateFile', label: 'Tax Certification', type: 'file', required: false, table: false,
     download: (customer) => downloadCustomerFile(customer, 'tax'), remove: (customer) => deleteCustomerFile(customer, 'tax'),
   },

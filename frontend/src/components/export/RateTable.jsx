@@ -3,6 +3,7 @@
 import { CURRENCY_CODES } from '@/constants/currencies'
 import { lineCurrency, lineSizeTotal, lineTotal, tableTotalsByCurrency } from '@/utils/quotationCalc'
 import { newUid } from '@/utils/quotationSync'
+import { PAYABLE_TYPES, BILL_TO_TYPES, PAYMENT_RESPONSIBILITIES } from '@/constants/quotationRates'
 
 const fmt = (n) => (Number.isFinite(n) ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00')
 
@@ -26,7 +27,11 @@ const hasData = (line = {}) => ['rate20', 'rate40', 'qty20', 'qty40'].some((f) =
 // `readOnly` shows the table without any way to edit it (inputs disabled, no
 // add / remove / restore) — used for the Selling Destination table, which just
 // follows the Buying one.
-export default function RateTable({ title, lines, value, onChange, sizes, qtyBySize, readOnly = false }) {
+// `meta` adds the PRD Q-60..Q-62 columns: 'buying' -> Payable to (vendor type + name),
+// 'selling' -> Bill to + Payment (Prepaid / Collect). They stay editable even in a
+// `readOnly` table (the rates are view-only, who-pays is still the user's call).
+export default function RateTable({ title, lines, value, onChange, sizes, qtyBySize, readOnly = false, meta = null }) {
+  const metaCols = meta === 'buying' ? 1 : meta === 'selling' ? 2 : 0
   const custom = value.custom || []
   const hidden = value.hidden || []
   const visibleLines = lines.filter(({ key }) => !hidden.includes(key))
@@ -35,7 +40,7 @@ export default function RateTable({ title, lines, value, onChange, sizes, qtyByS
 
   const setCell = (key, field, v) => onChange({ ...value, [key]: { ...value[key], [field]: v } })
   const addCustom = () =>
-    onChange({ ...value, custom: [...custom, { uid: newUid(), label: '', rate20: '', rate40: '', qty20: '', qty40: '', currency: DEFAULT_LINE_CURRENCY }] })
+    onChange({ ...value, custom: [...custom, { uid: newUid(), label: '', rate20: '', rate40: '', qty20: '', qty40: '', currency: DEFAULT_LINE_CURRENCY, payableType: '', payableTo: '', billTo: '', paymentResponsibility: '' }] })
   const updateCustom = (i, patch) => onChange({ ...value, custom: custom.map((l, idx) => (idx === i ? { ...l, ...patch } : l)) })
   const removeCustom = (i) => onChange({ ...value, custom: custom.filter((_, idx) => idx !== i) })
 
@@ -52,7 +57,7 @@ export default function RateTable({ title, lines, value, onChange, sizes, qtyByS
 
   const renderCells = (line, setField) =>
     sizes.map((size) => (
-      <SizeCells key={size} line={line} size={size} qtyBySize={qtyBySize} setField={setField} />
+      <SizeCells key={size} line={line} size={size} qtyBySize={qtyBySize} setField={setField} disabled={readOnly} />
     ))
 
   const removeBtn = (onClick, label) =>
@@ -62,7 +67,7 @@ export default function RateTable({ title, lines, value, onChange, sizes, qtyByS
 
   return (
     <div className="space-y-3">
-    <fieldset disabled={readOnly} className="min-w-0 space-y-3">
+    <div className="min-w-0 space-y-3">
       <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">
         {title}
         {readOnly && <span className="ml-2 normal-case tracking-normal text-muted/80">(view only — follows the Buying rates)</span>}
@@ -84,6 +89,9 @@ export default function RateTable({ title, lines, value, onChange, sizes, qtyByS
                     {size} ft
                   </th>
                 ))}
+                {meta === 'buying' && <th rowSpan={2} className="border-l border-ink/20 px-2 py-2 text-left font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted">Payable to</th>}
+                {meta === 'selling' && <th rowSpan={2} className="border-l border-ink/20 px-2 py-2 text-left font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted">Bill to</th>}
+                {meta === 'selling' && <th rowSpan={2} className="border-l border-ink/20 px-2 py-2 text-left font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted">Payment</th>}
                 <th rowSpan={2} className="border-l border-ink/20 px-3 py-2 text-right font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted">Total</th>
                 <th rowSpan={2} className="w-8" />
               </tr>
@@ -100,9 +108,10 @@ export default function RateTable({ title, lines, value, onChange, sizes, qtyByS
                   <tr key={key} className="border-b border-line">
                     <td className="px-3 py-1.5 text-sm text-ink">{label}</td>
                     <td className="border-l border-ink/20 px-2 py-1.5">
-                      <CurrencyCell value={line.currency} onChange={(v) => setCell(key, 'currency', v)} label={label} />
+                      <CurrencyCell value={line.currency} onChange={(v) => setCell(key, 'currency', v)} label={label} disabled={readOnly} />
                     </td>
                     {renderCells(line, (field, v) => setCell(key, field, v))}
+                    <MetaCells meta={meta} line={line} label={label} setField={(field, v) => setCell(key, field, v)} />
                     <RowTotal line={line} qtyBySize={qtyBySize} />
                     <td className="px-1">{removeBtn(() => removeStandard(key, label), `Remove ${label} row`)}</td>
                   </tr>
@@ -115,27 +124,29 @@ export default function RateTable({ title, lines, value, onChange, sizes, qtyByS
                       value={line.label}
                       onChange={(e) => updateCustom(i, { label: e.target.value })}
                       placeholder="Charge label"
-                      className="w-full min-w-32 border border-ink/30 bg-card px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+                      disabled={readOnly}
+                      className="w-full min-w-32 border border-ink/30 bg-card px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust disabled:bg-paper/60"
                     />
                   </td>
                   <td className="border-l border-ink/20 px-2 py-1.5">
-                    <CurrencyCell value={line.currency} onChange={(v) => updateCustom(i, { currency: v })} label={line.label || 'charge'} />
+                    <CurrencyCell value={line.currency} onChange={(v) => updateCustom(i, { currency: v })} label={line.label || 'charge'} disabled={readOnly} />
                   </td>
                   {renderCells(line, (field, v) => updateCustom(i, { [field]: v }))}
+                  <MetaCells meta={meta} line={line} label={line.label || 'charge'} setField={(field, v) => updateCustom(i, { [field]: v })} />
                   <RowTotal line={line} qtyBySize={qtyBySize} />
                   <td className="px-1">{removeBtn(() => removeCustom(i), 'Remove charge line')}</td>
                 </tr>
               ))}
               {visibleLines.length === 0 && custom.length === 0 && (
                 <tr>
-                  <td colSpan={sizes.length * 3 + 4} className="px-3 py-3 text-sm text-muted">No rows — add a charge line or restore a standard row below.</td>
+                  <td colSpan={sizes.length * 3 + 4 + metaCols} className="px-3 py-3 text-sm text-muted">No rows — add a charge line or restore a standard row below.</td>
                 </tr>
               )}
             </tbody>
             <tfoot>
               <tr className="bg-paper/60">
                 <td className="px-3 py-2 align-top font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-ink">Total</td>
-                <td colSpan={sizes.length * 3 + 1} />
+                <td colSpan={sizes.length * 3 + 1 + metaCols} />
                 <td className="border-l border-ink/20 px-3 py-2 text-right font-mono text-sm font-bold text-ink" data-testid="table-totals">
                   {totals.length === 0 ? (
                     <span className="text-muted">0.00</span>
@@ -174,14 +185,14 @@ export default function RateTable({ title, lines, value, onChange, sizes, qtyByS
           )}
         </div>
       )}
-    </fieldset>
+    </div>
     </div>
   )
 }
 
 // Native <select>: a custom dropdown would be clipped by the table's own
 // horizontal-scroll wrapper. The blank option leaves the row unselected.
-function CurrencyCell({ value, onChange, label }) {
+function CurrencyCell({ value, onChange, label, disabled = false }) {
   const current = lineCurrency({ currency: value })
   const known = CURRENCY_CODES.includes(current)
   return (
@@ -189,6 +200,7 @@ function CurrencyCell({ value, onChange, label }) {
       aria-label={`Currency for ${label}`}
       value={current}
       onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
       className="w-24 border border-ink/30 bg-card px-1.5 py-1.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust disabled:cursor-not-allowed disabled:bg-paper/60"
     >
       <option value="">—</option>
@@ -220,12 +232,12 @@ function SubHeaders() {
   )
 }
 
-function SizeCells({ line, size, qtyBySize, setField }) {
+function SizeCells({ line, size, qtyBySize, setField, disabled = false }) {
   const auto = qtyBySize[size] || 0
   return (
     <>
       <td className="border-l border-ink/20 px-2 py-1.5 text-right">
-        <input type="number" min="0" step="0.01" value={line[`rate${size}`] ?? ''} onChange={(e) => setField(`rate${size}`, e.target.value)} className={cellInputCls} />
+        <input type="number" min="0" step="0.01" value={line[`rate${size}`] ?? ''} onChange={(e) => setField(`rate${size}`, e.target.value)} disabled={disabled} className={cellInputCls} />
       </td>
       <td className="px-2 py-1.5 text-right">
         <input
@@ -234,6 +246,7 @@ function SizeCells({ line, size, qtyBySize, setField }) {
           value={line[`qty${size}`] ?? ''}
           onChange={(e) => setField(`qty${size}`, e.target.value)}
           placeholder={String(auto)}
+          disabled={disabled}
           title={`Defaults to ${auto} (from the selected containers) — type a number to override`}
           className={`${cellInputCls} w-16`}
         />
@@ -241,4 +254,48 @@ function SizeCells({ line, size, qtyBySize, setField }) {
       <td className={tdCls}>{fmt(lineSizeTotal(line, size, qtyBySize))}</td>
     </>
   )
+}
+
+const metaSelectCls = 'border border-ink/30 bg-card px-1.5 py-1.5 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-rust'
+
+// Who the agent pays (buying) / who is billed and when (selling) for this line.
+function MetaCells({ meta, line, label, setField }) {
+  if (meta === 'buying') {
+    return (
+      <td className="border-l border-ink/20 px-2 py-1.5">
+        <div className="flex gap-1">
+          <select aria-label={`Payable type for ${label}`} value={line.payableType ?? ''} onChange={(e) => setField('payableType', e.target.value)} className={`w-24 ${metaSelectCls}`}>
+            <option value="">—</option>
+            {PAYABLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <input
+            aria-label={`Payable to for ${label}`}
+            value={line.payableTo ?? ''}
+            onChange={(e) => setField('payableTo', e.target.value)}
+            placeholder="Vendor"
+            className="w-28 border border-ink/30 bg-card px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-rust"
+          />
+        </div>
+      </td>
+    )
+  }
+  if (meta === 'selling') {
+    return (
+      <>
+        <td className="border-l border-ink/20 px-2 py-1.5">
+          <select aria-label={`Bill to for ${label}`} value={line.billTo ?? ''} onChange={(e) => setField('billTo', e.target.value)} className={`w-28 ${metaSelectCls}`}>
+            <option value="">—</option>
+            {BILL_TO_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </td>
+        <td className="border-l border-ink/20 px-2 py-1.5">
+          <select aria-label={`Payment for ${label}`} value={line.paymentResponsibility ?? ''} onChange={(e) => setField('paymentResponsibility', e.target.value)} className={`w-28 ${metaSelectCls}`}>
+            <option value="">Per terms</option>
+            {PAYMENT_RESPONSIBILITIES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </td>
+      </>
+    )
+  }
+  return null
 }

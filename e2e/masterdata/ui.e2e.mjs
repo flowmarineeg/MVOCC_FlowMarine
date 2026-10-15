@@ -26,7 +26,8 @@ context.setDefaultTimeout(30000)
 const page = await context.newPage()
 // 401 = the pre-login /auth/me probe, 409 = the VO delete guard this test triggers on purpose.
 page.on('console', (m) => { if (m.type() === 'error' && !/status of (401|409)/.test(m.text())) consoleErrors.push(`${m.text()} @ ${page.url()}`) })
-page.on('pageerror', (e) => consoleErrors.push(`PAGEERROR ${e.message} @ ${page.url()}`))
+// 'negative time stamp' = a Next dev-mode profiler quirk on the Home route, unrelated to the app
+page.on('pageerror', (e) => { if (!/negative time stamp/.test(e.message)) consoleErrors.push(`PAGEERROR ${e.message} @ ${page.url()}`) })
 
 const api = async (method, path, data) => {
   const res = await context.request.fetch(API + path, { method, data, headers: { 'content-type': 'application/json' } })
@@ -58,6 +59,14 @@ try {
   const tabResults = await Promise.all(TABS.map((t) => vis(tab(t), 3000)))
   check('every expected tab is present (Carriers = the former NVOCC list, VO/Vessels/POD AGENTS/Parties/Packages/Units)', tabResults.every(Boolean), TABS.filter((_, i) => !tabResults[i]).join(', '))
 
+  // ─── Container Type: optional capacity (Sprint 006) ──────────────────
+  await tab('Container Types').click()
+  await openNew('Container Type')
+  const ctLabels = (await modal().locator('label').allTextContents()).join('|')
+  check('Container Type form has optional Max Payload (kg) + Capacity (CBM)', /Max Payload \(kg\)/.test(ctLabels) && /Capacity \(CBM\)/.test(ctLabels) && (await field(/^Max Payload/).getAttribute('required')) === null, ctLabels)
+  await modal().locator('h3').locator('xpath=following-sibling::button').click()
+  await gone(modal().locator('form'))
+
   // ─── NVOCC: new inputs + contact rows add/delete ─────────────────────
   await tab('Carriers').click()
   await openNew('Carrier')
@@ -66,6 +75,8 @@ try {
     ['Country', 'City', 'Address', 'Tax Number', 'Registration Number', 'Contract Type', 'Contacts'].every((l) => labels.includes(l)) && !/Valid From|Valid To/.test(labels), labels)
   check('NVOCC form: Country and City come right before Address', /Country\s*\|City\s*\|Address/.test(labels.replace(/\s*\*/g, '')), labels)
   check('NVOCC form no longer has Local Agent inputs', !/Local Agent/.test(labels), labels)
+  check('Carrier form (Sprint 006): Ports Served checklist, Accepts Dangerous Goods, Default Free Time', ['Ports Served', 'Accepts Dangerous Goods', 'Default Free Time'].every((l) => labels.includes(l)), labels)
+  check('Accepts Dangerous Goods defaults to Yes, and Ports Served offers the ports as checkboxes', (await field(/^Accepts Dangerous Goods/).inputValue()) === 'true' && (await modal().locator('input[type="checkbox"]').count()) > 0)
   await field(/^Name/).fill(`${RUN} NVOCC`)
   await field(/^Code/).fill(`${RUN}-NV`)
   await field(/Registration Number/).fill('REG-77')
@@ -123,6 +134,7 @@ try {
   await tab('Customers').click()
   await openNew('Customer')
   await field(/^Name/).fill(`${RUN} Customer`)
+  check('Customer form has a Credit Hold switch, defaulting to No', (await field(/^Credit Hold/).inputValue()) === 'false')
   check('Governorate is disabled until a country is picked', await field(/Governorate/).isDisabled())
   await page.waitForFunction(() => [...document.querySelectorAll('div.fixed select')].some((s) => s.options.length > 100), null, { timeout: 15000 })
   await field(/^Country/).selectOption('Egypt')

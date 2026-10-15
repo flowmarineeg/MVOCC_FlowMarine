@@ -68,6 +68,7 @@ const toastShown = (re) => page.getByText(re).first().waitFor({ timeout: 10000 }
 
 let qId = null
 const seedIds = []
+const createdJobs = [] // jobs this run created: their numbers are given back at the end
 try {
   // ─── 1. Login through the real UI ───────────────────────────────────
   await page.goto(`${WEB}/login`)
@@ -95,7 +96,7 @@ try {
   await page.goto(`${WEB}/export/quotations/new`)
   await page.getByText('1. Client Request Data').waitFor({ timeout: 90000 })
   check('form renders all 8 sections, in order: Client, Ports, Containers & Cargo, Rate Request, Carrier, Buying, Selling, Profitability',
-    (await page.locator('h2').allTextContents()).join('|') === '1. Client Request Data|2. Ports|3. Containers & Cargo|4. Rate Request|5. Carrier (Master Data)|6. Buying Rate|7. Selling Price to Client|8. Profitability', (await page.locator('h2').allTextContents()).join('|'))
+    (await page.locator('h2').allTextContents()).join('|') === '1. Client Request Data|2. Ports|3. Containers & Cargo|4. Rate Request|5. Carrier & Commercial Terms|6. Buying Rate|7. Selling Price to Client|8. Profitability', (await page.locator('h2').allTextContents()).join('|'))
   const labelOrder = (await page.locator('label').allTextContents()).map((t) => t.trim())
   const labelTexts = labelOrder.join('|')
   check('UN Class / POR / FPD inputs are gone; Target Rate + Cargo Readiness Date are present',
@@ -125,9 +126,9 @@ try {
   check('MSDS input is hidden while Dangerous Goods = No', (await page.locator('label', { hasText: /^MSDS/ }).count()) === 0)
   await page.getByRole('button', { name: 'Yes', exact: true }).click()
   check('Dangerous Goods = Yes shows the MSDS file input (multiple, PDF/image)', (await page.locator('label', { hasText: /^MSDS/ }).count()) === 1 && (await page.locator('input[type="file"][multiple]').count()) === 1)
-  await page.getByRole('button', { name: 'No', exact: true }).click()
+  await page.getByRole('button', { name: 'No', exact: true }).first().click() // (the Marine Pollutant toggle also has a No)
   check('...and hides it again when switched back to No', (await page.locator('label', { hasText: /^MSDS/ }).count()) === 0)
-  check('Buying Free Time label has no "Buying (days)" suffix', (await page.locator('label', { hasText: /^Free Time$/ }).count()) === 1 && (await page.locator('label', { hasText: /Free Time Buying/ }).count()) === 0)
+  check('Free Time is split into Demurrage + Detention (no "Buying (days)" suffix)', (await page.locator('label', { hasText: /^Free Time — Demurrage/ }).count()) === 1 && (await page.locator('label', { hasText: /^Free Time — Detention/ }).count()) === 1 && (await page.locator('label', { hasText: /Free Time Buying/ }).count()) === 0)
   check('empty state: each rate table explains the 20/40ft detection', (await page.getByText(/20ft \/ 40ft columns are detected automatically/).count()) === 4)
   await page.getByRole('button', { name: 'Create quotation' }).click()
   check('submitting empty form shows required-field errors, no navigation',
@@ -161,6 +162,11 @@ try {
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   check('inline New Client modal creates a client (nested-form regression)', await vis(page.getByText('(new client)')))
   await fieldInput(/^Commodity/).fill('E2E UI Commodity')
+  await fieldInput(/^Validity Date/).fill(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10))
+  await pick(/^Incoterms/, 'FOB')
+  await fieldInput(/^Total Gross Weight/).fill('1000')
+  await fieldInput(/^Total Volume/).fill('10')
+  await fieldInput(/^Free Time — Demurrage/).fill('14')
   await pick(/^POL/, ports[0].code)
   await pick(/^POD/, ports[1].code)
   // every dropdown can be set back to "unselected" with its ✕
@@ -183,7 +189,7 @@ try {
   const row0 = await page.locator('label', { hasText: 'Container Type & Quantity' }).locator('xpath=..').locator('div.border.bg-paper\\/60').first()
   const row0Inputs = await row0.locator('input, button').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label') || e.getAttribute('placeholder') || e.textContent.trim().slice(0, 20)).filter((t) => t !== 'Clear selection'))
   check('container row order: Quantity, type select, Gross weight, Net weight', row0Inputs[0] === 'Quantity' && /20DC|Select container type/.test(row0Inputs[1]) && row0Inputs[2] === 'Gross weight (kg)' && row0Inputs[3] === 'Net weight (kg)', row0Inputs.join(' | '))
-  check('CBM input is gone from Containers & Cargo', (await page.locator('label', { hasText: /CBM/ }).count()) === 0)
+  check('no per-container CBM input; the only CBM input is the Total Volume one', (await page.locator('label', { hasText: /CBM/ }).count()) === 1 && /Total Volume/.test(await page.locator('label', { hasText: /CBM/ }).first().textContent()))
   await row0.getByLabel('Gross weight (kg)').fill('1200')
   await row0.getByLabel('Net weight (kg)').fill('1000')
   await page.getByRole('button', { name: /Add another type/ }).click()
@@ -227,8 +233,8 @@ try {
   await put(T.so, 'THC', 0, 20); await put(T.so, 'THC', 2, 40)
   await put(T.so, 'BL', 0, 100); await put(T.so, 'BL', 1, 1)
   // Selling Destination is view-only: it just follows the Buying one.
-  check('Selling Destination table is view-only (every input + select disabled, no add/remove/restore)',
-    (await tbl(T.sd).locator('input:enabled, select:enabled').count()) === 0 && (await tbl(T.sd).getByRole('button', { name: /Remove|Add charge line/ }).count()) === 0 && (await tbl(T.sd).getByLabel('Restore a removed row').count()) === 0)
+  check('Selling Destination table is view-only (rates + currency disabled; only the Bill to / Payment selects stay editable; no add/remove/restore)',
+    (await tbl(T.sd).locator('input:enabled, select:enabled').evaluateAll((els) => els.every((e) => /^(Bill to|Payment) for /.test(e.getAttribute('aria-label') || '')))) && (await tbl(T.sd).getByRole('button', { name: /Remove|Add charge line/ }).count()) === 0 && (await tbl(T.sd).getByLabel('Restore a removed row').count()) === 0)
   check('...and shows the Buying destination rates (DTHC 30 / 60)', (await cell(T.sd, 'DTHC', 0).inputValue()) === '30' && (await cell(T.sd, 'DTHC', 2).inputValue()) === '60')
   check('Selling Origin stays editable', (await tbl(T.so).locator('input:enabled').count()) > 0)
   check('Selling edits do NOT flow back to Buying (buying OF still 100 / 200, THC 10 / 20)',
@@ -314,7 +320,7 @@ try {
     (await page.getByRole('button', { name: 'Save changes' }).count()) === 0 && (await page.getByRole('button', { name: 'Save sections 1–4' }).count()) === 1 && (await page.getByRole('button', { name: 'Save sections 5–8' }).count()) === 1)
   const h4 = await page.getByRole('heading', { name: '4. Rate Request' }).boundingBox()
   const b14 = await page.getByRole('button', { name: 'Save sections 1–4' }).boundingBox()
-  const h5 = await page.getByRole('heading', { name: '5. Carrier (Master Data)' }).boundingBox()
+  const h5 = await page.getByRole('heading', { name: '5. Carrier & Commercial Terms' }).boundingBox()
   check('"Save sections 1–4" sits under section 4 and above section 5', b14.y > h4.y && b14.y < h5.y)
   if (!(await fieldInput(/^Contact Phone/).inputValue())) await fieldInput(/^Contact Phone/).fill('+20111111')
   if (!(await fieldInput(/^Contact Email/).inputValue())) await fieldInput(/^Contact Email/).fill('ui@example.com') // both are required before sending
@@ -332,7 +338,7 @@ try {
   check('DB after edit: no stale 40ft rate/qty stored', edited?.buyingOrigin?.oceanFreight?.rate40 === undefined && edited?.sellingDestination?.dthc?.rate40 === undefined, JSON.stringify(edited?.buyingOrigin?.oceanFreight))
 
   // ─── 11. Status flow through the UI ─────────────────────────────────
-  const click = async (name) => { await page.getByRole('button', { name, exact: true }).click(); await page.waitForTimeout(600) }
+  const click = async (name) => { await page.getByRole('button', { name, exact: true }).click(); await page.waitForTimeout(1500) }
   await click('Send to Client')
   check('draft -> sent via UI', (await api('GET', `/export/quotations/${qId}`)).json?.data?.status === 'sent')
   check('sent quotation shows the "Override active" banner to a quotation:approve holder', await vis(page.getByText('Override active'), 8000))
@@ -358,6 +364,7 @@ try {
   const rej = await api('POST', '/export/quotations', {
     customerType: 'existing', customer: withContacts.json.data._id, clientName: contactsCustomerName, contactPerson: 'Alice Contact', contactPhone: '+20111', contactEmail: 'alice@example.com',
     nvocc: nvocc._id, paymentTerms: 'Freight Prepaid', salesRep: 'E2E', commodity: 'rej', pol: ports[0]._id, pod: ports[1]._id,
+    validityDate: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10), incoterms: 'FOB', grossWeight: 1000, cbm: 10, freeTimeBuyingDays: 14,
     containers: [{ containerType: t20._id, quantity: 1 }], buyingOrigin: { oceanFreight: { rate20: 100 } }, sellingOrigin: { oceanFreight: { rate20: 200 } },
   })
   seedIds.push(rej.json.data._id)
@@ -381,6 +388,172 @@ check('DB: status rejected + reason saved', rejDoc?.status === 'rejected' && rej
   check('list: rejected quotation still listed', (await page.locator('tbody tr').filter({ hasText: rej.json.data.quotationNo }).count()) === 1)
   await shot(page, '6-list')
 
+  // ─── 14b. Sprint 006 — PRD Step 0 alignment ─────────────────────────
+  const future = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
+  const ready6 = {
+    nvocc: nvocc._id, paymentTerms: 'Freight Prepaid', salesRep: 'E2E', commodity: 'pdf', pol: ports[0]._id, pod: ports[1]._id,
+    customerType: 'existing', customer: withContacts.json.data._id, clientName: contactsCustomerName, contactPerson: 'Alice Contact', contactPhone: '+20111', contactEmail: 'alice@example.com',
+    validityDate: future, incoterms: 'FOB', grossWeight: 1000, cbm: 10, freeTimeBuyingDays: 14,
+    containers: [{ containerType: t20._id, quantity: 1 }], buyingOrigin: { oceanFreight: { rate20: 100 } }, sellingOrigin: { oceanFreight: { rate20: 200 } },
+  }
+  await page.goto(`${WEB}/export/quotations/new`)
+  await page.getByText('1. Client Request Data').waitFor({ timeout: 90000 })
+  const labelsNow = async () => (await page.locator('label').allTextContents()).map((t) => t.trim()).join('|')
+  let l6 = await labelsNow()
+  check('Sprint 006 inputs: Validity Date, Transshipment Port, Final Destination, Total Gross Weight, Total Volume',
+    ['Validity Date', 'Transshipment Port', 'Final Destination', 'Total Gross Weight', 'Total Volume'].every((k) => l6.includes(k)), l6)
+  check('commercial terms: Planned Vessel Operator, Free Time Demurrage + Detention, Terms & Remarks',
+    ['Planned Vessel Operator', 'Free Time — Demurrage', 'Free Time — Detention', 'Terms & Remarks'].every((k) => l6.includes(k)), l6)
+
+  // dangerous-goods detail
+  check('DG detail inputs are hidden while Dangerous Goods = No', !/Proper Shipping Name|IMO Class|Packing Group/.test(l6))
+  await page.getByRole('button', { name: 'Yes', exact: true }).first().click()
+  l6 = await labelsNow()
+  check('DG = Yes shows UN, proper name, IMO class, subsidiary risk, packing group, flash point, marine pollutant, emergency contact',
+    ['UN Number', 'Proper Shipping Name', 'IMO Class', 'Subsidiary Risk', 'Packing Group', 'Flash Point', 'Marine Pollutant', 'Emergency Contact'].every((k) => l6.includes(k)), l6)
+  await fieldInput(/^UN Number/).fill('12')
+  await page.getByRole('button', { name: 'Create quotation' }).click()
+  check('a UN number that is not 4 digits is rejected on submit', (await page.getByText('UN Number must be 4 digits').count()) > 0 && page.url().endsWith('/new'), page.url())
+  await page.getByRole('button', { name: 'No', exact: true }).first().click()
+  check('...and the DG detail disappears again when switched back to No', !/Proper Shipping Name/.test(await labelsNow()))
+
+  // reefer / out-of-gauge inputs follow the container type
+  check('no reefer / out-of-gauge inputs before a matching container is chosen', !/Set Temperature|Out-of-Gauge/.test(await labelsNow()))
+  await page.locator('button', { hasText: 'Select container type' }).first().click()
+  await page.locator('div.absolute button', { hasText: '40RF' }).first().click()
+  check('picking a reefer type (40RF) shows Set Temperature + Ventilation & Humidity', /Set Temperature/.test(await labelsNow()) && /Ventilation/.test(await labelsNow()), await labelsNow())
+  await page.locator('button', { hasText: /40RF/ }).first().click()
+  await page.locator('div.absolute button', { hasText: '20OT' }).first().click()
+  check('swapping it for an open-top (20OT) shows Out-of-Gauge Dimensions and hides the reefer inputs', /Out-of-Gauge/.test(await labelsNow()) && !/Set Temperature/.test(await labelsNow()), await labelsNow())
+  await page.locator('button', { hasText: /20OT/ }).first().click()
+  await page.locator('div.absolute button', { hasText: '20DC' }).first().click()
+  check('a plain 20DC shows neither', !/Set Temperature|Out-of-Gauge/.test(await labelsNow()))
+
+  // per-line payable-to / bill-to / payment columns
+  check('Buying tables carry a "Payable to" column; Selling tables carry "Bill to" + "Payment"',
+    (await page.locator('thead th', { hasText: /^Payable to$/ }).count()) === 2 && (await page.locator('thead th', { hasText: /^Bill to$/ }).count()) === 2 && (await page.locator('thead th', { hasText: /^Payment$/ }).count()) === 2)
+  await tbl(T.bo).getByLabel('Payable type for Ocean Freight').selectOption('Carrier')
+  await tbl(T.bo).getByLabel('Payable to for Ocean Freight').fill('E2E Shipping Line')
+  check('Payable to is editable per line (type + vendor)', (await tbl(T.bo).getByLabel('Payable to for Ocean Freight').inputValue()) === 'E2E Shipping Line')
+  check('...and is NOT copied to the Selling table (only the rates sync)', (await tbl(T.so).getByLabel('Bill to for Ocean Freight').inputValue()) === '')
+  await tbl(T.sd).getByLabel('Bill to for DTHC').selectOption('Consignee')
+  check('Selling Destination stays view-only for rates but Bill to is still editable', (await tbl(T.sd).getByLabel('Bill to for DTHC').inputValue()) === 'Consignee' && await cell(T.sd, 'DTHC', 0).isDisabled())
+
+  // carrier list is filtered by the POD, available stock is shown
+  const [portA, portB] = ports
+  const narrow = await api('POST', '/master/nvoccs', { name: `E2E UI Narrow ${RUN}`, code: `${RUN}-NR`, portsServed: [portA._id], acceptsDg: false })
+  const narrowName = narrow.json?.data?.name
+  await pick(/^POL/, portA.code)
+  await pick(/^POD/, portB.code)
+  const carrierRoot = page.locator('label').filter({ hasText: /^Select Carrier/ }).locator('xpath=..')
+  await carrierRoot.locator('button').first().click()
+  const carrierOptions = await carrierRoot.locator('div.absolute button').allTextContents()
+  check('carrier list hides a carrier that does not serve the chosen POD', !!narrowName && !carrierOptions.some((t) => t.includes(narrowName)), carrierOptions.join(' | '))
+  await carrierRoot.locator('div.absolute button').filter({ hasText: nvocc.code }).first().click()
+  check('available-stock indicator appears for the chosen carrier (informational)', await vis(page.getByTestId('stock-indicator'), 15000))
+
+  // credit hold hides the customer
+  const heldCust = await api('POST', '/master/customers', { name: `E2E UI Client ${RUN} Held`, phone: '+2099', email: 'held@example.com', creditHold: true })
+  await page.reload()
+  await page.getByText('1. Client Request Data').waitFor({ timeout: 90000 })
+  const clientRoot = page.locator('label').filter({ hasText: /^Client Name/ }).locator('xpath=..')
+  await clientRoot.locator('button').first().click()
+  await clientRoot.locator('input[placeholder="Search..."]').fill('Held')
+  check('a customer on credit hold is not offered in the client dropdown', !!heldCust.json?.data && (await clientRoot.locator('div.absolute button').filter({ hasText: 'Held' }).count()) === 0)
+
+  // detail page: PDF, duplicate, revise, expiry
+  const q6 = await api('POST', '/export/quotations', ready6)
+  seedIds.push(q6.json.data._id)
+  await api('PUT', `/export/quotations/${q6.json.data._id}/status`, { status: 'sent' })
+  await page.goto(`${WEB}/export/quotations/${q6.json.data._id}`)
+  await page.getByText('Created At').waitFor({ timeout: 90000 })
+  check('detail: Download PDF, Duplicate and Revise are offered for a sent quotation',
+    (await page.getByRole('button', { name: /Download PDF/ }).count()) === 1 && (await page.getByRole('button', { name: /Duplicate/ }).count()) === 1 && (await page.getByRole('button', { name: /Revise/ }).count()) === 1)
+  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }).catch(() => null), page.getByRole('button', { name: /Download PDF/ }).click()])
+  check('Download PDF delivers <quotationNo>.pdf', !!download && download.suggestedFilename() === `${q6.json.data.quotationNo}.pdf`, download?.suggestedFilename())
+  await page.getByRole('button', { name: /Revise/ }).click()
+  await page.waitForURL((u) => u.pathname.endsWith('/') === false && !u.pathname.endsWith(q6.json.data._id), { timeout: 30000 }).catch(() => {})
+  await page.getByText('Created At').waitFor({ timeout: 60000 })
+  check('Revise opens the new -R1 draft, linked back to the original', await vis(page.getByText(`${q6.json.data.quotationNo}-R1`), 15000) && await vis(page.getByText(/Revision of/), 5000))
+  await page.goto(`${WEB}/export/quotations/${q6.json.data._id}`)
+  await page.getByText('Created At').waitFor({ timeout: 60000 })
+  check('the original shows the "replaced by a newer revision" banner and loses Revise', await vis(page.getByTestId('superseded'), 10000) && (await page.getByRole('button', { name: /Revise/ }).count()) === 0)
+  await page.getByRole('button', { name: /Duplicate/ }).click()
+  await page.waitForURL((u) => !u.pathname.endsWith(q6.json.data._id) && /quotations\/[0-9a-f]{24}$/.test(u.pathname), { timeout: 30000 }).catch(() => {})
+  await page.getByText('Created At').waitFor({ timeout: 60000 })
+  check('Duplicate opens a new draft with its own number', !page.url().includes(q6.json.data._id) && (await page.getByText('draft', { exact: false }).count()) > 0, page.url())
+
+  const qx = await api('POST', '/export/quotations', { ...ready6, inquiryDate: new Date(Date.now() - 9 * 86400000).toISOString().slice(0, 10), validityDate: new Date(Date.now() - 86400000).toISOString().slice(0, 10) })
+  seedIds.push(qx.json.data._id)
+  await api('PUT', `/export/quotations/${qx.json.data._id}/status`, { status: 'sent' })
+  await page.goto(`${WEB}/export/quotations/${qx.json.data._id}`)
+  await page.getByText('Created At').waitFor({ timeout: 90000 })
+  check('an overdue sent quotation shows as Expired with the banner, and offers Revise but no Send/Approve',
+    await vis(page.getByTestId('expired'), 15000) && (await page.getByRole('button', { name: /Revise/ }).count()) === 1 && (await page.getByRole('button', { name: 'Approve', exact: true }).count()) === 0)
+  await page.goto(`${WEB}/export/quotations`)
+  await page.getByPlaceholder('Search quotation no / client').fill(contactsCustomerName)
+  await page.getByText(qx.json.data.quotationNo).first().waitFor({ timeout: 30000 }).catch(() => {})
+  check('list: the Expired status filter exists and the quotation is listed as expired',
+    (await page.locator('tbody tr').filter({ hasText: qx.json.data.quotationNo }).first().textContent().catch(() => '')).toLowerCase().includes('expired'))
+  const qs = await api('POST', '/export/quotations', { ...ready6, validityDate: new Date().toISOString().slice(0, 10) })
+  seedIds.push(qs.json.data._id)
+  await api('PUT', `/export/quotations/${qs.json.data._id}/status`, { status: 'sent' })
+  await page.goto(`${WEB}/export/quotations/${qs.json.data._id}`)
+  await page.getByText('Created At').waitFor({ timeout: 90000 })
+  check('a quotation valid only until today shows the "expiring" notice', await vis(page.getByTestId('expiring'), 15000))
+
+  // ─── 14c. Hard delete behind a confirm modal ────────────────────────
+  const dDraft = await api('POST', '/export/quotations', ready6)
+  const dDraftId = dDraft.json.data._id
+  await page.goto(`${WEB}/export/quotations`)
+  await page.getByPlaceholder('Search quotation no / client').fill(dDraft.json.data.quotationNo)
+  const dRow = page.locator('tbody tr').filter({ hasText: dDraft.json.data.quotationNo })
+  await dRow.first().waitFor({ timeout: 30000 })
+  await dRow.first().getByTitle('Delete').click()
+  check('list: the Delete icon opens a confirm dialog naming the quotation', await vis(page.getByRole('heading', { name: 'Delete this quotation?' }), 8000) && (await page.getByText(dDraft.json.data.quotationNo).count()) > 1)
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  check('Cancel keeps the quotation', !(await vis(page.getByRole('heading', { name: 'Delete this quotation?' }), 1500)) && (await api('GET', `/export/quotations/${dDraftId}`)).status === 200)
+  await dRow.first().getByTitle('Delete').click()
+  await page.getByRole('button', { name: 'Delete permanently' }).click()
+  check('confirming deletes it for good (hard delete) and shows a toast', await toastShown(new RegExp(`Quotation ${dDraft.json.data.quotationNo} deleted`)))
+  check('DB: the quotation no longer exists (404)', (await api('GET', `/export/quotations/${dDraftId}`)).status === 404)
+  await dRow.first().waitFor({ state: 'detached', timeout: 15000 }).catch(() => {})
+  check('...and the row disappears from the list', (await dRow.count()) === 0)
+
+  // a quotation that became a job: the dialog sends you to delete the job first
+  const dJob = await api('POST', '/export/quotations', ready6)
+  seedIds.push(dJob.json.data._id)
+  await api('PUT', `/export/quotations/${dJob.json.data._id}/status`, { status: 'sent' })
+  await api('PUT', `/export/quotations/${dJob.json.data._id}/status`, { status: 'approved' })
+  const jobRes = await context.request.post(API + '/export/bookings', {
+    multipart: {
+      quotation: dJob.json.data._id, clientName: contactsCustomerName, clientPhone: '+20111', clientEmail: 'alice@example.com',
+      containers: JSON.stringify([{ containerType: t20._id, quantity: 1 }]), pol: ports[0]._id, pod: ports[1]._id, commodity: 'pdf', nvocc: nvocc._id,
+    },
+  })
+  const jobJson = await jobRes.json().catch(() => null)
+  const jobId = jobJson?.data?._id
+  if (jobId) createdJobs.push({ id: jobId, jobNo: jobJson.data.jobNo })
+  check('a job was created from the approved quotation', jobRes.status() === 201 && !!jobId, `${jobRes.status()} ${JSON.stringify(jobJson)?.slice(0, 200)}`)
+  await page.goto(`${WEB}/export/quotations/${dJob.json.data._id}`)
+  await page.getByText('Created At').waitFor({ timeout: 90000 })
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  check('detail: Delete on a quotation with a job says "Delete the job first" and offers to open it',
+    await vis(page.getByRole('heading', { name: 'Delete the job first' }), 8000) && (await page.getByRole('button', { name: new RegExp(`Open job ${jobJson?.data?.jobNo}`) }).count()) === 1 && (await page.getByRole('button', { name: 'Delete permanently' }).count()) === 0)
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  check('...and nothing was deleted', (await api('GET', `/export/quotations/${dJob.json.data._id}`)).status === 200)
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  await page.getByRole('button', { name: new RegExp('Open job') }).click()
+  await page.waitForURL(new RegExp(`/export/bookings/${jobId}`), { timeout: 30000 }).catch(() => {})
+  check('"Open job" goes to the job (booking) page', page.url().includes(`/export/bookings/${jobId}`), page.url())
+  await api('DELETE', `/export/bookings/${jobId}`)
+  await page.goto(`${WEB}/export/quotations/${dJob.json.data._id}`)
+  await page.getByText('Created At').waitFor({ timeout: 90000 })
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  await page.getByRole('button', { name: 'Delete permanently' }).click()
+  await page.waitForURL(/\/export\/quotations$/, { timeout: 30000 }).catch(() => {})
+  check('after the job is deleted the quotation can be deleted from its page, which returns to the list', page.url().endsWith('/export/quotations') && (await api('GET', `/export/quotations/${dJob.json.data._id}`)).status === 404, page.url())
+
   // ─── 15. Mobile layout ──────────────────────────────────────────────
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(`${WEB}/export/quotations/${qId}`)
@@ -400,14 +573,15 @@ check('DB: status rejected + reason saved', rejDoc?.status === 'rejected' && rej
   check('UI run completed without an unexpected error', false, err.stack || err.message)
   await shot(page, 'FAILURE').catch(() => {})
 } finally {
-  const noise = /favicon|Failed to load resource: the server responded with a status of 401/
+  // 'negative time stamp' = a Next dev-mode profiler quirk (performance.measure on the Home route), unrelated to the app
+  const noise = /favicon|Failed to load resource: the server responded with a status of 401|cannot have a negative time stamp/
   const real = consoleErrors.filter((e) => !noise.test(e))
   check('no browser console errors / page errors during the run', real.length === 0, '\n    ' + real.slice(0, 6).join('\n    '))
   await browser.close()
   try {
     await mongoose.connect(process.env.MONGO_URI)
     const db = mongoose.connection.db
-    const mine = (await db.collection('quotations').find({ clientName: { $regex: RUN } }).project({ quotationNo: 1 }).toArray()).map((q) => q.quotationNo).sort()
+    const mine = (await db.collection('quotations').find({ clientName: { $regex: RUN } }).project({ quotationNo: 1 }).toArray()).map((q) => q.quotationNo).filter((n) => /^FQ\d{6}$/.test(n)).sort()
     const dq = await db.collection('quotations').deleteMany({ clientName: { $regex: RUN } })
     // Give the consumed quotation numbers back ONLY while ours are still the tail.
     const qYear = new Date().getFullYear()
@@ -415,7 +589,13 @@ check('DB: status rejected + reason saved', rejDoc?.status === 'rejected' && rej
       const res = await db.collection('jobcounters').updateOne({ _id: `quotation-${qYear}`, seq: Number(/(\d{4})$/.exec(no)?.[1]) }, { $inc: { seq: -1 } })
       if (!res.modifiedCount) break
     }
+    for (const j of createdJobs) {
+      await db.collection('bookings').deleteOne({ _id: new mongoose.Types.ObjectId(j.id) })
+      const seq = Number(/-(\d+)$/.exec(j.jobNo)?.[1])
+      await db.collection('jobcounters').updateOne({ _id: `job-${new Date().getFullYear()}`, seq }, { $inc: { seq: -1 } })
+    }
     const dc = await db.collection('customers').deleteMany({ name: { $regex: `^E2E UI Client ${RUN}` } })
+    await db.collection('nvoccs').deleteMany({ name: { $regex: `^E2E UI Narrow ${RUN}` } })
     const du = await db.collection('users').deleteMany({ _id: { $in: tempUserIds } })
     const dr = await db.collection('roles').deleteMany({ _id: { $in: tempRoleIds.map((id) => new mongoose.Types.ObjectId(id)) } })
     console.log(`cleanup: removed ${dq.deletedCount} quotation(s), ${dc.deletedCount} customer(s), ${du.deletedCount} user(s), ${dr.deletedCount} role(s)`)

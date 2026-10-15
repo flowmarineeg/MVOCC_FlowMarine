@@ -10,6 +10,7 @@ const optionalFields = [
   body('phone').optional().trim(),
   body('taxNumber').optional().trim(),
   body('taxRegister').optional().trim(),
+  body('creditHold').optional().isBoolean().withMessage('Credit hold must be true or false').toBoolean(),
   ...contactRules,
 ]
 

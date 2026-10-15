@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import mongoose from 'mongoose'
 import Booking from './booking.model.js'
+import Quotation from '../Quotation/quotation.model.js'
 import JobCounter from './jobCounter.model.js'
 import { checkStock, decrementStock, incrementStock, applySeals } from '../../MasterData/Container/container.service.js'
 import { getMsdsFile } from '../Quotation/quotation.service.js'
@@ -322,6 +323,11 @@ export const deleteBooking = async (id) => {
   }
 
   await booking.deleteOne()
+  // The quotation this job came from is no longer "converted": clear the link so it can be
+  // converted again, or deleted.
+  if (booking.quotation) {
+    await Quotation.updateOne({ _id: booking.quotation, linkedBooking: booking._id }, { $set: { linkedBooking: null, convertedAt: null } })
+  }
   return booking
 }
 

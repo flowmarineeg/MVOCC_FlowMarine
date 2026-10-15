@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { FaTimes, FaPlus, FaTrash } from 'react-icons/fa'
 
-// Field types: text (default) | email | date | select | country | governorate | city | file | contacts
+// Field types: text (default) | email | number | date | select | multiselect | country | governorate | city | file | contacts
 //  - select:      `options` is a string[] or [{ value, label }]
+//  - multiselect: a checklist of `options`; the value is an array of option values
 //  - country:     select fed by the free `country-state-city` library (lazy-loaded)
 //  - governorate: states of the country picked in the field named by `countryKey`
 //  - city:        cities of the country picked in the field named by `countryKey`
@@ -22,6 +23,9 @@ const normalizeOptions = (options = []) => options.map((o) => (typeof o === 'str
 const initialValue = (field, item) => {
   const raw = item?.[field.key]
   if (field.type === 'file') return null
+  if (field.type === 'multiselect') return (raw || []).map((v) => (v && typeof v === 'object' ? v._id : v))
+  if (raw === undefined && field.default !== undefined) return field.default
+  if (typeof raw === 'boolean') return String(raw)
   if (field.type === 'contacts') {
     return (raw || []).map((c) => ({ name: c.name || '', title: c.title || '', email: c.email || '', phone: c.phone || '' }))
   }
@@ -199,6 +203,26 @@ export default function MasterDataFormModal({ isOpen, onClose, onSave, item, fie
       )
     }
 
+    if (f.type === 'multiselect') {
+      const options = normalizeOptions(f.options)
+      const chosen = values[f.key] || []
+      const toggle = (v) => setValues((cur) => ({ ...cur, [f.key]: chosen.includes(v) ? chosen.filter((x) => x !== v) : [...chosen, v] }))
+      return (
+        <div>
+          <div className="grid max-h-40 grid-cols-1 gap-x-4 gap-y-1 overflow-y-auto border border-ink/30 bg-paper p-3 sm:grid-cols-2">
+            {options.length === 0 && <p className="font-mono text-xs text-muted">Nothing to choose from.</p>}
+            {options.map((opt) => (
+              <label key={opt.value} className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+                <input type="checkbox" checked={chosen.includes(opt.value)} onChange={() => toggle(opt.value)} />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+          {f.hint && <p className="mt-1 font-mono text-[10px] text-muted">{f.hint}</p>}
+        </div>
+      )
+    }
+
     if (f.type === 'select') {
       return (
         <select value={values[f.key]} onChange={set(f.key)} required={required} className={inputCls}>
@@ -208,7 +232,7 @@ export default function MasterDataFormModal({ isOpen, onClose, onSave, item, fie
       )
     }
 
-    return <input type={f.type || 'text'} value={values[f.key]} onChange={set(f.key)} required={required} className={inputCls} />
+    return <input type={f.type || 'text'} step={f.type === 'number' ? 'any' : undefined} min={f.type === 'number' ? 0 : undefined} value={values[f.key]} onChange={set(f.key)} required={required} className={inputCls} />
   }
 
   const wide = fields.length > 4
@@ -234,9 +258,9 @@ export default function MasterDataFormModal({ isOpen, onClose, onSave, item, fie
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className={`grid grid-cols-1 gap-4 ${wide ? 'sm:grid-cols-2' : ''}`}>
                 {fields.map((f) => (
-                  <div key={f.key} className={f.type === 'contacts' ? 'sm:col-span-2' : ''}>
+                  <div key={f.key} className={f.type === 'contacts' || f.type === 'multiselect' ? 'sm:col-span-2' : ''}>
                     <label className={labelCls}>
-                      {f.label} {f.required !== false && f.type !== 'contacts' && <span className="text-rust">*</span>}
+                      {f.label} {f.required !== false && f.type !== 'contacts' && f.type !== 'multiselect' && <span className="text-rust">*</span>}
                     </label>
                     {renderField(f)}
                   </div>

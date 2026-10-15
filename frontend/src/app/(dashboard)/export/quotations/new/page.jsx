@@ -25,6 +25,7 @@ export default function NewQuotationPage() {
   const [ports, setPorts] = useState([])
   const [containerTypes, setContainerTypes] = useState([])
   const [nvoccs, setNvoccs] = useState([])
+  const [vesselOperators, setVesselOperators] = useState([])
   const [teamMembers, setTeamMembers] = useState([])
 
   useEffect(() => {
@@ -33,15 +34,17 @@ export default function NewQuotationPage() {
       masterDataApi.getPorts(),
       masterDataApi.getContainerTypes(),
       masterDataApi.getNvoccs(),
+      masterDataApi.getVesselOperators().catch(() => []),
       permissions.includes('team:read')
         ? teamApi.getMembers({ status: 'active', limit: 100 }).then((r) => r.members).catch(() => [])
         : Promise.resolve([]),
     ])
-      .then(([customersRes, portsRes, typesRes, nvoccsRes, membersRes]) => {
+      .then(([customersRes, portsRes, typesRes, nvoccsRes, vosRes, membersRes]) => {
         setCustomers(customersRes)
         setPorts(portsRes)
         setContainerTypes(typesRes)
         setNvoccs(nvoccsRes)
+        setVesselOperators(vosRes)
         setTeamMembers(membersRes)
       })
       .catch((err) => toast(err.message, 'error'))
@@ -87,6 +90,7 @@ export default function NewQuotationPage() {
           ports={ports}
           containerTypes={containerTypes}
           nvoccs={nvoccs}
+          vesselOperators={vesselOperators}
           currentUser={user}
           teamMembers={teamMembers}
           submitting={submitting}

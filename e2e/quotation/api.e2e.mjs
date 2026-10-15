@@ -38,6 +38,7 @@ async function call(method, path, body, { form = false, noAuth = false } = {}) {
 }
 const msg = (r) => JSON.stringify(r.json?.message || r.json?.errors?.map((e) => e.msg) || r.json)
 
+const daysFromNow = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10)
 const line = (rate20, rate40, extra = {}) => ({ ...(rate20 !== undefined && { rate20 }), ...(rate40 !== undefined && { rate40 }), ...extra })
 
 let db
@@ -67,13 +68,17 @@ try {
   const clientId = custRes.json?.data?._id
   const base = (n, extra = {}) => ({
     customerType: 'existing', customer: clientId, clientName: `${RUN} Client`, contactPerson: 'E2E Contact', paymentTerms: 'Freight Prepaid', contactPhone: '+20100000000', contactEmail: 'e2e@example.com',
-    salesRep: 'E2E Tester', commodity: 'E2E commodity', pol: pol._id, pod: pod._id, nvocc: nvocc._id, ...extra,
+    salesRep: 'E2E Tester', commodity: 'E2E commodity', pol: pol._id, pod: pod._id, nvocc: nvocc._id,
+    // PRD Step 0 mandatory fields (Sprint 006): validity, incoterm, totals, client free time
+    validityDate: daysFromNow(30), incoterms: 'FOB', grossWeight: 1000, cbm: 10, freeTimeBuyingDays: 14, ...extra,
   })
   const mk = async (n, extra) => {
     const res = await call('POST', '/export/quotations', base(n, extra))
     if (res.status === 201) { created.quotationIds.push(res.json.data._id); created.quotationNos.push(res.json.data.quotationNo) }
     return res
   }
+
+  const mk6 = (n, extra) => mk(n, { containers: [{ containerType: t20._id, quantity: 1 }], ...extra })
 
   // ─── 1. Create with full rate tables (mixed sizes, qty override, custom line) ──
   // Expected (2×20DC + 1×40HC):
@@ -392,6 +397,288 @@ try {
   r = await call('GET', `/audit-logs?resource=Quotation&limit=50`)
   const mine = (r.json?.logs || []).filter((l) => created.quotationNos.includes(String(l.resourceId || '')))
   check('audit log records status changes for E2E quotations', r.status === 200 && mine.some((l) => l.action === 'SENT') && mine.some((l) => l.action === 'APPROVED') && mine.some((l) => l.action === 'REJECTED'), `${r.status} n=${mine.length}`)
+
+  // ═════════════════════════════════════════════════════════════════════
+  // SPRINT 006 — PRD Step 0 alignment
+  // ═════════════════════════════════════════════════════════════════════
+  const types6 = await list('/master/container-types')
+  const t40rf = types6.find((t) => t.code === '40RF'), t20ot = types6.find((t) => t.code === '20OT')
+  const vos = await list('/master/vessel-operators')
+
+  // ─── 12. Validity date, mandatory-for-send fields ───────────────────
+  r = await mk6('v1', { inquiryDate: daysFromNow(0), validityDate: daysFromNow(-3) })
+  check('validity date before the quotation date -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+
+  r = await mk6('v2', { validityDate: undefined, incoterms: undefined, grossWeight: undefined, cbm: undefined, freeTimeBuyingDays: undefined, buyingOrigin: { oceanFreight: line(10) }, sellingOrigin: { oceanFreight: line(20) } })
+  const missing6 = r.json?.data?.readinessIssues || []
+  check('a draft without the PRD fields saves (201)', r.status === 201, msg(r))
+  for (const [label, needle] of [['validity date', 'validity date'], ['incoterms', 'incoterms'], ['total gross weight', 'gross weight'], ['total volume', 'volume'], ['client free time', 'free time']]) {
+    check(`readiness asks for ${label}`, missing6.some((i) => i.toLowerCase().includes(needle)), JSON.stringify(missing6))
+  }
+  r = await call('PUT', `/export/quotations/${r.json.data._id}/status`, { status: 'sent' })
+  check('SEND is blocked until those fields are filled (400)', r.status === 400 && /validity date/i.test(msg(r)), `${r.status} ${msg(r)}`)
+
+  // ─── 13. Expiry (lazy), revise, duplicate ───────────────────────────
+  const priced = { buyingOrigin: { oceanFreight: line(10) }, sellingOrigin: { oceanFreight: line(20) } }
+  r = await mk6('exp', { ...priced, inquiryDate: daysFromNow(-10), validityDate: daysFromNow(-1) })
+  const qExp = r.json?.data
+  check('a quotation can be saved with a validity date already in the past', r.status === 201, msg(r))
+  r = await call('PUT', `/export/quotations/${qExp._id}/status`, { status: 'sent' })
+  check('...and sent (draft -> sent does not expire a draft)', r.status === 200, `${r.status} ${msg(r)}`)
+  r = await call('GET', `/export/quotations/${qExp._id}`)
+  check('reading a sent quotation past its validity date flips it to expired', r.json?.data?.status === 'expired', r.json?.data?.status)
+  r = await call('PUT', `/export/quotations/${qExp._id}/status`, { status: 'approved' })
+  check('approving an expired quotation -> 400 (names the expiry)', r.status === 400 && /expired/i.test(msg(r)), `${r.status} ${msg(r)}`)
+  r = await call('GET', '/export/quotations?status=expired&limit=100')
+  check('status=expired filter lists it', r.json?.quotations?.some((x) => x._id === qExp._id), r.json?.quotations?.length)
+
+  r = await call('POST', `/export/quotations/${qExp._id}/revise`)
+  const rev = r.json?.data
+  check('revise an expired quotation -> 201 as a new draft', r.status === 201 && rev?.status === 'draft', `${r.status} ${msg(r)}`)
+  check('revision keeps the base number with an -R1 suffix', rev?.quotationNo === `${qExp.quotationNo}-R1` && rev?.revision === 1 && rev?.baseNo === qExp.quotationNo, `${rev?.quotationNo} ${rev?.revision}`)
+  check('revision links back and clears the validity date', rev?.revisedFrom?._id === qExp._id && !rev?.validityDate, JSON.stringify(rev?.revisedFrom))
+  check('revision copies the pricing (same totals)', near(rev?.totalSellingPrice, qExp.totalSellingPrice) && near(rev?.totalBuyingCost, qExp.totalBuyingCost), `${rev?.totalSellingPrice}/${qExp.totalSellingPrice}`)
+  r = await call('GET', `/export/quotations/${qExp._id}`)
+  check('the original now points at its revision', r.json?.data?.revisedTo?.quotationNo === rev?.quotationNo, JSON.stringify(r.json?.data?.revisedTo))
+  r = await call('POST', `/export/quotations/${qExp._id}/revise`)
+  check('revising twice -> 409', r.status === 409, `${r.status} ${msg(r)}`)
+  r = await call('PUT', `/export/quotations/${qExp._id}`, { specialNotes: 'x' })
+  check('a superseded quotation can no longer be edited, even with the override (400)', r.status === 400, `${r.status} ${msg(r)}`)
+  r = await call('POST', `/export/quotations/${rev._id}/revise`)
+  check('a draft cannot be revised (400)', r.status === 400, `${r.status} ${msg(r)}`)
+  r = await call('PUT', `/export/quotations/${rev._id}`, { validityDate: daysFromNow(20) })
+  check('the revision is a normal draft and can be edited', r.status === 200, `${r.status} ${msg(r)}`)
+  r = await call('PUT', `/export/quotations/${rev._id}/status`, { status: 'sent' })
+  check('...and sent again', r.status === 200, `${r.status} ${msg(r)}`)
+  r = await call('POST', `/export/quotations/${rev._id}/revise`)
+  check('revising a sent quotation -> -R2', r.status === 201 && r.json.data.quotationNo === `${qExp.quotationNo}-R2`, `${r.status} ${r.json?.data?.quotationNo}`)
+
+  const q1Now = (await call('GET', `/export/quotations/${q1._id}`)).json?.data
+  r = await call('POST', `/export/quotations/${q1._id}/duplicate`)
+  const dup = r.json?.data
+  if (r.status === 201) { created.quotationIds.push(dup._id); created.quotationNos.push(dup.quotationNo) }
+  check('duplicate -> 201 with its own FQ number, as a draft', r.status === 201 && dup.status === 'draft' && dup.quotationNo !== q1.quotationNo && dup.baseNo === dup.quotationNo && dup.revision === 0, `${r.status} ${dup?.quotationNo} ${msg(r)}`)
+  check('duplicate copies the rate tables (same totals) and has no booking link', near(dup?.totalSellingPrice, q1Now?.totalSellingPrice) && near(dup?.totalBuyingCost, q1Now?.totalBuyingCost) && dup?.totalSellingPrice > 0 && !dup?.linkedBooking, `${dup?.totalSellingPrice}/${dup?.totalBuyingCost} vs ${q1Now?.totalSellingPrice}/${q1Now?.totalBuyingCost}`)
+
+  // ─── 14. Routing: final destination, transshipment, planned VO ──────
+  const otherPort = ports.find((p) => p._id !== pol._id && p._id !== pod._id)
+  if (otherPort) {
+    r = await mk6('route', { transshipmentPort: otherPort._id, finalDestination: otherPort._id, ...(vos[0] && { plannedVesselOperator: vos[0]._id }) })
+    check('transshipment port + final destination are stored and populated', r.status === 201 && r.json.data.transshipmentPort?.code === otherPort.code && r.json.data.finalDestination?.code === otherPort.code, `${r.status} ${msg(r)}`)
+    if (vos[0]) check('planned vessel operator is stored', r.json?.data?.plannedVesselOperator?.name === vos[0].name, JSON.stringify(r.json?.data?.plannedVesselOperator))
+    const qRoute = r.json?.data
+    r = await call('PUT', `/export/quotations/${qRoute._id}`, { transshipmentPort: null, finalDestination: '', plannedVesselOperator: null })
+    check('all three optional refs can be cleared again', r.status === 200 && r.json.data.transshipmentPort === null && r.json.data.finalDestination === null && r.json.data.plannedVesselOperator === null, `${r.status} ${msg(r)}`)
+  } else {
+    console.log('SKIP  routing checks (fewer than 3 ports in master data)')
+  }
+  r = await mk6('route2', { transshipmentPort: pol._id })
+  check('transshipment port equal to POL -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+
+  // ─── 15. Dangerous goods detail ─────────────────────────────────────
+  const dgBase = { containers: [{ containerType: t20._id, quantity: 1 }], isDangerous: true }
+  r = await mk6('dg-bad-un', { ...dgBase, unNumber: '12' })
+  check('UN number must be 4 digits -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+  r = await mk6('dg-pg', { ...dgBase, unNumber: '1203', imoClass: '3', packingGroup: 'N/A' })
+  check('packing group N/A is refused for class 3 (400)', r.status === 400, `${r.status} ${msg(r)}`)
+  r = await mk6('dg-pg-ok', { ...dgBase, unNumber: '1203', imoClass: '2.1', packingGroup: 'N/A' })
+  check('packing group N/A is accepted for class 2.1', r.status === 201, `${r.status} ${msg(r)}`)
+  r = await mk6('dg-bad-class', { ...dgBase, unNumber: '1203', imoClass: '12' })
+  check('unknown IMO class -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+
+  r = await mk6('dg-partial', { ...priced, ...dgBase, unNumber: 'UN1203', imoClass: '3' })
+  const dgIssues = r.json?.data?.readinessIssues || []
+  check('a draft with only UN + class saves; readiness asks for the rest (name, PG, flash point, emergency contact, MSDS)',
+    r.status === 201 && ['proper shipping name', 'packing group', 'flash point', 'emergency contact', 'MSDS'].every((k) => dgIssues.some((i) => i.toLowerCase().includes(k.toLowerCase()))), JSON.stringify(dgIssues))
+  const qDg = r.json?.data
+  r = await call('PUT', `/export/quotations/${qDg._id}`, { properShippingName: 'Flammable liquid, n.o.s.', packingGroup: 'II', flashPoint: 21, marinePollutant: true, emergencyContact: 'E2E Desk +20 100 000 0000', subsidiaryRisk: '6.1' })
+  const dgAfter = r.json?.data
+  check('DG detail is stored', r.status === 200 && dgAfter.properShippingName === 'Flammable liquid, n.o.s.' && dgAfter.packingGroup === 'II' && dgAfter.flashPoint === 21 && dgAfter.marinePollutant === true && dgAfter.subsidiaryRisk === '6.1', `${r.status} ${msg(r)}`)
+  check('readiness only lacks the MSDS now', (dgAfter?.readinessIssues || []).length === 1 && /MSDS/.test(dgAfter.readinessIssues[0]), JSON.stringify(dgAfter?.readinessIssues))
+  r = await call('PUT', `/export/quotations/${qDg._id}`, { isDangerous: false })
+  const dgOff = r.json?.data
+  check('switching Dangerous Goods off clears every DG detail field',
+    r.status === 200 && !dgOff.unNumber && !dgOff.properShippingName && !dgOff.imoClass && !dgOff.packingGroup && dgOff.flashPoint == null && dgOff.marinePollutant === false && !dgOff.emergencyContact, JSON.stringify(dgOff));
+
+  // ─── 16. Reefer / out-of-gauge cargo data follows the container types ──
+  if (t40rf && t20ot) {
+    r = await mk6('rf', { containers: [{ containerType: t40rf._id, quantity: 1 }], setTemperature: -18, ventilationHumidity: 'closed' })
+    check('reefer: set temperature + ventilation are stored', r.status === 201 && r.json.data.setTemperature === -18 && r.json.data.ventilationHumidity === 'closed', `${r.status} ${msg(r)}`)
+    const qRf = r.json?.data
+    r = await mk6('rf-missing6', { containers: [{ containerType: t40rf._id, quantity: 1 }] })
+    check('reefer without a set temperature: draft saves, readiness asks for it', r.status === 201 && r.json.data.readinessIssues.some((i) => /set temperature/i.test(i)), JSON.stringify(r.json?.data?.readinessIssues))
+    r = await call('PUT', `/export/quotations/${qRf._id}`, { containers: [{ containerType: t20._id, quantity: 1 }] })
+    check('replacing the reefer by a dry container clears the temperature data', r.status === 200 && r.json.data.setTemperature == null && !r.json.data.ventilationHumidity, JSON.stringify([r.json?.data?.setTemperature, r.json?.data?.ventilationHumidity]))
+
+    r = await mk6('oog', { containers: [{ containerType: t20ot._id, quantity: 1 }], oogDimensions: 'L300 W250 H280' })
+    check('open top: out-of-gauge dimensions are stored', r.status === 201 && r.json.data.oogDimensions === 'L300 W250 H280', `${r.status} ${msg(r)}`)
+    r = await call('PUT', `/export/quotations/${r.json.data._id}`, { containers: [{ containerType: t20._id, quantity: 1 }] })
+    check('dropping the open-top container clears the out-of-gauge data', r.status === 200 && !r.json.data.oogDimensions, JSON.stringify(r.json?.data?.oogDimensions))
+  } else {
+    console.log('SKIP  reefer / out-of-gauge checks (40RF or 20OT missing6 from master data)')
+  }
+
+  // ─── 17. Weight / volume capacity (ContainerType maxPayloadKg + capacityCbm) ──
+  r = await call('POST', '/master/container-types', { code: `20${RUN}-CAP`, label: `${RUN} capacity type`, maxPayloadKg: 1000, capacityCbm: 10 })
+  const tCap = r.json?.data
+  check('container type accepts a max payload and a capacity', r.status === 201 && tCap?.maxPayloadKg === 1000 && tCap?.capacityCbm === 10, `${r.status} ${msg(r)}`)
+  r = await call('POST', '/master/container-types', { code: `20${RUN}-NEG`, label: 'negative', maxPayloadKg: -5 })
+  check('negative max payload -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+  if (tCap) {
+    const capLine = [{ containerType: tCap._id, quantity: 2 }] // limits: 2000 kg / 20 CBM
+    r = await mk6('cap-w', { containers: capLine, grossWeight: 2500, cbm: 5 })
+    check('gross weight above Σ(qty × payload) -> 400 (hard stop)', r.status === 400 && /payload/i.test(msg(r)), `${r.status} ${msg(r)}`)
+    r = await mk6('cap-v', { containers: capLine, grossWeight: 500, cbm: 25 })
+    check('volume above Σ(qty × capacity) -> 400', r.status === 400 && /capacity/i.test(msg(r)), `${r.status} ${msg(r)}`)
+    r = await mk6('cap-ok', { containers: capLine, grossWeight: 1950, cbm: 5 })
+    check('above 95% of the payload but within it saves with a warning', r.status === 201 && r.json.data.warnings.some((w) => /95%/.test(w)), `${r.status} ${JSON.stringify(r.json?.data?.warnings)}`)
+    r = await mk6('cap-low', { containers: capLine, grossWeight: 500, cbm: 5 })
+    check('a comfortable load has no warning', r.status === 201 && r.json.data.warnings.length === 0, JSON.stringify(r.json?.data?.warnings))
+    r = await mk6('cap-mixed', { containers: [...capLine, { containerType: t20._id, quantity: 1 }], grossWeight: 99999, cbm: 99999 })
+    check('a type without capacity data switches the check off (no false stop)', r.status === 201, `${r.status} ${msg(r)}`)
+  }
+
+  // ─── 18. Per-line payable-to / bill-to / payment responsibility ─────
+  r = await mk6('meta', {
+    containers: [{ containerType: t20._id, quantity: 2 }],
+    buyingOrigin: { oceanFreight: { ...line(100), payableType: 'Carrier', payableTo: 'E2E Line' }, custom: [{ label: 'Seal', rate20: 5, payableType: 'Terminal', payableTo: 'E2E Terminal' }] },
+    sellingOrigin: { oceanFreight: { ...line(150), billTo: 'Shipper', paymentResponsibility: 'Prepaid' } },
+    sellingDestination: { dthc: { ...line(40), billTo: 'Consignee', paymentResponsibility: 'Collect' } },
+  })
+  const qMeta = r.json?.data
+  check('payable-to / bill-to / payment metadata is stored and returned',
+    r.status === 201 && qMeta.buyingOrigin.oceanFreight.payableType === 'Carrier' && qMeta.buyingOrigin.oceanFreight.payableTo === 'E2E Line' &&
+    qMeta.buyingOrigin.custom[0].payableTo === 'E2E Terminal' && qMeta.sellingOrigin.oceanFreight.billTo === 'Shipper' &&
+    qMeta.sellingDestination.dthc.paymentResponsibility === 'Collect', `${r.status} ${msg(r)}`)
+  check('metadata does not change the maths (buy 210 / sell 380)', near(qMeta?.totalBuyingCost, 210) && near(qMeta?.totalSellingPrice, 380), `${qMeta?.totalBuyingCost}/${qMeta?.totalSellingPrice}`)
+  r = await mk6('meta-bad', { buyingOrigin: { oceanFreight: { ...line(1), payableType: 'Nobody' } } })
+  check('unknown payable-to type -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+  r = await mk6('meta-bad2', { sellingOrigin: { oceanFreight: { ...line(1), paymentResponsibility: 'Maybe' } } })
+  check('unknown payment responsibility -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+
+  // ─── 19. Carrier eligibility (POD served / accepts DG) ──────────────
+  const otherP = ports.find((p) => p._id !== pod._id)
+  r = await call('POST', '/master/nvoccs', { name: `${RUN} Narrow Carrier`, code: `${RUN}-N1`, portsServed: [otherP._id], acceptsDg: false, defaultFreeTimeDays: 7 })
+  const narrow = r.json?.data
+  check('carrier master stores ports served / accepts DG / default free time', r.status === 201 && narrow?.portsServed?.length === 1 && narrow?.acceptsDg === false && narrow?.defaultFreeTimeDays === 7, `${r.status} ${msg(r)}`)
+  r = await call('POST', '/master/nvoccs', { name: `${RUN} Bad Carrier`, code: `${RUN}-N2`, portsServed: ['not-an-id'] })
+  check('invalid port id in ports served -> 400', r.status === 400, `${r.status} ${msg(r)}`)
+  if (narrow) {
+    r = await mk6('elig', { ...priced, nvocc: narrow._id })
+    const qElig = r.json?.data
+    check('a carrier that does not serve the POD still saves as a draft, but warns', r.status === 201 && qElig.warnings.some((w) => /does not serve/i.test(w)), `${r.status} ${JSON.stringify(qElig?.warnings)}`)
+    check('readiness lists the carrier problem', qElig?.readinessIssues.some((i) => /does not serve/i.test(i)), JSON.stringify(qElig?.readinessIssues))
+    r = await call('PUT', `/export/quotations/${qElig._id}/status`, { status: 'sent' })
+    check('SEND is blocked for an ineligible carrier (400)', r.status === 400 && /does not serve/i.test(msg(r)), `${r.status} ${msg(r)}`)
+    r = await call('PUT', `/export/quotations/${qElig._id}`, { nvocc: nvocc._id })
+    check('switching to an eligible carrier clears the warning', r.status === 200 && !r.json.data.warnings.some((w) => /does not serve/i.test(w)), JSON.stringify(r.json?.data?.warnings))
+
+    r = await call('PUT', `/master/nvoccs/${narrow._id}`, { portsServed: [pod._id] })
+    r = await mk6('elig-dg', { nvocc: narrow._id, containers: [{ containerType: t20._id, quantity: 1 }], isDangerous: true, unNumber: '1203' })
+    check('a carrier that does not accept dangerous goods is flagged for a DG quotation', r.status === 201 && r.json.data.readinessIssues.some((i) => /does not accept dangerous goods/i.test(i)), `${r.status} ${JSON.stringify(r.json?.data?.readinessIssues)}`)
+  }
+
+  // ─── 20. Credit hold ────────────────────────────────────────────────
+  r = await call('POST', '/master/customers', { name: `${RUN} Held Client`, phone: '+20100000009', email: 'held@example.com', creditHold: true })
+  const held = r.json?.data
+  check('customer stores a credit-hold flag', r.status === 201 && held?.creditHold === true, `${r.status} ${msg(r)}`)
+  r = await mk6('held', { customer: held?._id, clientName: `${RUN} Held Client` })
+  check('a quotation for a customer on credit hold -> 400', r.status === 400 && /credit hold/i.test(msg(r)), `${r.status} ${msg(r)}`)
+  r = await mk6('held-switch')
+  const qSwitch = r.json?.data
+  r = await call('PUT', `/export/quotations/${qSwitch._id}`, { customer: held._id })
+  check('moving an existing quotation to a customer on hold -> 400', r.status === 400 && /credit hold/i.test(msg(r)), `${r.status} ${msg(r)}`)
+  r = await mk6('held-later', priced)
+  const qLater = r.json?.data
+  await call('PUT', `/master/customers/${clientId}`, { creditHold: true })
+  r = await call('PUT', `/export/quotations/${qLater._id}/status`, { status: 'sent' })
+  check('a customer put on hold AFTER the quotation was drafted blocks sending it', r.status === 400 && /credit hold/i.test(msg(r)), `${r.status} ${msg(r)}`)
+  await call('PUT', `/master/customers/${clientId}`, { creditHold: false })
+  r = await call('PUT', `/export/quotations/${qLater._id}/status`, { status: 'sent' })
+  check('...and it sends once the hold is lifted', r.status === 200, `${r.status} ${msg(r)}`)
+
+  // ─── 21. Client-facing PDF ──────────────────────────────────────────
+  {
+    const res = await fetch(`${API}/export/quotations/${q1._id}/pdf`, { headers: { cookie } })
+    const buf = Buffer.from(await res.arrayBuffer())
+    check('PDF download -> 200 application/pdf', res.status === 200 && (res.headers.get('content-type') || '').includes('application/pdf'), `${res.status} ${res.headers.get('content-type')}`)
+    check('the file is a real PDF', buf.subarray(0, 5).toString() === '%PDF-' && buf.length > 1500, `${buf.subarray(0, 8).toString()} ${buf.length}`)
+    check('the download is named after the quotation', (res.headers.get('content-disposition') || '').includes(q1.quotationNo), res.headers.get('content-disposition'))
+    const anon = await fetch(`${API}/export/quotations/${q1._id}/pdf`)
+    check('PDF without a session -> 401', anon.status === 401, anon.status)
+  }
+
+  // ─── 22. Audit trail for revise / duplicate ─────────────────────────
+  r = await call('GET', '/audit-logs?resource=Quotation&limit=100')
+  const mine6 = (r.json?.logs || []).filter((l) => created.quotationNos.some((n) => String(l.resourceId || '').startsWith(n)))
+  check('audit log records REVISE and DUPLICATE', r.status === 200 && mine6.some((l) => l.action === 'REVISE') && mine6.some((l) => l.action === 'DUPLICATE'), `${r.status} n=${mine6.length}`)
+
+  // ═════════════════════════════════════════════════════════════════════
+  // Hard delete (permanent; no soft delete). A quotation with a job must have
+  // that job deleted first.
+  // ═════════════════════════════════════════════════════════════════════
+  r = await call('DELETE', `/export/quotations/${q1._id}`, undefined, { noAuth: true })
+  check('DELETE without a session -> 401', r.status === 401, r.status)
+  r = await call('DELETE', '/export/quotations/000000000000000000000000')
+  check('DELETE of an unknown quotation -> 404', r.status === 404, r.status)
+
+  r = await call('DELETE', `/export/quotations/${q1._id}`)
+  check('DELETE a quotation that has a job -> 409 telling you to delete the job first', r.status === 409 && /Delete the job/i.test(msg(r)) && /OPS Jobs/.test(msg(r)), `${r.status} ${msg(r)}`)
+  r = await call('GET', `/export/quotations/${q1._id}`)
+  check('...and the quotation is untouched', r.status === 200, r.status)
+
+  const jobBooking = (await call('GET', '/export/bookings?limit=100')).json?.bookings?.find((b) => String(b.quotation?._id || b.quotation) === q1._id)
+  r = await call('DELETE', `/export/bookings/${jobBooking?._id}`)
+  check('the job (booking) is deleted first', r.status === 200, `${r.status} ${msg(r)}`)
+  r = await call('GET', `/export/quotations/${q1._id}`)
+  check('deleting the job gives the quotation its "not converted" state back (link + convertedAt cleared)', r.status === 200 && !r.json.data.linkedBooking && !r.json.data.convertedAt, JSON.stringify(r.json?.data?.linkedBooking))
+  r = await call('DELETE', `/export/quotations/${q1._id}`)
+  check('now the quotation can be deleted -> 200', r.status === 200, `${r.status} ${msg(r)}`)
+  r = await call('GET', `/export/quotations/${q1._id}`)
+  check('hard delete: it is gone (GET -> 404), not just flagged', r.status === 404, r.status)
+  r = await call('GET', '/export/quotations?limit=100&search=' + encodeURIComponent(q1.quotationNo))
+  check('...and absent from the list', !(r.json?.quotations || []).some((x) => x._id === q1._id))
+
+  // a dangerous quotation: its MSDS files leave the disk too
+  r = await mk6('del-dg', { isDangerous: true, unNumber: '1203' })
+  const delDg = r.json?.data
+  r = await call('POST', `/export/quotations/${delDg._id}/msds`, msdsForm([png(7)]), { form: true })
+  const stored = r.json?.data?.msdsFiles?.[0]?.filePath
+  const onDisk = async () => { try { await (await import('node:fs/promises')).access(BACKEND + 'uploads/msds/' + stored); return true } catch { return false } }
+  check('MSDS file stored on disk before the delete', r.status === 201 && !!stored && (await onDisk()), `${r.status} ${stored}`)
+  r = await call('DELETE', `/export/quotations/${delDg._id}`)
+  check('delete a dangerous quotation -> 200', r.status === 200, `${r.status} ${msg(r)}`)
+  await new Promise((res) => setTimeout(res, 300))
+  check('...and its MSDS file is removed from disk', !(await onDisk()))
+
+  // any status can be deleted (sent / rejected / expired too) when no job exists
+  r = await mk6('del-sent', priced)
+  const delSent = r.json?.data
+  await call('PUT', `/export/quotations/${delSent._id}/status`, { status: 'sent' })
+  r = await call('DELETE', `/export/quotations/${delSent._id}`)
+  check('a SENT quotation can be deleted (permission quotation:update)', r.status === 200, `${r.status} ${msg(r)}`)
+
+  // revisions: deleting the newest unlinks the original, which becomes editable again
+  r = await mk6('del-rev', { ...priced, inquiryDate: daysFromNow(-10), validityDate: daysFromNow(-1) })
+  const delOrig = r.json?.data
+  await call('PUT', `/export/quotations/${delOrig._id}/status`, { status: 'sent' })
+  r = await call('POST', `/export/quotations/${delOrig._id}/revise`)
+  const delRev = r.json?.data
+  r = await call('DELETE', `/export/quotations/${delRev._id}`)
+  check('delete a revision -> 200', r.status === 200, `${r.status} ${msg(r)}`)
+  r = await call('GET', `/export/quotations/${delOrig._id}`)
+  check('the original no longer points at the deleted revision, and can be revised again', r.json?.data?.revisedTo === null, JSON.stringify(r.json?.data?.revisedTo))
+  r = await call('POST', `/export/quotations/${delOrig._id}/revise`)
+  check('...revising again works (-R1 is free again)', r.status === 201 && r.json.data.quotationNo === `${delOrig.quotationNo}-R1`, `${r.status} ${r.json?.data?.quotationNo}`)
+  // deleting the ORIGINAL clears the revision's back-link
+  const secondRev = r.json?.data
+  r = await call('DELETE', `/export/quotations/${delOrig._id}`)
+  check('delete the original of a revision -> 200', r.status === 200, `${r.status} ${msg(r)}`)
+  r = await call('GET', `/export/quotations/${secondRev._id}`)
+  check('the remaining revision keeps working with its back-link cleared', r.status === 200 && r.json.data.revisedFrom === null, JSON.stringify(r.json?.data?.revisedFrom))
+
+  r = await call('GET', '/audit-logs?resource=Quotation&limit=100')
+  check('audit log records DELETE', (r.json?.logs || []).some((l) => l.action === 'DELETE' && created.quotationNos.some((n) => String(l.resourceId || '').startsWith(n))), `n=${r.json?.logs?.length}`)
 } catch (err) {
   check('test run completed without an unexpected error', false, err.stack || err.message)
 } finally {
@@ -402,6 +689,8 @@ try {
     const leftovers = await dbh.collection('quotations').find({ clientName: { $regex: `^${RUN}` }, 'msdsFiles.0': { $exists: true } }).project({ msdsFiles: 1 }).toArray()
     for (const q of leftovers) for (const f of q.msdsFiles) await unlink(BACKEND + 'uploads/msds/' + f.filePath).catch(() => {})
     await dbh.collection('customers').deleteMany({ name: { $regex: `^${RUN}` } })
+    await dbh.collection('nvoccs').deleteMany({ name: { $regex: `^${RUN}` } })
+    await dbh.collection('containertypes').deleteMany({ code: { $regex: `^20${RUN}` } })
     const delQ = await dbh.collection('quotations').deleteMany({ clientName: { $regex: `^${RUN}` } })
     // Give the consumed quotation numbers back ONLY while ours are still the tail.
     const qYear = new Date().getFullYear()

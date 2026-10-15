@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
-import { FaArrowLeft, FaTimes, FaExclamationTriangle } from 'react-icons/fa'
+import { FaArrowLeft, FaTimes, FaExclamationTriangle, FaFilePdf, FaCopy, FaRedo, FaTrash } from 'react-icons/fa'
 import * as quotationApi from '@/services/quotation'
 import * as masterDataApi from '@/services/masterData'
 import * as teamApi from '@/services/team'
@@ -14,6 +14,7 @@ import Plate from '@/components/ui/Plate'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
 import QuotationForm from '@/components/export/QuotationForm'
+import DeleteQuotationModal from '@/components/export/DeleteQuotationModal'
 
 const NEXT_STATUS = {
   draft: [{ status: 'sent', label: 'Send to Client', tone: 'rust' }],
@@ -29,7 +30,11 @@ const NEXT_STATUS = {
   ],
   approved: [],
   rejected: [],
+  expired: [],
 }
+
+// Whole days left until a date, counting that date itself (0 = valid until today).
+const daysUntil = (iso) => Math.ceil((new Date(iso).getTime() + 24 * 3600 * 1000 - Date.now()) / (24 * 3600 * 1000))
 
 const toneCls = {
   rust: 'bg-rust text-card hover:bg-rust-dark',
@@ -90,12 +95,15 @@ export default function QuotationDetailPage() {
   const { permissions, user } = useAuth()
   const canUpdate = permissions.includes('quotation:update')
   const canApprove = permissions.includes('quotation:approve')
+  const canCreate = permissions.includes('quotation:create')
 
   const [quotation, setQuotation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [vesselOperators, setVesselOperators] = useState([])
 
   const [customers, setCustomers] = useState([])
   const [ports, setPorts] = useState([])
@@ -114,16 +122,18 @@ export default function QuotationDetailPage() {
       masterDataApi.getPorts(),
       masterDataApi.getContainerTypes(),
       masterDataApi.getNvoccs(),
+      masterDataApi.getVesselOperators().catch(() => []),
       permissions.includes('team:read')
         ? teamApi.getMembers({ status: 'active', limit: 100 }).then((r) => r.members).catch(() => [])
         : Promise.resolve([]),
     ])
-      .then(([q, customersRes, portsRes, typesRes, nvoccsRes, membersRes]) => {
+      .then(([q, customersRes, portsRes, typesRes, nvoccsRes, vosRes, membersRes]) => {
         setQuotation(q)
         setCustomers(customersRes)
         setPorts(portsRes)
         setContainerTypes(typesRes)
         setNvoccs(nvoccsRes)
+        setVesselOperators(vosRes)
         setTeamMembers(membersRes)
       })
       .catch((err) => toast(err.message, 'error'))
@@ -173,6 +183,23 @@ export default function QuotationDetailPage() {
     }
   }
 
+  // Revise: a new -R<n> draft that supersedes this quotation. Duplicate: a fresh FQ number.
+  const copyAction = (fn, doneMessage) => async () => {
+    setStatusBusy(true)
+    try {
+      const created = await fn(id)
+      toast(`${doneMessage} ${created.quotationNo}`, 'success')
+      router.push(`/export/quotations/${created._id}`)
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setStatusBusy(false)
+    }
+  }
+  const handleRevise = copyAction(quotationApi.reviseQuotation, 'Created revision')
+  const handleDuplicate = copyAction(quotationApi.duplicateQuotation, 'Duplicated as')
+  const handlePdf = () => quotationApi.downloadPdf(quotation).catch((err) => toast(err.message, 'error'))
+
   const handleConvert = () => {
     router.push(`/export/bookings/new?fromQuotation=${id}`)
   }
@@ -180,11 +207,14 @@ export default function QuotationDetailPage() {
   if (loading) return <div className="p-6"><PageLoader /></div>
   if (!quotation) return null
 
-  const nextActions = NEXT_STATUS[quotation.status] || []
+  const nextActions = quotation.revisedTo ? [] : NEXT_STATUS[quotation.status] || []
+  const canRevise = canUpdate && !quotation.revisedTo && ['sent', 'negotiation', 'rejected', 'expired'].includes(quotation.status)
+  // Days until the validity date (inclusive) for a quotation that is still out with the client.
+  const daysLeft = quotation.validityDate && ['sent', 'negotiation'].includes(quotation.status) ? daysUntil(quotation.validityDate) : null
   // What is still missing before this quotation can be sent / approved / converted
   // (computed by the server from the SAVED data).
   const issues = quotation.readinessIssues || []
-  const needsReadiness = ['draft', 'sent', 'negotiation'].includes(quotation.status) || (quotation.status === 'approved' && !quotation.linkedBooking)
+  const needsReadiness = !quotation.revisedTo && (['draft', 'sent', 'negotiation'].includes(quotation.status) || (quotation.status === 'approved' && !quotation.linkedBooking))
   const notReadyTitle = `Not ready — complete the items listed below and save first`
 
   return (
@@ -199,6 +229,26 @@ export default function QuotationDetailPage() {
             <Badge value={quotation.linkedBooking ? 'job_created' : quotation.status} />
           </div>
           <p className="mt-1.5 text-sm text-muted">{quotation.clientName}</p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button onClick={handlePdf} className="flex items-center gap-2 border border-ink/30 px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-ink/5">
+            <FaFilePdf className="text-xs" /> Download PDF
+          </button>
+          {canCreate && (
+            <button onClick={handleDuplicate} disabled={statusBusy} className="flex items-center gap-2 border border-ink/30 px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-ink/5 disabled:opacity-40">
+              <FaCopy className="text-xs" /> Duplicate
+            </button>
+          )}
+          {canUpdate && (
+            <button onClick={() => setDeleteOpen(true)} disabled={statusBusy} className="flex items-center gap-2 border border-brick/40 px-4 py-2.5 text-sm font-semibold text-brick transition-colors hover:bg-brick/5 disabled:opacity-40">
+              <FaTrash className="text-xs" /> Delete
+            </button>
+          )}
+          {canRevise && (
+            <button onClick={handleRevise} disabled={statusBusy} className="flex items-center gap-2 border border-signal/50 px-4 py-2.5 text-sm font-semibold text-signal transition-colors hover:bg-signal/10 disabled:opacity-40">
+              <FaRedo className="text-xs" /> Revise
+            </button>
+          )}
         </div>
         {canUpdate && (
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -240,6 +290,34 @@ export default function QuotationDetailPage() {
         )}
       </div>
 
+      {quotation.revisedTo && (
+        <div data-testid="superseded" className="border border-signal/40 bg-signal/10 px-4 py-3 text-sm text-signal">
+          This quotation was replaced by a newer revision:{' '}
+          <Link href={`/export/quotations/${quotation.revisedTo._id}`} className="font-semibold underline">{quotation.revisedTo.quotationNo}</Link>. It is kept for history and can no longer be edited.
+        </div>
+      )}
+      {quotation.revisedFrom && (
+        <p className="font-mono text-xs text-muted">
+          Revision of <Link href={`/export/quotations/${quotation.revisedFrom._id}`} className="text-rust hover:text-rust-dark">{quotation.revisedFrom.quotationNo}</Link>
+        </p>
+      )}
+      {quotation.status === 'expired' && (
+        <div data-testid="expired" className="flex items-start gap-2 border border-brick/40 bg-brick/5 px-4 py-3 text-sm text-brick">
+          <FaExclamationTriangle className="mt-0.5 shrink-0 text-xs" />
+          <span><strong>Expired:</strong> the validity date has passed. Revise this quotation to send a new offer.</span>
+        </div>
+      )}
+      {daysLeft !== null && daysLeft <= 2 && (
+        <div data-testid="expiring" className="border border-signal/40 bg-signal/10 px-4 py-3 text-sm text-signal">
+          {daysLeft <= 0 ? 'This quotation is valid until today.' : `This quotation expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`}
+        </div>
+      )}
+      {(quotation.warnings || []).length > 0 && (
+        <div data-testid="warnings" className="border border-signal/40 bg-signal/10 px-4 py-3 text-sm text-signal">
+          <ul className="list-disc space-y-0.5 pl-5">{quotation.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
+        </div>
+      )}
+
       {quotation.status === 'rejected' && quotation.rejectionReason && (
         <div className="flex items-start gap-2 border border-brick/40 bg-brick/5 px-4 py-3 text-sm text-brick">
           <FaExclamationTriangle className="mt-0.5 shrink-0 text-xs" />
@@ -265,6 +343,7 @@ export default function QuotationDetailPage() {
         ports={ports}
         containerTypes={containerTypes}
         nvoccs={nvoccs}
+        vesselOperators={vesselOperators}
         currentUser={user}
         teamMembers={teamMembers}
         submitting={saving}
@@ -272,6 +351,10 @@ export default function QuotationDetailPage() {
         onSavePart={handleSavePart}
         onCustomerCreated={(c) => setCustomers((prev) => [...prev, c])}
       />
+
+      {deleteOpen && (
+        <DeleteQuotationModal quotation={quotation} onClose={() => setDeleteOpen(false)} onDeleted={() => router.push('/export/quotations')} />
+      )}
 
       <RejectModal
         isOpen={rejectOpen}

@@ -19,3 +19,11 @@ export const DESTINATION_LINES = [
   { key: 'importServiceFee', label: 'Import Service Fee' },
   { key: 'deliveryOrder', label: 'DO' },
 ]
+
+// Per-line metadata (PRD Q-60..Q-62): who the agent pays on the buying side, who
+// is billed and when on the selling side. Mirrors quotation.model.js; it never
+// takes part in the profit maths and is not copied between Buying and Selling.
+export const PAYABLE_TYPES = ['Carrier', 'VO', 'Depot', 'Terminal', 'Trucker', 'Other']
+export const BILL_TO_TYPES = ['Shipper', 'Consignee', 'Other']
+export const PAYMENT_RESPONSIBILITIES = ['Prepaid', 'Collect']
+export const LINE_META_FIELDS = ['payableType', 'payableTo', 'billTo', 'paymentResponsibility']

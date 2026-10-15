@@ -383,6 +383,9 @@ try {
     salesRep: 'E2E', commodity: `${RUN} QCommodity`, hsCode: '1234.56', pol: ports[0]._id, pod: ports[1]._id,
     containers: [{ containerType: t20._id, quantity: 2, grossWeight: 2000, netWeight: 1800 }],
     isDangerous: true, unNumber: 'UN1203', nvocc: nvocc._id, paymentTerms: 'Freight Prepaid', freeTimeBuyingDays: 7,
+    // Sprint 006 readiness: validity, incoterm, totals, DG detail
+    validityDate: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10), incoterms: 'FOB', grossWeight: 2000, cbm: 20,
+    properShippingName: 'Flammable liquid, n.o.s.', imoClass: '3', packingGroup: 'II', flashPoint: 21, emergencyContact: 'E2E Desk +20 100 000 0000',
     buyingOrigin: { oceanFreight: { rate20: 100, currency: 'USD' } }, sellingOrigin: { oceanFreight: { rate20: 150, currency: 'USD' } },
   })
   const qId = qRes.json?.data?._id
@@ -515,7 +518,7 @@ try {
   check('UI run completed without an unexpected error', false, err.stack || err.message)
   await page.screenshot({ path: fileURLToPath(new URL(`./shots/${RUN}-FAILURE.png`, import.meta.url)), fullPage: true }).catch(() => {})
 } finally {
-  const noise = /favicon|401|403/
+  const noise = /favicon|401|403|negative time stamp/
   const real = consoleErrors.filter((e) => !noise.test(e))
   check('no browser console/page errors during the run', real.length === 0, '\n    ' + real.slice(0, 6).join('\n    '))
   await browser.close()

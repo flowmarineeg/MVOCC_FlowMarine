@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useToast } from '@/components/ui/Toast'
 import Select from '@/components/ui/Select'
 import ContainerSelector from './ContainerSelector'
@@ -9,9 +9,10 @@ import RateTable, { DEFAULT_LINE_CURRENCY } from './RateTable'
 import MasterDataFormModal from '@/components/masterdata/MasterDataFormModal'
 import * as masterDataApi from '@/services/masterData'
 import * as quotationApi from '@/services/quotation'
+import * as stockApi from '@/services/stock'
 import { computeProfitability, getContainerSize, getQtyBySize } from '@/utils/quotationCalc'
 import { mirrorBuyingToSelling, newUid } from '@/utils/quotationSync'
-import { CONTAINER_SIZES, ORIGIN_LINES, DESTINATION_LINES } from '@/constants/quotationRates'
+import { CONTAINER_SIZES, ORIGIN_LINES, DESTINATION_LINES, LINE_META_FIELDS } from '@/constants/quotationRates'
 
 // `d` is either a Date instance (e.g. `new Date()` for "default to today")
 // or an ISO date string from the API — String(Date) is NOT yyyy-mm-dd
@@ -39,6 +40,7 @@ const emptyTable = (lines) => ({
 // existed has none and inherits the quotation's old table currency.
 const lineFromApi = (line, fallbackCurrency) => ({
   ...Object.fromEntries(RATE_FIELDS.map((f) => [f, line?.[f] ?? ''])),
+  ...Object.fromEntries(LINE_META_FIELDS.map((f) => [f, line?.[f] ?? ''])),
   currency: line?.currency ?? fallbackCurrency ?? DEFAULT_LINE_CURRENCY,
 })
 
@@ -62,6 +64,7 @@ const linePayload = (line, sizes) => {
       if (line[f] !== '' && line[f] !== undefined) out[f] = Number(line[f])
     })
   })
+  LINE_META_FIELDS.forEach((f) => { if (line[f]) out[f] = line[f] })
   if (Object.keys(out).length > 0) out.currency = line.currency ?? ''
   return out
 }
@@ -90,29 +93,47 @@ function emptyForm(currentUser) {
     contactEmail: '',
     clientReferenceNo: '',
     inquiryDate: toDateInput(new Date()),
+    validityDate: '',
     salesRep: defaultSalesRep(currentUser),
     commodity: '',
     hsCode: '',
     containers: [{ containerType: '', quantity: 1 }],
+    grossWeight: '',
+    cbm: '',
+    setTemperature: '',
+    ventilationHumidity: '',
+    oogDimensions: '',
     isDangerous: false,
     unNumber: '',
+    properShippingName: '',
+    imoClass: '',
+    subsidiaryRisk: '',
+    packingGroup: '',
+    flashPoint: '',
+    marinePollutant: false,
+    emergencyContact: '',
     pol: '',
     pod: '',
+    finalDestination: '',
+    transshipmentPort: '',
     incoterms: '',
     targetEtd: '',
     targetRate: '',
     cargoReadinessDate: '',
     specialNotes: '',
     nvocc: '',
+    plannedVesselOperator: '',
     rateValidFrom: '',
     rateValidTo: '',
     buyingOrigin: emptyTable(ORIGIN_LINES),
     buyingDestination: emptyTable(DESTINATION_LINES),
     freeTimeBuyingDays: '',
+    detentionFreeTimeDays: '',
     rateSourceReference: '',
     sellingOrigin: emptyTable(ORIGIN_LINES),
     sellingDestination: emptyTable(DESTINATION_LINES),
     paymentTerms: '',
+    termsRemarks: '',
   }
 }
 
@@ -128,6 +149,7 @@ function buildInitialForm(quotation, currentUser) {
     contactEmail: quotation.contactEmail || '',
     clientReferenceNo: quotation.clientReferenceNo || '',
     inquiryDate: toDateInput(quotation.inquiryDate) || toDateInput(new Date()),
+    validityDate: toDateInput(quotation.validityDate),
     salesRep: quotation.salesRep || defaultSalesRep(currentUser),
     commodity: quotation.commodity || '',
     hsCode: quotation.hsCode || '',
@@ -137,25 +159,42 @@ function buildInitialForm(quotation, currentUser) {
       grossWeight: c.grossWeight ?? '',
       netWeight: c.netWeight ?? '',
     })),
+    grossWeight: quotation.grossWeight ?? '',
+    cbm: quotation.cbm ?? '',
+    setTemperature: quotation.setTemperature ?? '',
+    ventilationHumidity: quotation.ventilationHumidity || '',
+    oogDimensions: quotation.oogDimensions || '',
     isDangerous: !!quotation.isDangerous,
     unNumber: quotation.unNumber || '',
+    properShippingName: quotation.properShippingName || '',
+    imoClass: quotation.imoClass || '',
+    subsidiaryRisk: quotation.subsidiaryRisk || '',
+    packingGroup: quotation.packingGroup || '',
+    flashPoint: quotation.flashPoint ?? '',
+    marinePollutant: !!quotation.marinePollutant,
+    emergencyContact: quotation.emergencyContact || '',
     pol: quotation.pol?._id || quotation.pol || '',
     pod: quotation.pod?._id || quotation.pod || '',
+    finalDestination: quotation.finalDestination?._id || quotation.finalDestination || '',
+    transshipmentPort: quotation.transshipmentPort?._id || quotation.transshipmentPort || '',
     incoterms: quotation.incoterms || '',
     targetEtd: toDateInput(quotation.targetEtd),
     targetRate: quotation.targetRate ?? '',
     cargoReadinessDate: toDateInput(quotation.cargoReadinessDate),
     specialNotes: quotation.specialNotes || '',
     nvocc: quotation.nvocc?._id || quotation.nvocc || '',
+    plannedVesselOperator: quotation.plannedVesselOperator?._id || quotation.plannedVesselOperator || '',
     rateValidFrom: toDateInput(quotation.rateValidFrom),
     rateValidTo: toDateInput(quotation.rateValidTo),
     buyingOrigin: tableFromApi(quotation.buyingOrigin, ORIGIN_LINES, quotation.buyingCurrency),
     buyingDestination: tableFromApi(quotation.buyingDestination, DESTINATION_LINES, quotation.buyingDestinationCurrency || quotation.buyingCurrency),
     freeTimeBuyingDays: quotation.freeTimeBuyingDays ?? '',
+    detentionFreeTimeDays: quotation.detentionFreeTimeDays ?? '',
     rateSourceReference: quotation.rateSourceReference || '',
     sellingOrigin: tableFromApi(quotation.sellingOrigin, ORIGIN_LINES, quotation.sellingCurrency),
     sellingDestination: tableFromApi(quotation.sellingDestination, DESTINATION_LINES, quotation.sellingDestinationCurrency || quotation.sellingCurrency),
     paymentTerms: quotation.paymentTerms || '',
+    termsRemarks: quotation.termsRemarks || '',
   }
 }
 
@@ -167,7 +206,14 @@ const sectionTitleCls = 'font-display text-base font-bold uppercase tracking-wid
 const INCOTERMS = ['EXW', 'FCA', 'FOB', 'CPT', 'CIP', 'CFR', 'CIF', 'DAP', 'DPU', 'DDP']
 const PAYMENT_TERMS = ['Freight Prepaid', 'Freight Collect']
 
-const LOCKED_STATUSES = ['sent', 'approved', 'rejected']
+const IMO_CLASSES = ['1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '2.1', '2.2', '2.3', '3', '4.1', '4.2', '4.3', '5.1', '5.2', '6.1', '6.2', '7', '8', '9']
+const PACKING_GROUPS = ['I', 'II', 'III', 'N/A']
+// Packing group N/A is only valid for classes that have none (1.x, 2.x, 6.2, 7).
+const noPackingGroup = (cls) => /^(1|2)\./.test(cls) || cls === '6.2' || cls === '7'
+const isReeferCode = (code) => /RF$/i.test(String(code || '').trim())
+const isOogCode = (code) => /(OT|FR)$/i.test(String(code || '').trim())
+
+const LOCKED_STATUSES = ['sent', 'approved', 'rejected', 'expired']
 
 // Sales Representative only lists users whose role is a sales role (role name
 // contains "sales", e.g. Sales / Sales Manager).
@@ -182,6 +228,7 @@ export default function QuotationForm({
   ports = [],
   containerTypes = [],
   nvoccs = [],
+  vesselOperators = [],
   currentUser = null,
   teamMembers = [],
   submitting = false,
@@ -211,8 +258,20 @@ export default function QuotationForm({
   const setInput = (field) => (e) => set(field)(e.target.value)
 
   const portOptions = ports.map((p) => ({ value: p._id, label: `${p.code} — ${p.name}` }))
-  const customerOptions = customers.map((c) => ({ value: c._id, label: c.name }))
-  const nvoccOptions = nvoccs.map((n) => ({ value: n._id, label: `${n.code} — ${n.name}` }))
+  // A customer on credit hold can't be quoted (PRD Q-10): hidden unless it is the one already on this quotation.
+  const customerOptions = customers
+    .filter((c) => !c.creditHold || c._id === form.customer)
+    .map((c) => ({ value: c._id, label: c.creditHold ? `${c.name} (credit hold)` : c.name }))
+  // Carrier eligibility (PRD BR-0.3): an empty ports-served list means the carrier serves every port.
+  const carrierProblem = (n) => {
+    if (form.pod && (n.portsServed || []).length > 0 && !n.portsServed.includes(form.pod)) return 'does not serve this POD'
+    if (form.isDangerous && n.acceptsDg === false) return 'does not accept dangerous goods'
+    return ''
+  }
+  const nvoccOptions = nvoccs
+    .filter((n) => !carrierProblem(n) || n._id === form.nvocc)
+    .map((n) => ({ value: n._id, label: carrierProblem(n) ? `${n.code} — ${n.name} (${carrierProblem(n)})` : `${n.code} — ${n.name}` }))
+  const voOptions = vesselOperators.map((v) => ({ value: v._id, label: v.code ? `${v.code} — ${v.name}` : v.name }))
   const selectedCustomer = customers.find((c) => c._id === form.customer) || null
 
   // Sales rep: only users with a sales role are offered. The logged-in user is
@@ -257,6 +316,46 @@ export default function QuotationForm({
     }))
   }
   const selectedNvocc = nvoccs.find((n) => n._id === form.nvocc) || null
+  const selectedNvoccProblem = selectedNvocc ? carrierProblem(selectedNvocc) : ''
+
+  // Reefer / out-of-gauge inputs only exist for matching container types, and the
+  // optional capacity on the Container Type master drives the weight / volume check.
+  const pickedTypes = form.containers.map((c) => containerTypes.find((t) => t._id === c.containerType)).filter(Boolean)
+  const hasReefer = pickedTypes.some((t) => isReeferCode(t.code))
+  const hasOog = pickedTypes.some((t) => isOogCode(t.code))
+  const capacityOf = (field) => {
+    const rows = form.containers.filter((c) => c.containerType)
+    if (rows.length === 0) return null
+    let sum = 0
+    for (const c of rows) {
+      const cap = containerTypes.find((t) => t._id === c.containerType)?.[field]
+      if (!cap) return null
+      sum += cap * (Number(c.quantity) || 0)
+    }
+    return sum > 0 ? sum : null
+  }
+  const weightLimit = capacityOf('maxPayloadKg')
+  const volumeLimit = capacityOf('capacityCbm')
+  const overWeight = weightLimit && Number(form.grossWeight) > weightLimit
+  const nearWeight = weightLimit && !overWeight && Number(form.grossWeight) > weightLimit * 0.95
+  const overVolume = volumeLimit && Number(form.cbm) > volumeLimit
+
+  // Available stock of the chosen carrier (PRD Q-22) — a hint, never a block. The
+  // lookup needs masterData:read; without it the indicator is simply not shown.
+  const [stock, setStock] = useState({ nvocc: '', rows: [] })
+  useEffect(() => {
+    if (!form.nvocc) return undefined
+    let cancelled = false
+    stockApi
+      .getStockOverview({ nvocc: form.nvocc })
+      .then((rows) => { if (!cancelled) setStock({ nvocc: form.nvocc, rows }) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [form.nvocc])
+  const stockRows = form.nvocc && stock.nvocc === form.nvocc ? stock.rows : null
+  const availableByType = new Map()
+  ;(stockRows || []).forEach((r) => availableByType.set(r.containerType._id, (availableByType.get(r.containerType._id) || 0) + r.available))
+  const requestedByType = form.containers.reduce((acc, c) => (c.containerType ? { ...acc, [c.containerType]: (acc[c.containerType] || 0) + (Number(c.quantity) || 0) } : acc), {})
 
   // The rate tables' 20ft / 40ft columns follow the containers picked in
   // Section 1: a size only gets columns while at least one container of it is
@@ -330,7 +429,8 @@ export default function QuotationForm({
         ...f,
         buyingOrigin: tableFromApi(suggestion.buyingOrigin, ORIGIN_LINES, suggestion.buyingCurrency),
         buyingDestination: tableFromApi(suggestion.buyingDestination, DESTINATION_LINES, suggestion.buyingDestinationCurrency || suggestion.buyingCurrency),
-        freeTimeBuyingDays: suggestion.freeTimeBuyingDays ?? '',
+        // never wipe what the user already typed in these two
+        freeTimeBuyingDays: f.freeTimeBuyingDays !== '' ? f.freeTimeBuyingDays : suggestion.freeTimeBuyingDays ?? '',
         rateSourceReference: suggestion.rateSourceReference || '',
       }))
       setRateNote(`Prefilled from the last quotation (${suggestion.quotationNo}) using this carrier — edit freely, some rates are Spot.`)
@@ -348,6 +448,12 @@ export default function QuotationForm({
     if (!form.pol) next.pol = 'Port of loading is required'
     if (!form.pod) next.pod = 'Port of discharge is required'
     if (form.isDangerous && !form.unNumber.trim()) next.unNumber = 'UN Number is required'
+    else if (form.isDangerous && !/^(UN)?\d{4}$/i.test(form.unNumber.trim())) next.unNumber = 'UN Number must be 4 digits (e.g. 1203)'
+    if (form.isDangerous && form.packingGroup === 'N/A' && form.imoClass && !noPackingGroup(form.imoClass)) next.packingGroup = `Packing group is required for class ${form.imoClass}`
+    if (form.validityDate && form.inquiryDate && form.validityDate < form.inquiryDate) next.validityDate = 'Validity date must not be before the quotation date'
+    if (form.transshipmentPort && (form.transshipmentPort === form.pol || form.transshipmentPort === form.pod)) next.transshipmentPort = 'Must differ from POL and POD'
+    if (overWeight) next.grossWeight = `Exceeds the payload capacity of the selected containers (${weightLimit} kg)`
+    if (overVolume) next.cbm = `Exceeds the capacity of the selected containers (${volumeLimit} CBM)`
     const validContainers = form.containers.filter((c) => c.containerType && c.quantity >= 1)
     if (validContainers.length === 0) next.containers = 'Add at least one container entry'
     if (form.pol && form.pod && form.pol === form.pod) next.pod = 'POL and POD must be different ports'
@@ -409,14 +515,29 @@ export default function QuotationForm({
       contactEmail: form.contactEmail.trim(),
       clientReferenceNo: form.clientReferenceNo.trim(),
       inquiryDate: form.inquiryDate,
+      validityDate: form.validityDate || null,
       salesRep: form.salesRep.trim(),
       commodity: form.commodity.trim(),
       hsCode: form.hsCode.trim(),
       containers,
+      grossWeight: form.grossWeight === '' ? null : Number(form.grossWeight),
+      cbm: form.cbm === '' ? null : Number(form.cbm),
+      setTemperature: hasReefer && form.setTemperature !== '' ? Number(form.setTemperature) : null,
+      ventilationHumidity: hasReefer ? form.ventilationHumidity.trim() : '',
+      oogDimensions: hasOog ? form.oogDimensions.trim() : '',
       isDangerous: form.isDangerous,
       unNumber: form.isDangerous ? form.unNumber.trim() : undefined,
+      properShippingName: form.isDangerous ? form.properShippingName.trim() : undefined,
+      imoClass: form.isDangerous ? form.imoClass : undefined,
+      subsidiaryRisk: form.isDangerous ? form.subsidiaryRisk : undefined,
+      packingGroup: form.isDangerous ? form.packingGroup : undefined,
+      flashPoint: form.isDangerous ? (form.flashPoint === '' ? null : Number(form.flashPoint)) : undefined,
+      marinePollutant: form.isDangerous ? form.marinePollutant : false,
+      emergencyContact: form.isDangerous ? form.emergencyContact.trim() : undefined,
       pol: form.pol,
       pod: form.pod,
+      finalDestination: form.finalDestination || null,
+      transshipmentPort: form.transshipmentPort || null,
       incoterms: form.incoterms || undefined,
       targetEtd: form.targetEtd || undefined,
       // null (not undefined) so clearing the input on edit really clears it
@@ -428,15 +549,18 @@ export default function QuotationForm({
 
   const buildPricingPayload = () => ({
       nvocc: form.nvocc || undefined,
+      plannedVesselOperator: form.plannedVesselOperator || null,
       rateValidFrom: form.rateValidFrom || undefined,
       rateValidTo: form.rateValidTo || undefined,
       buyingOrigin: tablePayload(form.buyingOrigin, ORIGIN_LINES, sizes),
       buyingDestination: tablePayload(form.buyingDestination, DESTINATION_LINES, sizes),
-      freeTimeBuyingDays: form.freeTimeBuyingDays === '' ? undefined : Number(form.freeTimeBuyingDays),
+      freeTimeBuyingDays: form.freeTimeBuyingDays === '' ? null : Number(form.freeTimeBuyingDays),
+      detentionFreeTimeDays: form.detentionFreeTimeDays === '' ? null : Number(form.detentionFreeTimeDays),
       rateSourceReference: form.rateSourceReference.trim(),
       sellingOrigin: tablePayload(form.sellingOrigin, ORIGIN_LINES, sizes),
       sellingDestination: tablePayload(form.sellingDestination, DESTINATION_LINES, sizes),
       paymentTerms: form.paymentTerms || undefined,
+      termsRemarks: form.termsRemarks.trim(),
   })
 
   // Create: one submit saves everything (nothing exists yet to split).
@@ -505,7 +629,7 @@ export default function QuotationForm({
         <div className={sectionCls}>
           <h2 className={sectionTitleCls}>1. Client Request Data</h2>
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
             <div>
               <label className={labelCls}>Quotation No <span className="normal-case text-muted/70">(auto-generated)</span></label>
               <input
@@ -516,8 +640,13 @@ export default function QuotationForm({
               />
             </div>
             <div>
-              <label className={labelCls}>Inquiry Date</label>
+              <label className={labelCls}>Quotation / Inquiry Date</label>
               <input type="date" value={form.inquiryDate} onChange={setInput('inquiryDate')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+            <div>
+              <label className={labelCls}>Validity Date</label>
+              <input type="date" value={form.validityDate} onChange={setInput('validityDate')} className={`${inputCls} font-mono ${errors.validityDate ? 'border-brick' : 'border-ink/30'}`} />
+              {errors.validityDate && <p className="mt-1 font-mono text-xs text-brick">{errors.validityDate}</p>}
             </div>
           </div>
 
@@ -634,6 +763,10 @@ export default function QuotationForm({
             <Select clearable label="POD" required placeholder="Port of Discharge" searchable options={portOptions} value={form.pod} onChange={set('pod')} error={errors.pod} />
           </div>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <Select clearable label="Transshipment Port" placeholder="Optional" searchable options={portOptions} value={form.transshipmentPort} onChange={set('transshipmentPort')} error={errors.transshipmentPort} />
+            <Select clearable label="Final Destination" placeholder="Optional — if the cargo continues beyond the POD" searchable options={portOptions} value={form.finalDestination} onChange={set('finalDestination')} />
+          </div>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <Select clearable label="Incoterms" placeholder="Select incoterms" options={INCOTERMS.map((v) => ({ value: v, label: v }))} value={form.incoterms} onChange={set('incoterms')} />
             <div>
               <label className={labelCls}>Target / Required ETD</label>
@@ -650,6 +783,44 @@ export default function QuotationForm({
             <ContainerSelector clearable weights containerTypes={containerTypes} showStock={false} value={form.containers} onChange={set('containers')} />
             {errors.containers && <p className="mt-1 font-mono text-xs text-brick">{errors.containers}</p>}
           </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>Total Gross Weight (kg)</label>
+              <input type="number" min="0" step="0.01" value={form.grossWeight} onChange={setInput('grossWeight')} className={`${inputCls} font-mono ${errors.grossWeight || overWeight ? 'border-brick' : 'border-ink/30'}`} />
+              {weightLimit && (
+                <p className={`mt-1 font-mono text-xs ${overWeight ? 'text-brick' : nearWeight ? 'text-signal' : 'text-muted'}`}>
+                  Payload capacity of the selected containers: {weightLimit.toLocaleString()} kg{nearWeight ? ' — above 95%' : ''}
+                </p>
+              )}
+              {errors.grossWeight && <p className="mt-1 font-mono text-xs text-brick">{errors.grossWeight}</p>}
+            </div>
+            <div>
+              <label className={labelCls}>Total Volume (CBM)</label>
+              <input type="number" min="0" step="0.001" value={form.cbm} onChange={setInput('cbm')} className={`${inputCls} font-mono ${errors.cbm || overVolume ? 'border-brick' : 'border-ink/30'}`} />
+              {volumeLimit && <p className={`mt-1 font-mono text-xs ${overVolume ? 'text-brick' : 'text-muted'}`}>Capacity of the selected containers: {volumeLimit.toLocaleString()} CBM</p>}
+              {errors.cbm && <p className="mt-1 font-mono text-xs text-brick">{errors.cbm}</p>}
+            </div>
+          </div>
+
+          {hasReefer && (
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <div>
+                <label className={labelCls}>Set Temperature (°C) <span className="text-rust">*</span></label>
+                <input type="number" step="0.1" value={form.setTemperature} onChange={setInput('setTemperature')} className={`${inputCls} border-ink/30 font-mono`} />
+              </div>
+              <div>
+                <label className={labelCls}>Ventilation & Humidity</label>
+                <input value={form.ventilationHumidity} onChange={setInput('ventilationHumidity')} className={`${inputCls} border-ink/30`} placeholder="e.g. vents closed, 65% RH" />
+              </div>
+            </div>
+          )}
+          {hasOog && (
+            <div>
+              <label className={labelCls}>Out-of-Gauge Dimensions (cm)</label>
+              <input value={form.oogDimensions} onChange={setInput('oogDimensions')} className={`${inputCls} border-ink/30`} placeholder="Length / width / height overhang" />
+            </div>
+          )}
 
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
@@ -677,11 +848,39 @@ export default function QuotationForm({
             </div>
           </div>
           {form.isDangerous && (
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <div>
-                <label className={labelCls}>UN Number <span className="text-rust">*</span></label>
-                <input value={form.unNumber} onChange={setInput('unNumber')} className={`${inputCls} font-mono ${errors.unNumber ? 'border-brick' : 'border-ink/30'}`} />
-                {errors.unNumber && <p className="mt-1 font-mono text-xs text-brick">{errors.unNumber}</p>}
+            <div className="space-y-5 border border-brick/30 bg-brick/5 p-4">
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                <div>
+                  <label className={labelCls}>UN Number <span className="text-rust">*</span></label>
+                  <input value={form.unNumber} onChange={setInput('unNumber')} placeholder="4 digits, e.g. 1203" className={`${inputCls} font-mono ${errors.unNumber ? 'border-brick' : 'border-ink/30'}`} />
+                  {errors.unNumber && <p className="mt-1 font-mono text-xs text-brick">{errors.unNumber}</p>}
+                </div>
+                <div>
+                  <label className={labelCls}>Proper Shipping Name</label>
+                  <input value={form.properShippingName} onChange={setInput('properShippingName')} className={`${inputCls} border-ink/30`} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+                <Select clearable label="IMO Class" placeholder="Select class" options={IMO_CLASSES.map((v) => ({ value: v, label: v }))} value={form.imoClass} onChange={set('imoClass')} />
+                <Select clearable label="Subsidiary Risk" placeholder="None" options={IMO_CLASSES.map((v) => ({ value: v, label: v }))} value={form.subsidiaryRisk} onChange={set('subsidiaryRisk')} />
+                <Select clearable label="Packing Group" placeholder="Select PG" options={PACKING_GROUPS.map((v) => ({ value: v, label: v }))} value={form.packingGroup} onChange={set('packingGroup')} error={errors.packingGroup} />
+              </div>
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+                <div>
+                  <label className={labelCls}>Flash Point (°C){form.imoClass === '3' && <span className="text-rust"> *</span>}</label>
+                  <input type="number" step="0.1" value={form.flashPoint} onChange={setInput('flashPoint')} className={`${inputCls} border-ink/30 font-mono`} />
+                </div>
+                <div>
+                  <label className={labelCls}>Marine Pollutant</label>
+                  <div className="flex border border-ink/30">
+                    <button type="button" onClick={() => set('marinePollutant')(false)} className={`flex-1 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${!form.marinePollutant ? 'bg-ink text-paper' : 'bg-card text-muted hover:text-ink'}`}>No</button>
+                    <button type="button" onClick={() => set('marinePollutant')(true)} className={`flex-1 border-l border-ink/30 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${form.marinePollutant ? 'bg-brick text-card' : 'bg-card text-muted hover:text-ink'}`}>Yes</button>
+                  </div>
+                </div>
+                <div>
+                  <label className={labelCls}>Emergency Contact (24h)</label>
+                  <input value={form.emergencyContact} onChange={setInput('emergencyContact')} placeholder="Name and phone" className={`${inputCls} border-ink/30`} />
+                </div>
               </div>
             </div>
           )}
@@ -763,9 +962,31 @@ export default function QuotationForm({
 
         {/* 5. Carrier (NVOCC master data) */}
         <div className={sectionCls}>
-          <h2 className={sectionTitleCls}>5. Carrier (Master Data)</h2>
+          <h2 className={sectionTitleCls}>5. Carrier & Commercial Terms</h2>
           <Select clearable label="Select Carrier" placeholder="Choose a carrier" searchable options={nvoccOptions} value={form.nvocc} onChange={handleNvoccChange} />
           {rateNote && <p className="font-mono text-xs text-signal">{rateNote}</p>}
+          {selectedNvoccProblem && (
+            <p className="border border-signal/40 bg-signal/10 px-3 py-2 text-sm text-signal">
+              {selectedNvocc.name} {selectedNvoccProblem} — choose another carrier before this quotation can be sent.
+            </p>
+          )}
+          {stockRows && form.containers.some((c) => c.containerType) && (
+            <div data-testid="stock-indicator" className="border border-ink/20 bg-paper/60 p-3 text-sm">
+              <span className={labelCls}>Available stock with this carrier (all depots)</span>
+              <ul className="mt-1 flex flex-wrap gap-x-6 gap-y-1">
+                {Object.entries(requestedByType).map(([typeId, requested]) => {
+                  const type = containerTypes.find((t) => t._id === typeId)
+                  const available = availableByType.get(typeId) || 0
+                  return (
+                    <li key={typeId} className={requested > available ? 'text-signal' : 'text-ink'}>
+                      <span className="font-mono">{type?.code || '?'}</span>: {available} available, {requested} requested{requested > available ? ' — short' : ''}
+                    </li>
+                  )
+                })}
+              </ul>
+              <p className="mt-1 font-mono text-[10px] text-muted">Informational only — it never blocks a quotation.</p>
+            </div>
+          )}
           {selectedNvocc && (
             <div className="grid grid-cols-1 gap-x-6 gap-y-3 border border-ink/20 bg-paper/60 p-4 sm:grid-cols-2 lg:grid-cols-3">
               <div>
@@ -815,6 +1036,24 @@ export default function QuotationForm({
               </div>
             </div>
           )}
+
+          <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-muted">Commercial terms</h3>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+            <Select clearable label="Planned Vessel Operator" placeholder="Optional — estimate only" searchable options={voOptions} value={form.plannedVesselOperator} onChange={set('plannedVesselOperator')} />
+            <div>
+              <label className={labelCls}>Free Time — Demurrage (days) <span className="text-rust">*</span></label>
+              <input type="number" min="0" value={form.freeTimeBuyingDays} onChange={setInput('freeTimeBuyingDays')} className={`${inputCls} border-ink/30 font-mono`} />
+              {selectedNvocc?.defaultFreeTimeDays != null && form.freeTimeBuyingDays === '' && (
+                <button type="button" onClick={() => set('freeTimeBuyingDays')(String(selectedNvocc.defaultFreeTimeDays))} className="mt-1 font-mono text-[11px] text-rust hover:text-rust-dark">
+                  Use the carrier default ({selectedNvocc.defaultFreeTimeDays} days)
+                </button>
+              )}
+            </div>
+            <div>
+              <label className={labelCls}>Free Time — Detention (days)</label>
+              <input type="number" min="0" value={form.detentionFreeTimeDays} onChange={setInput('detentionFreeTimeDays')} className={`${inputCls} border-ink/30 font-mono`} />
+            </div>
+          </div>
         </div>
 
         {/* 6. Buying */}
@@ -843,6 +1082,7 @@ export default function QuotationForm({
             lines={ORIGIN_LINES}
             value={form.buyingOrigin}
             onChange={handleBuyingTable('Origin', ORIGIN_LINES)}
+            meta="buying"
             sizes={sizes}
             qtyBySize={qtyBySize}
           />
@@ -852,15 +1092,12 @@ export default function QuotationForm({
             lines={DESTINATION_LINES}
             value={form.buyingDestination}
             onChange={handleBuyingTable('Destination', DESTINATION_LINES)}
+            meta="buying"
             sizes={sizes}
             qtyBySize={qtyBySize}
           />
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <div>
-              <label className={labelCls}>Free Time</label>
-              <input type="number" min="0" value={form.freeTimeBuyingDays} onChange={setInput('freeTimeBuyingDays')} className={`${inputCls} border-ink/30 font-mono`} />
-            </div>
             <div>
               <label className={labelCls}>Rate Source Reference</label>
               <input value={form.rateSourceReference} onChange={setInput('rateSourceReference')} className={`${inputCls} border-ink/30`} placeholder="Email / contract ref." />
@@ -876,6 +1113,7 @@ export default function QuotationForm({
             lines={ORIGIN_LINES}
             value={form.sellingOrigin}
             onChange={set('sellingOrigin')}
+            meta="selling"
             sizes={sizes}
             qtyBySize={qtyBySize}
           />
@@ -886,12 +1124,17 @@ export default function QuotationForm({
             value={form.sellingDestination}
             onChange={set('sellingDestination')}
             readOnly
+            meta="selling"
             sizes={sizes}
             qtyBySize={qtyBySize}
           />
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <Select clearable label="Payment Terms" placeholder="Select payment terms" options={PAYMENT_TERMS.map((v) => ({ value: v, label: v }))} value={form.paymentTerms} onChange={set('paymentTerms')} />
+          </div>
+          <div>
+            <label className={labelCls}>Terms & Remarks <span className="normal-case text-muted/70">(printed on the quotation PDF)</span></label>
+            <textarea value={form.termsRemarks} onChange={setInput('termsRemarks')} rows={3} className={`${inputCls} border-ink/30`} />
           </div>
         </div>
 

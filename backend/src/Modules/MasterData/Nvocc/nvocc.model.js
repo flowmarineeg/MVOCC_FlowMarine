@@ -21,6 +21,11 @@ const nvoccSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    // Quotation eligibility (PRD BR-0.3). An empty portsServed list means "serves
+    // every port" so carriers saved before this field existed keep working.
+    portsServed: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Port' }],
+    acceptsDg: { type: Boolean, default: true },
+    defaultFreeTimeDays: { type: Number, min: [0, 'Free time must be a positive number'] },
     isActive: {
       type: Boolean,
       default: true,
